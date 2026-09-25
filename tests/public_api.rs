@@ -2,6 +2,7 @@ use approx::assert_relative_eq;
 use ssfilt::{
     BandPass, BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass,
     MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response, StreamingFilter, UpdateError,
+    forward_backward_into, forward_backward_uniform_into,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -186,4 +187,18 @@ fn band_pass_rejects_odd_order_and_invalid_edges() {
         BandPass::<4>::builder(40.0, 10.0).build(),
         Err(BuildError::InvalidBandPassEdges)
     ));
+}
+
+#[test]
+fn forward_backward_batch_supports_irregular_and_uniform_time() {
+    let filter = LowPass::<2>::builder(10.0).build().unwrap();
+    let samples = [0.0, 1.0, 0.5, 0.0];
+    let mut irregular = [0.0; 4];
+    let mut uniform = [0.0; 4];
+    forward_backward_into(&filter, &samples, &[0.01; 3], &mut irregular).unwrap();
+    forward_backward_uniform_into(&filter, &samples, 0.01, &mut uniform).unwrap();
+    for (left, right) in irregular.iter().zip(uniform) {
+        assert_relative_eq!(left, &right, epsilon = 0.0);
+    }
+    assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
 }

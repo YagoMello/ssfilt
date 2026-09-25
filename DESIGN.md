@@ -181,6 +181,22 @@ integrator subdivides it. An endpoint discontinuity in `PreviousHold` is not
 fed into endpoint Runge-Kutta stages; `u_new` becomes `u_old` only after a
 successful update.
 
+## Offline forward-backward filtering
+
+The batch functions clone a configured streaming filter, initialize it to the
+first input sample's equilibrium, run the forward pass, then initialize a
+second pass to the final forward value's equilibrium and traverse the result
+backward. A gap between samples `i` and `i + 1` is used in both directions.
+The caller supplies an output slice, so the library performs no allocation.
+
+The interior response of a uniformly sampled linear filter has transfer
+function `H(z) H(z^-1)`, with zero phase and magnitude `|H(z)|^2`. Unequal
+sample gaps have no single global frequency response, but the reverse pass
+still uses the same physical intervals. Finite-record endpoint transients
+depend on the steady-state boundary condition. Validation of lengths, input,
+and intervals finishes before the output is written; an integration failure
+may leave a partial output.
+
 ## Integration policy
 
 Dormand-Prince 5(4) supplies a fifth-order candidate and a fourth-order local
@@ -233,6 +249,7 @@ updates preserve the preceding snapshot transactionally.
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
 7. Optional delayed group-delay equalization and offline forward-backward
-   filtering as separate phase-handling approaches.
+   filtering as separate phase-handling approaches. Batch filtering is complete;
+   delayed streaming equalization is pending.
 8. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

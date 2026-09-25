@@ -16,7 +16,12 @@ band-pass filters with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Phase handling is planned, but is not yet part of the API.
+Delayed streaming phase equalization is planned, but is not yet part of the API.
+
+Offline forward-backward filtering is available for signals that can be held
+as a complete batch. It removes phase delay in the interior of the record at
+the cost of applying the magnitude response twice. The endpoints depend on
+the chosen boundary condition and can retain transients.
 
 ## Example
 
@@ -116,6 +121,32 @@ let value = filter.update(1.0, 0.01)?;
 This approach requires an allocator and exposes the common streaming methods;
 order-specific inherent methods remain available only on concrete `LowPass`
 values.
+
+### Offline forward-backward filtering
+
+`forward_backward_into` accepts one elapsed interval for each gap between
+samples, so irregularly timed data can be processed without resampling:
+
+```rust
+use ssfilt::{LowPass, Response, forward_backward_into};
+
+let filter = LowPass::<4>::builder(20.0)
+    .response(Response::Butterworth)
+    .build()?;
+let samples = [0.0, 1.0, 0.5, 0.0];
+let intervals_seconds = [0.010, 0.012, 0.009];
+let mut output = [0.0; 4];
+forward_backward_into(&filter, &samples, &intervals_seconds, &mut output)?;
+# assert!(output.iter().all(|sample| sample.is_finite()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+For equal spacing, use `forward_backward_uniform_into(&filter, &samples,
+dt_seconds, &mut output)`. Both functions work without allocation and leave
+the supplied filter and input unchanged. Each pass begins at the steady state
+of its first sample. The method needs the whole record, and the magnitude
+response is squared; a single-pass −3 dB edge becomes approximately −6 dB
+away from boundaries.
 
 ## Response families
 

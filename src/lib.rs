@@ -10,6 +10,7 @@
 compile_error!("enable either the `std` or `libm` feature");
 
 mod band_pass;
+mod batch;
 mod config;
 mod diagnostics;
 mod error;
@@ -22,6 +23,7 @@ mod solver;
 mod streaming;
 
 pub use band_pass::{BandPass, BandPassBuilder};
+pub use batch::{BatchError, forward_backward_into, forward_backward_uniform_into};
 pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
