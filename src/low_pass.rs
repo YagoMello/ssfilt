@@ -454,4 +454,103 @@ mod tests {
         let gain = 2.0 * in_phase.hypot(quadrature) / measured_samples;
         assert_relative_eq!(gain, 1.0 / 2.0_f64.sqrt(), epsilon = 8.0e-5);
     }
+
+    #[test]
+    fn randomized_partitions_preserve_a_held_input() {
+        for seed in 1..=12 {
+            let weights = random_weights(seed);
+            let weight_sum: f64 = weights.iter().sum();
+            let total_dt = 0.15;
+
+            let mut single = LowPass::<5>::builder(3.0)
+                .input_model(InputModel::CurrentHold)
+                .build()
+                .unwrap();
+            let expected = single.update(1.0, total_dt).unwrap();
+
+            let mut partitioned = LowPass::<5>::builder(3.0)
+                .input_model(InputModel::CurrentHold)
+                .build()
+                .unwrap();
+            let mut actual = 0.0;
+            for weight in weights {
+                actual = partitioned
+                    .update(1.0, total_dt * weight / weight_sum)
+                    .unwrap();
+            }
+            assert_relative_eq!(actual, expected, epsilon = 2.0e-8);
+        }
+    }
+
+    #[test]
+    fn randomized_partitions_preserve_a_linear_ramp() {
+        for seed in 20..=31 {
+            let weights = random_weights(seed);
+            let weight_sum: f64 = weights.iter().sum();
+            let total_dt = 0.2;
+
+            let mut single = LowPass::<4>::builder(2.0).build().unwrap();
+            let expected = single.update(1.0, total_dt).unwrap();
+
+            let mut partitioned = LowPass::<4>::builder(2.0).build().unwrap();
+            let mut elapsed_fraction = 0.0;
+            let mut actual = 0.0;
+            for weight in weights {
+                let fraction = weight / weight_sum;
+                elapsed_fraction += fraction;
+                actual = partitioned
+                    .update(elapsed_fraction, total_dt * fraction)
+                    .unwrap();
+            }
+            assert_relative_eq!(actual, expected, epsilon = 2.0e-8);
+        }
+    }
+
+    #[test]
+    fn long_irregular_stream_remains_finite() {
+        let mut random = 0x5eed_1234_9876_abcd_u64;
+        let mut filter = LowPass::<8>::builder(40.0).build().unwrap();
+
+        for _ in 0..2_000 {
+            let input = 2_000.0 * next_random(&mut random) - 1_000.0;
+            let dt = 1.0e-6 + 0.002 * next_random(&mut random);
+            assert!(filter.update(input, dt).unwrap().is_finite());
+        }
+    }
+
+    #[test]
+    fn configured_step_limit_subdivides_the_complete_interval() {
+        let integration = IntegrationConfig {
+            max_step_seconds: Some(0.000_25),
+            ..IntegrationConfig::default()
+        };
+        let mut filter = LowPass::<3>::builder(8.0)
+            .input_model(InputModel::CurrentHold)
+            .integration(integration)
+            .build()
+            .unwrap();
+        let actual = filter.update(1.0, 0.05).unwrap();
+
+        let normalized_time = core::f64::consts::TAU * 8.0 * 0.05;
+        let rate = filter.model.rate();
+        let scaled_time = rate * normalized_time;
+        let expected = 1.0 - (-scaled_time).exp() * (1.0 + scaled_time + scaled_time.powi(2) / 2.0);
+        assert_relative_eq!(actual, expected, epsilon = 2.0e-10);
+    }
+
+    fn random_weights(seed: u64) -> [f64; 31] {
+        let mut random = seed;
+        let mut weights = [0.0; 31];
+        for weight in &mut weights {
+            *weight = 0.01 + next_random(&mut random);
+        }
+        weights
+    }
+
+    fn next_random(state: &mut u64) -> f64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((*state >> 11) as f64) / ((1_u64 << 53) as f64)
+    }
 }
