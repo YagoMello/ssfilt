@@ -175,7 +175,9 @@ output path and order are optional and default to
 logarithmically spaced points; high orders can therefore take noticeably
 longer to measure. Because the curves are measured from the streaming filter
 rather than synthesized from pole formulas, a stopband curve ends if residual
-transients become larger than the attenuated steady-state signal.
+transients become larger than the attenuated steady-state signal. The measured
+curves are written as shape-preserving cubic SVG paths so they remain smooth
+when zoomed without introducing spline overshoot.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.
