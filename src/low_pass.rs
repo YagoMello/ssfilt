@@ -82,7 +82,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             return Err(BuildError::InvalidCutoff);
         }
 
-        let model = LowPassModel::new(self.response).ok_or(BuildError::InvalidPassbandRipple)?;
+        let model = LowPassModel::new(self.response)?;
         let state = model.equilibrium(self.initial_input);
         Ok(LowPass {
             model,
@@ -350,6 +350,16 @@ mod tests {
     }
 
     #[test]
+    fn builder_rejects_bessel_order_above_the_validated_table() {
+        assert!(matches!(
+            LowPass::<26>::builder(1.0)
+                .response(Response::Bessel)
+                .build(),
+            Err(BuildError::UnsupportedBesselOrder)
+        ));
+    }
+
+    #[test]
     fn initial_input_and_reset_to_steady_are_equilibria() {
         let mut filter = LowPass::<4>::builder(25.0)
             .initial_input(3.5)
@@ -566,6 +576,13 @@ mod tests {
             .build()
             .unwrap();
         assert!(chebyshev.update(1.0, 0.02).unwrap().is_finite());
+
+        let mut bessel = LowPass::<4, f32>::builder(10.0)
+            .response(Response::Bessel)
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap();
+        assert!(bessel.update(1.0, 0.02).unwrap().is_finite());
     }
 
     type CutoffCheck = fn(Response);
@@ -580,6 +597,7 @@ mod tests {
         #[values(
             Response::RepeatedPole,
             Response::Butterworth,
+            Response::Bessel,
             Response::Chebyshev1 { ripple_db: 0.5 }
         )]
         response: Response,
@@ -681,6 +699,12 @@ mod tests {
             chebyshev.response(),
             Response::Chebyshev1 { ripple_db: 0.5 }
         );
+
+        let bessel = LowPass::<2>::builder(10.0)
+            .response(Response::Bessel)
+            .build()
+            .unwrap();
+        assert_eq!(bessel.response(), Response::Bessel);
     }
 
     #[test]
@@ -708,6 +732,7 @@ mod tests {
         prop_oneof![
             Just(Response::RepeatedPole),
             Just(Response::Butterworth),
+            Just(Response::Bessel),
             (0.05_f64..2.5).prop_map(|ripple_db| Response::Chebyshev1 { ripple_db }),
         ]
     }

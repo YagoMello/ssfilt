@@ -1,5 +1,8 @@
 use approx::assert_relative_eq;
-use ssfilt::{InputModel, IntegrationDiagnostics, LowPass, Response, StreamingFilter, UpdateError};
+use ssfilt::{
+    BuildError, InputModel, IntegrationDiagnostics, LowPass, MAX_BESSEL_ORDER, Response,
+    StreamingFilter, UpdateError,
+};
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
 where
@@ -98,4 +101,21 @@ fn chebyshev_response_is_configurable_through_the_public_builder() {
         .unwrap();
     assert_eq!(filter.response(), Response::Chebyshev1 { ripple_db: 0.5 });
     assert!(filter.update(1.0, 0.01).unwrap().is_finite());
+}
+
+#[test]
+fn bessel_response_and_order_limit_are_public() {
+    let mut filter = LowPass::<4>::builder(20.0)
+        .response(Response::Bessel)
+        .build()
+        .unwrap();
+    assert_eq!(filter.response(), Response::Bessel);
+    assert!(filter.update(1.0, 0.01).unwrap().is_finite());
+    assert_eq!(MAX_BESSEL_ORDER, 25);
+    assert!(matches!(
+        LowPass::<26>::builder(20.0)
+            .response(Response::Bessel)
+            .build(),
+        Err(BuildError::UnsupportedBesselOrder)
+    ));
 }

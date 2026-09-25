@@ -6,9 +6,9 @@ fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
 The current milestone intentionally provides one carefully tested low-pass
-filter with three response families:
+filter with four response families:
 
-- repeated-pole, Butterworth, and Chebyshev Type I responses;
+- repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
 - adaptive Dormand-Prince 5(4) integration;
 - linear, previous-value hold, and current-value hold input models;
@@ -16,8 +16,8 @@ filter with three response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Bessel, high-pass, band-pass, and phase equalization are planned, but are not
-yet part of the API.
+High-pass, band-pass, and phase handling are planned, but are not yet part of
+the API.
 
 ## Example
 
@@ -82,6 +82,14 @@ a cascade of normalized real first-/second-order continuous sections rather
 than an expanded denominator polynomial. Low-Q sections precede high-Q
 sections to reduce internal peaking.
 
+`Response::Bessel` provides maximally flat group delay at DC, prioritizing
+waveform shape and low transient ringing over transition sharpness. It uses
+prevalidated magnitude-normalized prototypes, also realized as real sections
+with unity DC gain. Bessel orders 1 through `MAX_BESSEL_ORDER` (currently 25)
+are supported; construction returns `BuildError::UnsupportedBesselOrder`
+beyond that limit. The bounded table avoids allocation and unreliable
+high-order polynomial root finding in user code.
+
 `Response::Chebyshev1 { ripple_db }` provides a steeper transition at the cost
 of equiripple passband gain and greater ringing. `ripple_db` is the peak-to-peak
 passband variation and must be greater than zero and less than 3.0103 dB. Every
@@ -97,10 +105,11 @@ For `Response::RepeatedPole` of order `N`, the repeated pole is placed at
 p = omega_c / sqrt(2^(1/N) - 1)
 ```
 
-Butterworth is naturally -3 dB at its normalized cutoff. Chebyshev prototypes
-normally use the passband-ripple edge as their reference frequency, so ssfilt
-rescales their poles to place the unity-DC-gain response at -3 dB instead.
-Therefore, `cutoff_hz` has the same whole-filter meaning for every family.
+Butterworth is naturally -3 dB at its normalized cutoff. Bessel prototypes use
+magnitude normalization. Chebyshev prototypes normally use the passband-ripple
+edge as their reference frequency, so ssfilt rescales their poles to place the
+unity-DC-gain response at -3 dB instead. Therefore, `cutoff_hz` has the same
+whole-filter meaning for every family.
 Internally the models use normalized time `tau = 2*pi*cutoff_hz*t`, preventing
 absolute cutoff frequency from creating huge polynomial coefficients.
 
@@ -115,8 +124,9 @@ validated. Precision-specific integration defaults live in
 ## Error behavior
 
 Construction rejects zero order, non-positive or non-finite cutoff, invalid
-Chebyshev ripple, non-finite initial input, and invalid integration controls.
-Updates reject non-finite input and non-positive or non-finite elapsed time.
+Chebyshev ripple, unsupported Bessel order, non-finite initial input, and
+invalid integration controls. Updates reject non-finite input and non-positive
+or non-finite elapsed time.
 
 An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
@@ -173,12 +183,17 @@ Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to
 `target/filter-responses.svg` and order 4. Frequency curves use 1,601
 logarithmically spaced points; high orders can therefore take noticeably
-longer to render. Frequency-domain curves are evaluated directly from the
-normalized continuous transfer functions, avoiding settling artifacts in deep
-high-order stopbands. The unit-step panel still drives the public streaming
-API end to end. Curves are written as shape-preserving cubic SVG paths from an
-oversampled internal canvas, so subpixel detail remains smooth when zoomed
-without introducing spline overshoot.
+longer to render. Bessel is included through its supported maximum order and
+is omitted from higher-order dashboards. Frequency-domain curves are evaluated
+directly from the normalized continuous transfer functions, avoiding settling
+artifacts in deep high-order stopbands. The unit-step panel still drives the
+public streaming API end to end. Curves are written as shape-preserving cubic
+SVG paths from an oversampled internal canvas, so subpixel detail remains
+smooth when zoomed without introducing spline overshoot.
+
+The Bessel prototype table can be regenerated separately from the Rust build
+with `scripts/generate_bessel_table.py`; that development helper requires
+SciPy, while the crate itself does not.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.

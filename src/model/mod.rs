@@ -1,3 +1,5 @@
+mod bessel;
+mod bessel_table;
 mod butterworth;
 mod chebyshev1;
 mod low_pass;
@@ -16,3 +18,4 @@ pub(crate) trait ContinuousModel<T: Scalar, const N: usize> {
     fn equilibrium(&self, input: T) -> [T; N];
     fn max_normalized_step(&self) -> T;
 }
+pub(crate) use bessel::Bessel;

@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
-use ssfilt::{InputModel, LowPass, Response};
+use ssfilt::{InputModel, LowPass, MAX_BESSEL_ORDER, Response};
+
+#[path = "../src/model/bessel_table.rs"]
+mod bessel_table;
 
 const CUTOFF_HZ: f64 = 1.0;
 const FREQUENCY_POINTS: u32 = 1_601;
@@ -21,7 +24,7 @@ const MIN_FREQUENCY_RATIO: f64 = 0.01;
 const MAX_FREQUENCY_RATIO: f64 = 20.0;
 const MAGNITUDE_FLOOR_DB: f64 = -140.0;
 const GROUP_DELAY_HALF_WINDOW: usize = 4;
-const RESPONSE_STROKES: [&str; 3] = ["#2E6FD6", "#E05B4A", "#249D5C"];
+const RESPONSE_STROKES: [&str; 4] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1"];
 const DISPLAY_WIDTH: u32 = 1_600;
 const DISPLAY_HEIGHT: u32 = 1_180;
 const RENDER_SCALE: u32 = 8;
@@ -99,7 +102,7 @@ fn arguments() -> Result<(usize, PathBuf), Box<dyn Error>> {
 }
 
 fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
-    let specs = [
+    let mut specs = vec![
         ResponseSpec {
             label: "Repeated pole",
             response: Response::RepeatedPole,
@@ -111,11 +114,20 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
             color: RGBColor(224, 91, 74),
         },
         ResponseSpec {
+            label: "Bessel",
+            response: Response::Bessel,
+            color: RGBColor(135, 82, 161),
+        },
+        ResponseSpec {
             label: "Chebyshev I, 0.5 dB ripple",
             response: Response::Chebyshev1 { ripple_db: 0.5 },
             color: RGBColor(36, 157, 92),
         },
     ];
+    if N > MAX_BESSEL_ORDER {
+        specs.retain(|spec| spec.response != Response::Bessel);
+        println!("omitting Bessel: supported through order {MAX_BESSEL_ORDER}");
+    }
 
     let mut responses = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -404,6 +416,29 @@ fn exact_frequency_point<const N: usize>(
                 accumulate_second_order(
                     2.0 * angle.sin(),
                     1.0,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+        }
+        Response::Bessel => {
+            let prototype = bessel_table::prototype(N)
+                .ok_or("Bessel response order exceeds the supported table")?;
+            if N % 2 == 1 {
+                accumulate_first_order(
+                    prototype.real_rate,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+            for (&damping, &frequency_squared) in
+                prototype.damping.iter().zip(prototype.frequency_squared)
+            {
+                accumulate_second_order(
+                    damping,
+                    frequency_squared,
                     frequency_ratio,
                     &mut log_magnitude,
                     &mut phase_radians,
@@ -701,6 +736,10 @@ mod svg_tests {
             assert_relative_eq!(point.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
             assert!(point.phase_radians.is_finite());
         }
+
+        let bessel = exact_frequency_point::<25>(Response::Bessel, 1.0).unwrap();
+        assert_relative_eq!(bessel.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
+        assert!(bessel.phase_radians.is_finite());
     }
 
     #[test]

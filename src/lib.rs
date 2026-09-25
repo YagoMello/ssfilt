@@ -22,7 +22,7 @@ pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use low_pass::{LowPass, LowPassBuilder};
-pub use response::Response;
+pub use response::{MAX_BESSEL_ORDER, Response};
 pub use scalar::Scalar;
 
 /// Common behavior for a stateful streaming filter.

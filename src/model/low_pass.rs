@@ -1,20 +1,26 @@
-use crate::{Response, Scalar};
+use crate::{BuildError, Response, Scalar};
 
-use super::{Butterworth, Chebyshev1, ContinuousModel, RepeatedPole};
+use super::{Bessel, Butterworth, Chebyshev1, ContinuousModel, RepeatedPole};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LowPassModel<T, const N: usize> {
     RepeatedPole(RepeatedPole<T>),
     Butterworth(Butterworth<T, N>),
+    Bessel(Bessel<T, N>),
     Chebyshev1(Chebyshev1<T, N>),
 }
 
 impl<T: Scalar, const N: usize> LowPassModel<T, N> {
-    pub(crate) fn new(response: Response<T>) -> Option<Self> {
+    pub(crate) fn new(response: Response<T>) -> Result<Self, BuildError> {
         match response {
-            Response::RepeatedPole => Some(Self::RepeatedPole(RepeatedPole::new(N))),
-            Response::Butterworth => Some(Self::Butterworth(Butterworth::new())),
-            Response::Chebyshev1 { ripple_db } => Chebyshev1::new(ripple_db).map(Self::Chebyshev1),
+            Response::RepeatedPole => Ok(Self::RepeatedPole(RepeatedPole::new(N))),
+            Response::Butterworth => Ok(Self::Butterworth(Butterworth::new())),
+            Response::Bessel => Bessel::new()
+                .map(Self::Bessel)
+                .ok_or(BuildError::UnsupportedBesselOrder),
+            Response::Chebyshev1 { ripple_db } => Chebyshev1::new(ripple_db)
+                .map(Self::Chebyshev1)
+                .ok_or(BuildError::InvalidPassbandRipple),
         }
     }
 }
@@ -24,6 +30,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
         match self {
             Self::RepeatedPole(model) => model.derivative(state, input, derivative),
             Self::Butterworth(model) => model.derivative(state, input, derivative),
+            Self::Bessel(model) => model.derivative(state, input, derivative),
             Self::Chebyshev1(model) => model.derivative(state, input, derivative),
         }
     }
@@ -32,6 +39,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
         match self {
             Self::RepeatedPole(model) => model.output(state, input),
             Self::Butterworth(model) => model.output(state, input),
+            Self::Bessel(model) => model.output(state, input),
             Self::Chebyshev1(model) => model.output(state, input),
         }
     }
@@ -40,6 +48,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
         match self {
             Self::RepeatedPole(model) => model.equilibrium(input),
             Self::Butterworth(model) => model.equilibrium(input),
+            Self::Bessel(model) => model.equilibrium(input),
             Self::Chebyshev1(model) => model.equilibrium(input),
         }
     }
@@ -50,6 +59,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
                 <RepeatedPole<T> as ContinuousModel<T, N>>::max_normalized_step(model)
             }
             Self::Butterworth(model) => model.max_normalized_step(),
+            Self::Bessel(model) => model.max_normalized_step(),
             Self::Chebyshev1(model) => model.max_normalized_step(),
         }
     }

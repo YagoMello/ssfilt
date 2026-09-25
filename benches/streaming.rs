@@ -14,6 +14,7 @@ fn response_name(response: Response) -> &'static str {
     match response {
         Response::RepeatedPole => "repeated-pole",
         Response::Butterworth => "butterworth",
+        Response::Bessel => "bessel",
         Response::Chebyshev1 { .. } => "chebyshev-1",
         _ => "other",
     }
@@ -47,6 +48,7 @@ fn order_scaling(criterion: &mut Criterion) {
     for response in [
         Response::RepeatedPole,
         Response::Butterworth,
+        Response::Bessel,
         Response::Chebyshev1 { ripple_db: 0.5 },
     ] {
         benchmark_order::<1>(&mut group, response);

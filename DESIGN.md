@@ -88,6 +88,20 @@ It also means even-order ripple extends above unity after DC normalization;
 to `(0, 10*log10(2))` dB so the -3 dB normalization remains unambiguous for all
 orders.
 
+### Bessel
+
+Bessel uses roots of reverse Bessel polynomials for maximally flat group delay
+at DC. The poles are magnitude-normalized so normalized frequency one is the
+complete response's -3 dB point, then factored into the same unity-DC-gain real
+sections used by the other classical responses.
+
+The roots have no simple closed form and direct high-order polynomial root
+finding is ill-conditioned. The runtime therefore performs no root solving:
+validated prototypes for orders 1 through 25 are stored as real-section
+coefficients. This keeps construction deterministic, allocation-free, and
+`no_std`; larger Bessel orders fail explicitly rather than silently using
+unreliable coefficients. Low-Q sections are again placed first.
+
 ## Sample timing contract
 
 `update(u_new, dt)` advances from the preceding sample to the new sample.
@@ -153,8 +167,7 @@ updates preserve the preceding snapshot transactionally.
 2. Named case matrices, shrinking numerical properties, and CI quality gates. ✓
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
 4. Runtime integration diagnostics and benchmarks. ✓
-5. Chebyshev I and Bessel responses with explicit normalization conventions.
-   Chebyshev I is complete; Bessel is pending.
+5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics.
 7. Optional delayed group-delay equalization and offline forward-backward
    filtering as separate phase-handling approaches.
