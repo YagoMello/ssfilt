@@ -45,6 +45,32 @@ defines what is assumed between that sample and the preceding one:
 
 The first interval begins at `initial_input`, which defaults to zero.
 
+### Runtime-selected order
+
+The order is a const generic because that gives fixed-size, allocation-free
+state. Applications with a finite set of runtime-selectable orders can erase
+the concrete order behind the object-safe `StreamingFilter` trait:
+
+```rust
+# use ssfilt::{LowPass, StreamingFilter};
+# let order = 4;
+# let cutoff_hz = 20.0;
+let mut filter: Box<dyn StreamingFilter<Scalar = f64>> = match order {
+    2 => Box::new(LowPass::<2>::builder(cutoff_hz).build()?),
+    4 => Box::new(LowPass::<4>::builder(cutoff_hz).build()?),
+    8 => Box::new(LowPass::<8>::builder(cutoff_hz).build()?),
+    _ => return Err("unsupported filter order".into()),
+};
+
+let value = filter.update(1.0, 0.01)?;
+# assert!(value.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+This approach requires an allocator and exposes the common streaming methods;
+order-specific inherent methods remain available only on concrete `LowPass`
+values.
+
 ## Response families
 
 `Response::RepeatedPole` is the default and preserves the library's original

@@ -28,6 +28,17 @@ impl<T> IntegrationDiagnostics<T> {
         }
     }
 
+    pub(crate) const fn equilibrium_shortcut() -> Self {
+        Self {
+            accepted_steps: 0,
+            rejected_steps: 0,
+            derivative_evaluations: 0,
+            smallest_accepted_step_seconds: None,
+            largest_accepted_step_seconds: None,
+            equilibrium_shortcut: true,
+        }
+    }
+
     /// Returns the number of internal steps that advanced the state.
     #[must_use]
     pub const fn accepted_steps(&self) -> usize {
@@ -96,7 +107,7 @@ impl<T: Scalar> IntegrationDiagnostics<T> {
             largest_accepted_step_seconds: diagnostics
                 .largest_accepted_step
                 .map(|step| step / angular_cutoff),
-            equilibrium_shortcut: diagnostics.equilibrium_shortcut,
+            equilibrium_shortcut: false,
         }
     }
 }

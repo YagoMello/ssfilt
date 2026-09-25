@@ -75,3 +75,17 @@ fn integration_diagnostics_are_available_without_extending_the_trait() {
     assert!(diagnostics.smallest_accepted_step_seconds().unwrap() > 0.0);
     assert!(diagnostics.largest_accepted_step_seconds().unwrap() <= 0.01);
 }
+
+#[test]
+fn runtime_order_can_use_the_object_safe_streaming_trait() {
+    for order in [2, 4, 8] {
+        let mut filter: Box<dyn StreamingFilter<Scalar = f64>> = match order {
+            2 => Box::new(LowPass::<2>::builder(20.0).build().unwrap()),
+            4 => Box::new(LowPass::<4>::builder(20.0).build().unwrap()),
+            8 => Box::new(LowPass::<8>::builder(20.0).build().unwrap()),
+            _ => unreachable!(),
+        };
+        let output = filter.update(1.0, 0.01).unwrap();
+        assert!(output.is_finite());
+    }
+}

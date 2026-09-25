@@ -19,13 +19,6 @@ impl<T: Scalar> InputSegment<T> {
             InputModel::CurrentHold => self.end,
         }
     }
-
-    pub(crate) fn is_constant(self) -> bool {
-        match self.model {
-            InputModel::Linear => self.start == self.end,
-            InputModel::PreviousHold | InputModel::CurrentHold => true,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -46,8 +39,5 @@ mod tests {
 
         let current = InputSegment::new(2.0, 6.0, InputModel::CurrentHold);
         assert_eq!(current.value_at(0.0), 6.0);
-        assert!(current.is_constant());
-        assert!(previous.is_constant());
-        assert!(!linear.is_constant());
     }
 }

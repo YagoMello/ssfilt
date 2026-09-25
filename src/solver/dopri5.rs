@@ -11,7 +11,6 @@ pub(crate) struct SolverDiagnostics<T> {
     pub(crate) derivative_evaluations: usize,
     pub(crate) smallest_accepted_step: Option<T>,
     pub(crate) largest_accepted_step: Option<T>,
-    pub(crate) equilibrium_shortcut: bool,
 }
 
 impl<T> SolverDiagnostics<T> {
@@ -22,7 +21,6 @@ impl<T> SolverDiagnostics<T> {
             derivative_evaluations: 0,
             smallest_accepted_step: None,
             largest_accepted_step: None,
-            equilibrium_shortcut: false,
         }
     }
 }
@@ -49,19 +47,6 @@ where
     }
 
     let mut diagnostics = SolverDiagnostics::new();
-    if input.is_constant() {
-        let mut derivative = [T::zero(); N];
-        model.derivative(initial_state, input.value_at(T::zero()), &mut derivative);
-        diagnostics.derivative_evaluations = 1;
-        if derivative.iter().all(|value| *value == T::zero()) {
-            diagnostics.equilibrium_shortcut = true;
-            return Ok(IntegrationOutcome {
-                state: *initial_state,
-                diagnostics,
-            });
-        }
-    }
-
     let mut state = *initial_state;
     let mut position = T::zero();
     let mut step = normalized_duration.min(max_normalized_step);

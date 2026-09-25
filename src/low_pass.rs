@@ -95,6 +95,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             input_model: self.input_model,
             integration: self.integration,
             last_diagnostics: IntegrationDiagnostics::empty(),
+            at_equilibrium: true,
         })
     }
 }
@@ -115,6 +116,7 @@ pub struct LowPass<const N: usize, T: Scalar = f64> {
     input_model: InputModel,
     integration: IntegrationConfig<T>,
     last_diagnostics: IntegrationDiagnostics<T>,
+    at_equilibrium: bool,
 }
 
 impl<const N: usize, T: Scalar> LowPass<N, T> {
@@ -196,6 +198,24 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
             return Err(UpdateError::InvalidDeltaTime);
         }
 
+        let previous_input = self.previous_input;
+        let constant_at_equilibrium = self.at_equilibrium
+            && match self.input_model {
+                InputModel::Linear | InputModel::CurrentHold => input == previous_input,
+                InputModel::PreviousHold => true,
+            };
+        if constant_at_equilibrium {
+            let next_output = self.model.output(&self.state, input);
+            if !next_output.is_finite() {
+                return Err(UpdateError::NonFiniteState);
+            }
+            self.previous_input = input;
+            self.output = next_output;
+            self.last_diagnostics = IntegrationDiagnostics::equilibrium_shortcut();
+            self.at_equilibrium = input == previous_input;
+            return Ok(next_output);
+        }
+
         let mut max_normalized_step = self.model.max_normalized_step();
         if let Some(max_step_seconds) = self.integration.max_step_seconds {
             let configured = self.angular_cutoff * max_step_seconds;
@@ -224,6 +244,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         self.output = next_output;
         self.last_diagnostics =
             IntegrationDiagnostics::from_solver(outcome.diagnostics, self.angular_cutoff);
+        self.at_equilibrium = false;
         Ok(next_output)
     }
 
@@ -236,6 +257,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         self.previous_input = T::zero();
         self.output = T::zero();
         self.last_diagnostics = IntegrationDiagnostics::empty();
+        self.at_equilibrium = true;
     }
 
     fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
@@ -246,6 +268,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         self.previous_input = input;
         self.output = input;
         self.last_diagnostics = IntegrationDiagnostics::empty();
+        self.at_equilibrium = true;
         Ok(())
     }
 }
@@ -322,7 +345,7 @@ mod tests {
         assert!(diagnostics.used_equilibrium_shortcut());
         assert_eq!(diagnostics.accepted_steps(), 0);
         assert_eq!(diagnostics.rejected_steps(), 0);
-        assert_eq!(diagnostics.derivative_evaluations(), 1);
+        assert_eq!(diagnostics.derivative_evaluations(), 0);
         assert_eq!(diagnostics.smallest_accepted_step_seconds(), None);
         assert_eq!(diagnostics.largest_accepted_step_seconds(), None);
 
@@ -354,6 +377,7 @@ mod tests {
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
         assert_eq!(filter.last_diagnostics, before.last_diagnostics);
+        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
     }
 
     #[rstest]
@@ -377,6 +401,7 @@ mod tests {
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
         assert_eq!(filter.last_diagnostics, before.last_diagnostics);
+        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
     }
 
     #[test]
@@ -401,6 +426,7 @@ mod tests {
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
         assert_eq!(filter.last_diagnostics, before.last_diagnostics);
+        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
     }
 
     #[rstest]
@@ -459,6 +485,21 @@ mod tests {
             .build()
             .unwrap();
         assert!(current.update(1.0, 0.1).unwrap() > 0.0);
+    }
+
+    #[test]
+    fn previous_hold_shortcuts_only_the_old_equilibrium_interval() {
+        let mut filter = LowPass::<3>::builder(1.0)
+            .input_model(InputModel::PreviousHold)
+            .build()
+            .unwrap();
+
+        assert_eq!(filter.update(1.0, 100.0).unwrap(), 0.0);
+        assert!(filter.last_diagnostics().used_equilibrium_shortcut());
+        assert!(!filter.at_equilibrium);
+
+        assert!(filter.update(1.0, 0.1).unwrap() > 0.0);
+        assert!(!filter.last_diagnostics().used_equilibrium_shortcut());
     }
 
     #[test]
