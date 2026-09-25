@@ -197,6 +197,21 @@ depend on the steady-state boundary condition. Validation of lengths, input,
 and intervals finishes before the output is written; an integration failure
 may leave a partial output.
 
+## Streaming phase equalization design boundary
+
+A future delayed all-pass equalizer should be designed against a selected
+frequency band and report the additional group delay it introduces. The
+continuous-time all-pass model can preserve magnitude while adding delay;
+however, merely feeding it successive endpoint outputs of an existing filter
+would force an interpolation of the unobserved output between samples. For
+irregular timing, that shortcut would change the magnitude and delay response
+in ways the analytic all-pass design cannot predict. A reliable implementation
+should advance the filter and equalizer states together at the integrator's
+internal stages, so the equalizer sees the filter's actual continuous output.
+This needs a coupled-state solver while retaining fixed-size storage and
+transactional updates. The public equalizer API will follow that numerical
+foundation.
+
 ## Integration policy
 
 Dormand-Prince 5(4) supplies a fifth-order candidate and a fourth-order local

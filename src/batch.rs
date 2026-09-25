@@ -159,7 +159,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
 
     use approx::assert_relative_eq;
 
@@ -249,5 +249,64 @@ mod tests {
             Err(BatchError::InvalidInterval)
         );
         assert_eq!(output, [9.0; 3]);
+    }
+
+    #[test]
+    fn finite_record_edges_and_lengths_are_explicit() {
+        let filter = LowPass::<1>::builder(1.0).build().unwrap();
+        let mut empty = [];
+        forward_backward_into(&filter, &[], &[], &mut empty).unwrap();
+
+        let mut singleton = [0.0];
+        forward_backward_into(&filter, &[3.0], &[], &mut singleton).unwrap();
+        assert_eq!(singleton, [3.0]);
+
+        let mut output = [7.0; 2];
+        assert_eq!(
+            forward_backward_into(&filter, &[1.0], &[], &mut output),
+            Err(BatchError::OutputLengthMismatch)
+        );
+        assert_eq!(output, [7.0; 2]);
+        assert_eq!(
+            forward_backward_into(&filter, &[1.0, 2.0], &[], &mut output),
+            Err(BatchError::IntervalLengthMismatch)
+        );
+        assert_eq!(output, [7.0; 2]);
+    }
+
+    #[test]
+    fn uniform_cutoff_sine_has_squared_gain_and_near_zero_phase_in_the_interior() {
+        let filter = LowPass::<2>::builder(2.0)
+            .response(Response::Butterworth)
+            .input_model(InputModel::Linear)
+            .build()
+            .unwrap();
+        let samples_per_period = 128;
+        let periods = 40;
+        let sample_count = samples_per_period * periods + 1;
+        let dt_seconds = 1.0 / (2.0 * samples_per_period as f64);
+        let mut input = std::vec![0.0; sample_count];
+        let mut output = std::vec![0.0; sample_count];
+        for (index, sample) in input.iter_mut().enumerate() {
+            let phase = core::f64::consts::TAU * index as f64 / samples_per_period as f64;
+            *sample = phase.sin();
+        }
+
+        forward_backward_uniform_into(&filter, &input, dt_seconds, &mut output).unwrap();
+
+        let first = 17 * samples_per_period;
+        let last = 23 * samples_per_period;
+        let mut in_phase = 0.0;
+        let mut quadrature = 0.0;
+        for (index, &sample) in output.iter().enumerate().take(last).skip(first) {
+            let phase = core::f64::consts::TAU * index as f64 / samples_per_period as f64;
+            in_phase += sample * phase.sin();
+            quadrature += sample * phase.cos();
+        }
+        let measured_count = (last - first) as f64;
+        let gain = 2.0 * in_phase / measured_count;
+        let phase_error = (2.0 * quadrature / measured_count).atan2(gain);
+        assert_relative_eq!(gain, 0.5, epsilon = 0.001);
+        assert!(phase_error.abs() < 0.001);
     }
 }
