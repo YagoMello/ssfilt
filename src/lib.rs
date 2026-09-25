@@ -13,18 +13,18 @@ mod config;
 mod error;
 mod low_pass;
 mod model;
-mod real;
+mod scalar;
 mod solver;
 
 pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use error::{BuildError, ResetError, UpdateError};
 pub use low_pass::{LowPass, LowPassBuilder};
-pub use real::Real;
+pub use scalar::Scalar;
 
 /// Common behavior for a stateful streaming filter.
 pub trait StreamingFilter {
     /// Numeric scalar used by this filter.
-    type Scalar: Real;
+    type Scalar: crate::Scalar;
 
     /// Advances the filter by `dt_seconds` and returns the new output.
     ///

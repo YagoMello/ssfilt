@@ -1,4 +1,4 @@
-use crate::Real;
+use crate::Scalar;
 
 /// Assumption made about the input between consecutive samples.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -22,7 +22,7 @@ pub struct Tolerances<T> {
     pub relative: T,
 }
 
-impl<T: Real> Tolerances<T> {
+impl<T: Scalar> Tolerances<T> {
     /// Creates a tolerance pair.
     #[must_use]
     pub const fn new(absolute: T, relative: T) -> Self {
@@ -37,12 +37,15 @@ impl<T: Real> Tolerances<T> {
     }
 }
 
-impl<T: Real> Default for Tolerances<T> {
+impl Default for Tolerances<f32> {
     fn default() -> Self {
-        Self::new(
-            T::default_absolute_tolerance(),
-            T::default_relative_tolerance(),
-        )
+        Self::new(1.0e-6, 1.0e-4)
+    }
+}
+
+impl Default for Tolerances<f64> {
+    fn default() -> Self {
+        Self::new(1.0e-10, 1.0e-7)
     }
 }
 
@@ -60,7 +63,7 @@ pub struct IntegrationConfig<T> {
     pub max_step_attempts: usize,
 }
 
-impl<T: Real> IntegrationConfig<T> {
+impl<T: Scalar> IntegrationConfig<T> {
     pub(crate) fn is_valid(self) -> bool {
         self.tolerances.is_valid()
             && self
@@ -70,7 +73,17 @@ impl<T: Real> IntegrationConfig<T> {
     }
 }
 
-impl<T: Real> Default for IntegrationConfig<T> {
+impl Default for IntegrationConfig<f32> {
+    fn default() -> Self {
+        Self {
+            tolerances: Tolerances::default(),
+            max_step_seconds: None,
+            max_step_attempts: 4_096,
+        }
+    }
+}
+
+impl Default for IntegrationConfig<f64> {
     fn default() -> Self {
         Self {
             tolerances: Tolerances::default(),

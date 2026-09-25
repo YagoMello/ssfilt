@@ -1,10 +1,10 @@
 use crate::model::ContinuousModel;
-use crate::real::from_f64;
-use crate::{IntegrationConfig, Real, UpdateError};
+use crate::scalar::from_f64;
+use crate::{IntegrationConfig, Scalar, UpdateError};
 
 use super::InputSegment;
 
-pub(crate) fn integrate<T: Real, M, const N: usize>(
+pub(crate) fn integrate<T: Scalar, M, const N: usize>(
     model: &M,
     initial_state: &[T; N],
     input: InputSegment<T>,
@@ -70,7 +70,7 @@ where
 }
 
 #[allow(clippy::too_many_lines)]
-fn dormand_prince_step<T: Real, M, const N: usize>(
+fn dormand_prince_step<T: Scalar, M, const N: usize>(
     model: &M,
     state: &[T; N],
     input: InputSegment<T>,
@@ -188,7 +188,7 @@ where
     (fifth_order, error)
 }
 
-fn scaled_error<T: Real, const N: usize>(
+fn scaled_error<T: Scalar, const N: usize>(
     state: &[T; N],
     candidate: &[T; N],
     error: &[T; N],
@@ -206,7 +206,7 @@ fn scaled_error<T: Real, const N: usize>(
     norm
 }
 
-fn accepted_factor<T: Real>(error_norm: T) -> T {
+fn accepted_factor<T: Scalar>(error_norm: T) -> T {
     if error_norm == T::zero() {
         return from_f64(5.0);
     }
@@ -214,21 +214,21 @@ fn accepted_factor<T: Real>(error_norm: T) -> T {
     raw.max(from_f64(0.2)).min(from_f64(5.0))
 }
 
-fn rejected_factor<T: Real>(error_norm: T) -> T {
+fn rejected_factor<T: Scalar>(error_norm: T) -> T {
     let raw = from_f64::<T>(0.9) * error_norm.powf(from_f64(-0.2));
     raw.max(from_f64(0.1)).min(from_f64(0.5))
 }
 
-fn all_finite<T: Real, const N: usize>(values: &[T; N]) -> bool {
+fn all_finite<T: Scalar, const N: usize>(values: &[T; N]) -> bool {
     values.iter().all(|value| value.is_finite())
 }
 
-fn fraction<T: Real>(numerator: f64, denominator: f64) -> T {
+fn fraction<T: Scalar>(numerator: f64, denominator: f64) -> T {
     from_f64::<T>(numerator) / from_f64::<T>(denominator)
 }
 
 #[cfg(test)]
-pub(crate) fn integrate_euler<T: Real, M, const N: usize>(
+pub(crate) fn integrate_euler<T: Scalar, M, const N: usize>(
     model: &M,
     initial_state: &[T; N],
     input: InputSegment<T>,
@@ -239,10 +239,10 @@ where
     M: ContinuousModel<T, N>,
 {
     let mut state = *initial_state;
-    let step = normalized_duration / crate::real::from_usize::<T>(steps);
+    let step = normalized_duration / crate::scalar::from_usize::<T>(steps);
     let mut derivative = [T::zero(); N];
     for index in 0..steps {
-        let position = crate::real::from_usize::<T>(index) * step;
+        let position = crate::scalar::from_usize::<T>(index) * step;
         model.derivative(
             &state,
             input.value_at(position / normalized_duration),

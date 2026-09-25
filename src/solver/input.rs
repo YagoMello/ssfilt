@@ -1,4 +1,4 @@
-use crate::{InputModel, Real};
+use crate::{InputModel, Scalar};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InputSegment<T> {
@@ -7,7 +7,7 @@ pub(crate) struct InputSegment<T> {
     model: InputModel,
 }
 
-impl<T: Real> InputSegment<T> {
+impl<T: Scalar> InputSegment<T> {
     pub(crate) const fn new(start: T, end: T, model: InputModel) -> Self {
         Self { start, end, model }
     }

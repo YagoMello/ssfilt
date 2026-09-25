@@ -1,20 +1,23 @@
 use crate::model::{ContinuousModel, RepeatedPole};
 use crate::solver::{InputSegment, integrate};
 use crate::{
-    BuildError, InputModel, IntegrationConfig, Real, ResetError, StreamingFilter, UpdateError,
+    BuildError, InputModel, IntegrationConfig, ResetError, Scalar, StreamingFilter, UpdateError,
 };
 
 /// Builder for a repeated-pole continuous-time low-pass filter.
 #[derive(Clone, Copy, Debug)]
-pub struct LowPassBuilder<const N: usize, T: Real = f64> {
+pub struct LowPassBuilder<const N: usize, T: Scalar = f64> {
     cutoff_hz: T,
     input_model: InputModel,
     initial_input: T,
     integration: IntegrationConfig<T>,
 }
 
-impl<const N: usize, T: Real> LowPassBuilder<N, T> {
-    fn new(cutoff_hz: T) -> Self {
+impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
+    fn new(cutoff_hz: T) -> Self
+    where
+        IntegrationConfig<T>: Default,
+    {
         Self {
             cutoff_hz,
             input_model: InputModel::default(),
@@ -90,7 +93,7 @@ impl<const N: usize, T: Real> LowPassBuilder<N, T> {
 /// `N` is the number of identical real poles. `cutoff_hz` denotes the −3 dB
 /// frequency of the complete filter, not the location of each individual pole.
 #[derive(Clone, Copy, Debug)]
-pub struct LowPass<const N: usize, T: Real = f64> {
+pub struct LowPass<const N: usize, T: Scalar = f64> {
     model: RepeatedPole<T>,
     state: [T; N],
     previous_input: T,
@@ -101,11 +104,14 @@ pub struct LowPass<const N: usize, T: Real = f64> {
     integration: IntegrationConfig<T>,
 }
 
-impl<const N: usize, T: Real> LowPass<N, T> {
+impl<const N: usize, T: Scalar> LowPass<N, T> {
     /// Starts configuring a repeated-pole filter with total cutoff
     /// `cutoff_hz`.
     #[must_use]
-    pub fn builder(cutoff_hz: T) -> LowPassBuilder<N, T> {
+    pub fn builder(cutoff_hz: T) -> LowPassBuilder<N, T>
+    where
+        IntegrationConfig<T>: Default,
+    {
         LowPassBuilder::new(cutoff_hz)
     }
 
@@ -147,7 +153,7 @@ impl<const N: usize, T: Real> LowPass<N, T> {
     }
 }
 
-impl<const N: usize, T: Real> StreamingFilter for LowPass<N, T> {
+impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {

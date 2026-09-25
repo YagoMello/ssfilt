@@ -1,13 +1,13 @@
-use crate::Real;
+use crate::Scalar;
 use crate::model::ContinuousModel;
-use crate::real::from_usize;
+use crate::scalar::from_usize;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RepeatedPole<T> {
     rate: T,
 }
 
-impl<T: Real> RepeatedPole<T> {
+impl<T: Scalar> RepeatedPole<T> {
     pub(crate) fn new(order: usize) -> Self {
         // exp_m1(ln(2) / N) avoids cancellation as N grows.
         let denominator = (T::LN_2() / from_usize::<T>(order)).exp_m1().sqrt();
@@ -22,7 +22,7 @@ impl<T: Real> RepeatedPole<T> {
     }
 }
 
-impl<T: Real, const N: usize> ContinuousModel<T, N> for RepeatedPole<T> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, N> for RepeatedPole<T> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         for index in 0..N {
