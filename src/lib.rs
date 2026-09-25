@@ -13,12 +13,14 @@ mod config;
 mod error;
 mod low_pass;
 mod model;
+mod response;
 mod scalar;
 mod solver;
 
 pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use error::{BuildError, ResetError, UpdateError};
 pub use low_pass::{LowPass, LowPassBuilder};
+pub use response::Response;
 pub use scalar::Scalar;
 
 /// Common behavior for a stateful streaming filter.

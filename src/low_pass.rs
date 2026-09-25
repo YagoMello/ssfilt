@@ -1,13 +1,15 @@
-use crate::model::{ContinuousModel, RepeatedPole};
+use crate::model::{ContinuousModel, LowPassModel};
 use crate::solver::{InputSegment, integrate};
 use crate::{
-    BuildError, InputModel, IntegrationConfig, ResetError, Scalar, StreamingFilter, UpdateError,
+    BuildError, InputModel, IntegrationConfig, ResetError, Response, Scalar, StreamingFilter,
+    UpdateError,
 };
 
-/// Builder for a repeated-pole continuous-time low-pass filter.
+/// Builder for a continuous-time low-pass filter.
 #[derive(Clone, Copy, Debug)]
 pub struct LowPassBuilder<const N: usize, T: Scalar = f64> {
     cutoff_hz: T,
+    response: Response,
     input_model: InputModel,
     initial_input: T,
     integration: IntegrationConfig<T>,
@@ -20,10 +22,18 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
     {
         Self {
             cutoff_hz,
+            response: Response::default(),
             input_model: InputModel::default(),
             initial_input: T::zero(),
             integration: IntegrationConfig::default(),
         }
+    }
+
+    /// Selects the analog low-pass response family.
+    #[must_use]
+    pub const fn response(mut self, response: Response) -> Self {
+        self.response = response;
+        self
     }
 
     /// Selects how the input is reconstructed between samples.
@@ -72,9 +82,8 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             return Err(BuildError::InvalidCutoff);
         }
 
-        let model = RepeatedPole::new(N);
-        let state =
-            <RepeatedPole<T> as ContinuousModel<T, N>>::equilibrium(&model, self.initial_input);
+        let model = LowPassModel::new(self.response);
+        let state = model.equilibrium(self.initial_input);
         Ok(LowPass {
             model,
             state,
@@ -82,31 +91,32 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             output: self.initial_input,
             cutoff_hz: self.cutoff_hz,
             angular_cutoff,
+            response: self.response,
             input_model: self.input_model,
             integration: self.integration,
         })
     }
 }
 
-/// An allocation-free, continuous-time repeated-pole low-pass filter.
+/// An allocation-free, continuous-time low-pass filter.
 ///
-/// `N` is the number of identical real poles. `cutoff_hz` denotes the −3 dB
-/// frequency of the complete filter, not the location of each individual pole.
+/// `N` is the filter order. `cutoff_hz` denotes the −3 dB frequency of the
+/// complete filter for every supported [`Response`].
 #[derive(Clone, Copy, Debug)]
 pub struct LowPass<const N: usize, T: Scalar = f64> {
-    model: RepeatedPole<T>,
+    model: LowPassModel<T, N>,
     state: [T; N],
     previous_input: T,
     output: T,
     cutoff_hz: T,
     angular_cutoff: T,
+    response: Response,
     input_model: InputModel,
     integration: IntegrationConfig<T>,
 }
 
 impl<const N: usize, T: Scalar> LowPass<N, T> {
-    /// Starts configuring a repeated-pole filter with total cutoff
-    /// `cutoff_hz`.
+    /// Starts configuring a low-pass filter with total cutoff `cutoff_hz`.
     #[must_use]
     pub fn builder(cutoff_hz: T) -> LowPassBuilder<N, T>
     where
@@ -119,6 +129,12 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     #[must_use]
     pub const fn cutoff_hz(&self) -> T {
         self.cutoff_hz
+    }
+
+    /// Returns the selected response family.
+    #[must_use]
+    pub const fn response(&self) -> Response {
+        self.response
     }
 
     /// Advances the filter and returns its new output.
@@ -169,8 +185,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
             return Err(UpdateError::InvalidDeltaTime);
         }
 
-        let mut max_normalized_step =
-            <RepeatedPole<T> as ContinuousModel<T, N>>::max_normalized_step(&self.model);
+        let mut max_normalized_step = self.model.max_normalized_step();
         if let Some(max_step_seconds) = self.integration.max_step_seconds {
             let configured = self.angular_cutoff * max_step_seconds;
             if !configured.is_finite() {
@@ -222,12 +237,19 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::cast_lossless, clippy::cast_precision_loss, clippy::float_cmp)]
+    #![allow(
+        clippy::cast_lossless,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        clippy::float_cmp
+    )]
 
     use approx::assert_relative_eq;
 
     use super::*;
     use crate::Tolerances;
+    use crate::model::RepeatedPole;
 
     #[test]
     fn builder_rejects_invalid_values() {
@@ -365,7 +387,7 @@ mod tests {
         let mut filter = LowPass::<1>::builder(cutoff_hz).build().unwrap();
         let actual = filter.update(1.0, dt).unwrap();
         let normalized_time = core::f64::consts::TAU * cutoff_hz * dt;
-        let scaled_time = filter.model.rate() * normalized_time;
+        let scaled_time = RepeatedPole::<f64>::new(1).rate() * normalized_time;
         let expected = 1.0 - -(-scaled_time).exp_m1() / scaled_time;
         assert_relative_eq!(actual, expected, epsilon = 1.0e-9);
     }
@@ -420,6 +442,7 @@ mod tests {
     #[test]
     fn f32_runtime_is_supported() {
         let mut filter = LowPass::<4, f32>::builder(10.0)
+            .response(Response::Butterworth)
             .input_model(InputModel::CurrentHold)
             .build()
             .unwrap();
@@ -430,18 +453,23 @@ mod tests {
 
     #[test]
     fn simulated_cutoff_gain_matches_minus_three_db() {
-        check_cutoff_gain::<1>();
-        check_cutoff_gain::<2>();
-        check_cutoff_gain::<4>();
-        check_cutoff_gain::<6>();
+        for response in [Response::RepeatedPole, Response::Butterworth] {
+            check_cutoff_gain::<1>(response);
+            check_cutoff_gain::<2>(response);
+            check_cutoff_gain::<4>(response);
+            check_cutoff_gain::<6>(response);
+        }
     }
 
-    fn check_cutoff_gain<const N: usize>() {
+    fn check_cutoff_gain<const N: usize>(response: Response) {
         let cutoff_hz = 5.0;
         let samples_per_period = 200;
         let periods = 20;
         let dt = 1.0 / (cutoff_hz * samples_per_period as f64);
-        let mut filter = LowPass::<N>::builder(cutoff_hz).build().unwrap();
+        let mut filter = LowPass::<N>::builder(cutoff_hz)
+            .response(response)
+            .build()
+            .unwrap();
         let mut in_phase = 0.0;
         let mut quadrature = 0.0;
         let measured_periods = 5;
@@ -459,6 +487,78 @@ mod tests {
         let measured_samples = (measured_periods * samples_per_period) as f64;
         let gain = 2.0 * in_phase.hypot(quadrature) / measured_samples;
         assert_relative_eq!(gain, 1.0 / 2.0_f64.sqrt(), epsilon = 8.0e-5);
+    }
+
+    #[test]
+    fn butterworth_streaming_response_matches_closed_form() {
+        for frequency_ratio in [0.25, 1.0, 2.0] {
+            check_butterworth_gain::<2>(frequency_ratio);
+            check_butterworth_gain::<3>(frequency_ratio);
+            check_butterworth_gain::<4>(frequency_ratio);
+        }
+    }
+
+    fn check_butterworth_gain<const N: usize>(frequency_ratio: f64) {
+        let cutoff_hz = 2.0;
+        let frequency_hz = cutoff_hz * frequency_ratio;
+        let samples_per_period = 300;
+        let periods = 40;
+        let measured_periods = 8;
+        let dt = 1.0 / (frequency_hz * f64::from(samples_per_period));
+        let mut filter = LowPass::<N>::builder(cutoff_hz)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let first_measured = (periods - measured_periods) * samples_per_period;
+        let mut in_phase = 0.0;
+        let mut quadrature = 0.0;
+
+        for index in 1..=periods * samples_per_period {
+            let phase = core::f64::consts::TAU * f64::from(index) / f64::from(samples_per_period);
+            let output = filter.update(phase.sin(), dt).unwrap();
+            if index > first_measured {
+                in_phase += output * phase.sin();
+                quadrature += output * phase.cos();
+            }
+        }
+
+        let measured_samples = f64::from(measured_periods * samples_per_period);
+        let actual = 2.0 * in_phase.hypot(quadrature) / measured_samples;
+        let expected = 1.0 / (1.0 + frequency_ratio.powi(2 * N as i32)).sqrt();
+        assert_relative_eq!(actual, expected, epsilon = 1.5e-4, max_relative = 3.0e-4);
+    }
+
+    #[test]
+    fn response_selection_is_preserved() {
+        let default = LowPass::<2>::builder(10.0).build().unwrap();
+        assert_eq!(default.response(), Response::RepeatedPole);
+
+        let butterworth = LowPass::<2>::builder(10.0)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        assert_eq!(butterworth.response(), Response::Butterworth);
+    }
+
+    #[test]
+    fn butterworth_normalized_time_scaling_is_invariant() {
+        let samples = [0.5, -0.25, 1.5, 1.0, -0.5];
+        let dts = [0.01, 0.007, 0.013, 0.02, 0.005];
+        let scale = 37.0;
+        let mut slow = LowPass::<5>::builder(2.0)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let mut fast = LowPass::<5>::builder(2.0 * scale)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+
+        for (sample, dt) in samples.into_iter().zip(dts) {
+            let slow_output = slow.update(sample, dt).unwrap();
+            let fast_output = fast.update(sample, dt / scale).unwrap();
+            assert_relative_eq!(slow_output, fast_output, epsilon = 2.0e-12);
+        }
     }
 
     #[test]
@@ -538,7 +638,7 @@ mod tests {
         let actual = filter.update(1.0, 0.05).unwrap();
 
         let normalized_time = core::f64::consts::TAU * 8.0 * 0.05;
-        let rate = filter.model.rate();
+        let rate = RepeatedPole::<f64>::new(3).rate();
         let scaled_time = rate * normalized_time;
         let expected = 1.0 - (-scaled_time).exp() * (1.0 + scaled_time + scaled_time.powi(2) / 2.0);
         assert_relative_eq!(actual, expected, epsilon = 2.0e-10);

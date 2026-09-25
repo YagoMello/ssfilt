@@ -5,24 +5,26 @@ irregularly sampled signals. Instead of designing a digital filter for one
 fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
-The current milestone intentionally provides one carefully tested filter:
+The current milestone intentionally provides one carefully tested low-pass
+filter with two response families:
 
-- repeated-pole low-pass response;
+- repeated-pole and Butterworth responses;
 - total-filter cutoff normalized to -3 dB;
 - adaptive Dormand-Prince 5(4) integration;
 - linear, previous-value hold, and current-value hold input models;
 - `f32`, `f64`, `no_std`, and allocation-free operation;
 - transactional errors and explicit steady-state reset.
 
-Butterworth, Chebyshev, Bessel, high-pass, band-pass, and phase equalization
-are planned, but are not yet part of the API.
+Chebyshev, Bessel, high-pass, band-pass, and phase equalization are planned,
+but are not yet part of the API.
 
 ## Example
 
 ```rust
-use ssfilt::{InputModel, LowPass};
+use ssfilt::{InputModel, LowPass, Response};
 
 let mut filter = LowPass::<4>::builder(20.0)
+    .response(Response::Butterworth)
     .input_model(InputModel::Linear)
     .initial_input(0.0)
     .build()?;
@@ -42,17 +44,37 @@ defines what is assumed between that sample and the preceding one:
 
 The first interval begins at `initial_input`, which defaults to zero.
 
+## Response families
+
+`Response::RepeatedPole` is the default and preserves the library's original
+design. Every pole is real and identical. The complete filter is normalized to
+the requested -3 dB cutoff.
+
+`Response::Butterworth` provides a maximally flat passband. It is realized as
+a cascade of normalized real first-/second-order continuous sections rather
+than an expanded denominator polynomial. Low-Q sections precede high-Q
+sections to reduce internal peaking.
+
 ## Cutoff convention
 
-For order `N`, the repeated pole is placed at
+For `Response::RepeatedPole` of order `N`, the repeated pole is placed at
 
 ```text
 p = omega_c / sqrt(2^(1/N) - 1)
 ```
 
-so `cutoff_hz` is the -3 dB frequency of the complete filter. Internally the
-model uses normalized time `tau = 2*pi*cutoff_hz*t`, preventing absolute cutoff
+Butterworth is naturally -3 dB at its normalized cutoff. Therefore,
+`cutoff_hz` has the same whole-filter meaning for both families. Internally the
+models use normalized time `tau = 2*pi*cutoff_hz*t`, preventing absolute cutoff
 frequency from creating huge polynomial coefficients.
+
+## Scalar types
+
+The public `Scalar` trait is sealed and implemented for `f32` and `f64`. The
+algorithms use `num-traits`, but a scalar is exposed as supported only after its
+error behavior, precision, defaults, and `no_std` characteristics have been
+validated. Precision-specific integration defaults live in
+`IntegrationConfig`, not in the scalar trait.
 
 ## Error behavior
 

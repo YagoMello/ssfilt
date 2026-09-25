@@ -1,5 +1,9 @@
+mod butterworth;
+mod low_pass;
 mod repeated_pole;
 
+pub(crate) use butterworth::Butterworth;
+pub(crate) use low_pass::LowPassModel;
 pub(crate) use repeated_pole::RepeatedPole;
 
 use crate::Scalar;

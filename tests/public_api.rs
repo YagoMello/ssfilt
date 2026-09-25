@@ -1,5 +1,5 @@
 use approx::assert_relative_eq;
-use ssfilt::{InputModel, LowPass, StreamingFilter, UpdateError};
+use ssfilt::{InputModel, LowPass, Response, StreamingFilter, UpdateError};
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
 where
@@ -47,7 +47,10 @@ fn error_does_not_change_subsequent_behavior() {
 
 #[test]
 fn public_reset_establishes_a_new_equilibrium() {
-    let mut filter = LowPass::<6>::builder(100.0).build().unwrap();
+    let mut filter = LowPass::<6>::builder(100.0)
+        .response(Response::Butterworth)
+        .build()
+        .unwrap();
     filter.reset_to_steady(42.0).unwrap();
     assert_relative_eq!(filter.update(42.0, 50.0).unwrap(), 42.0, epsilon = 0.0);
 }
