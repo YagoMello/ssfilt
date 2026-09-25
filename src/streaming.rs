@@ -10,9 +10,9 @@ pub(crate) struct StreamingCore<T, M, const N: usize> {
     pub(crate) state: [T; N],
     pub(crate) previous_input: T,
     pub(crate) output: T,
-    time_scale: T,
-    input_model: InputModel,
-    integration: IntegrationConfig<T>,
+    pub(crate) time_scale: T,
+    pub(crate) input_model: InputModel,
+    pub(crate) integration: IntegrationConfig<T>,
     pub(crate) last_diagnostics: IntegrationDiagnostics<T>,
     pub(crate) at_equilibrium: bool,
 }

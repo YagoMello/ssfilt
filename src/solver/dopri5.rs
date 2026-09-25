@@ -1,8 +1,41 @@
+use core::ops::{Index, IndexMut};
+
 use crate::model::ContinuousModel;
 use crate::scalar::from_f64;
 use crate::{IntegrationConfig, Scalar, UpdateError};
 
 use super::InputSegment;
+
+/// Fixed-size state accessible componentwise by the adaptive solver.
+pub(crate) trait SolverState<T: Scalar>:
+    Copy + Index<usize, Output = T> + IndexMut<usize>
+{
+    const LEN: usize;
+
+    fn zero() -> Self;
+}
+
+impl<T: Scalar, const N: usize> SolverState<T> for [T; N] {
+    const LEN: usize = N;
+
+    fn zero() -> Self {
+        [T::zero(); N]
+    }
+}
+
+/// Derivatives for a solver state, including coupled filter states.
+pub(crate) trait DifferentialModel<T: Scalar, S: SolverState<T>> {
+    fn derivative(&self, state: &S, input: T, derivative: &mut S);
+}
+
+impl<T: Scalar, M, const N: usize> DifferentialModel<T, [T; N]> for M
+where
+    M: ContinuousModel<T, N>,
+{
+    fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
+        ContinuousModel::derivative(self, state, input, derivative);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SolverDiagnostics<T> {
@@ -26,21 +59,22 @@ impl<T> SolverDiagnostics<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct IntegrationOutcome<T, const N: usize> {
-    pub(crate) state: [T; N],
+pub(crate) struct IntegrationOutcome<T, S> {
+    pub(crate) state: S,
     pub(crate) diagnostics: SolverDiagnostics<T>,
 }
 
-pub(crate) fn integrate<T: Scalar, M, const N: usize>(
+pub(crate) fn integrate<T: Scalar, M, S>(
     model: &M,
-    initial_state: &[T; N],
+    initial_state: &S,
     input: InputSegment<T>,
     normalized_duration: T,
     max_normalized_step: T,
     config: IntegrationConfig<T>,
-) -> Result<IntegrationOutcome<T, N>, UpdateError>
+) -> Result<IntegrationOutcome<T, S>, UpdateError>
 where
-    M: ContinuousModel<T, N>,
+    M: DifferentialModel<T, S>,
+    S: SolverState<T>,
 {
     if !normalized_duration.is_finite() || normalized_duration <= T::zero() {
         return Err(UpdateError::InvalidDeltaTime);
@@ -103,30 +137,31 @@ where
 }
 
 #[allow(clippy::too_many_lines)]
-fn dormand_prince_step<T: Scalar, M, const N: usize>(
+fn dormand_prince_step<T: Scalar, M, S>(
     model: &M,
-    state: &[T; N],
+    state: &S,
     input: InputSegment<T>,
     position: T,
     step: T,
     total: T,
-) -> ([T; N], [T; N])
+) -> (S, S)
 where
-    M: ContinuousModel<T, N>,
+    M: DifferentialModel<T, S>,
+    S: SolverState<T>,
 {
-    let mut k1 = [T::zero(); N];
-    let mut k2 = [T::zero(); N];
-    let mut k3 = [T::zero(); N];
-    let mut k4 = [T::zero(); N];
-    let mut k5 = [T::zero(); N];
-    let mut k6 = [T::zero(); N];
-    let mut k7 = [T::zero(); N];
-    let mut temporary = [T::zero(); N];
+    let mut k1 = S::zero();
+    let mut k2 = S::zero();
+    let mut k3 = S::zero();
+    let mut k4 = S::zero();
+    let mut k5 = S::zero();
+    let mut k6 = S::zero();
+    let mut k7 = S::zero();
+    let mut temporary = S::zero();
 
     model.derivative(state, input.value_at(position / total), &mut k1);
 
     let c2 = fraction::<T>(1.0, 5.0);
-    for index in 0..N {
+    for index in 0..S::LEN {
         temporary[index] = state[index] + step * c2 * k1[index];
     }
     model.derivative(
@@ -136,7 +171,7 @@ where
     );
 
     let c3 = fraction::<T>(3.0, 10.0);
-    for index in 0..N {
+    for index in 0..S::LEN {
         temporary[index] = state[index]
             + step * (fraction::<T>(3.0, 40.0) * k1[index] + fraction::<T>(9.0, 40.0) * k2[index]);
     }
@@ -147,7 +182,7 @@ where
     );
 
     let c4 = fraction::<T>(4.0, 5.0);
-    for index in 0..N {
+    for index in 0..S::LEN {
         temporary[index] = state[index]
             + step
                 * (fraction::<T>(44.0, 45.0) * k1[index] - fraction::<T>(56.0, 15.0) * k2[index]
@@ -160,7 +195,7 @@ where
     );
 
     let c5 = fraction::<T>(8.0, 9.0);
-    for index in 0..N {
+    for index in 0..S::LEN {
         temporary[index] = state[index]
             + step
                 * (fraction::<T>(19_372.0, 6_561.0) * k1[index]
@@ -174,7 +209,7 @@ where
         &mut k5,
     );
 
-    for index in 0..N {
+    for index in 0..S::LEN {
         temporary[index] = state[index]
             + step
                 * (fraction::<T>(9_017.0, 3_168.0) * k1[index]
@@ -189,8 +224,8 @@ where
         &mut k6,
     );
 
-    let mut fifth_order = [T::zero(); N];
-    for index in 0..N {
+    let mut fifth_order = S::zero();
+    for index in 0..S::LEN {
         fifth_order[index] = state[index]
             + step
                 * (fraction::<T>(35.0, 384.0) * k1[index]
@@ -205,8 +240,8 @@ where
         &mut k7,
     );
 
-    let mut error = [T::zero(); N];
-    for index in 0..N {
+    let mut error = S::zero();
+    for index in 0..S::LEN {
         let fourth_order = state[index]
             + step
                 * (fraction::<T>(5_179.0, 57_600.0) * k1[index]
@@ -221,14 +256,14 @@ where
     (fifth_order, error)
 }
 
-fn scaled_error<T: Scalar, const N: usize>(
-    state: &[T; N],
-    candidate: &[T; N],
-    error: &[T; N],
+fn scaled_error<T: Scalar, S: SolverState<T>>(
+    state: &S,
+    candidate: &S,
+    error: &S,
     config: IntegrationConfig<T>,
 ) -> T {
     let mut norm = T::zero();
-    for index in 0..N {
+    for index in 0..S::LEN {
         let scale = config.tolerances.absolute
             + config.tolerances.relative * state[index].abs().max(candidate[index].abs());
         let component = error[index].abs() / scale;
@@ -252,8 +287,8 @@ fn rejected_factor<T: Scalar>(error_norm: T) -> T {
     raw.max(from_f64(0.1)).min(from_f64(0.5))
 }
 
-fn all_finite<T: Scalar, const N: usize>(values: &[T; N]) -> bool {
-    values.iter().all(|value| value.is_finite())
+fn all_finite<T: Scalar, S: SolverState<T>>(values: &S) -> bool {
+    (0..S::LEN).all(|index| values[index].is_finite())
 }
 
 fn fraction<T: Scalar>(numerator: f64, denominator: f64) -> T {
@@ -290,11 +325,84 @@ where
 
 #[cfg(test)]
 mod tests {
+    use core::ops::{Index, IndexMut};
+
     use approx::assert_relative_eq;
 
     use super::*;
     use crate::InputModel;
     use crate::model::RepeatedPole;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct CoupledState {
+        source: [f64; 1],
+        follower: [f64; 1],
+    }
+
+    impl Index<usize> for CoupledState {
+        type Output = f64;
+
+        fn index(&self, index: usize) -> &Self::Output {
+            match index {
+                0 => &self.source[0],
+                1 => &self.follower[0],
+                _ => panic!("state index out of bounds"),
+            }
+        }
+    }
+
+    impl IndexMut<usize> for CoupledState {
+        fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+            match index {
+                0 => &mut self.source[0],
+                1 => &mut self.follower[0],
+                _ => panic!("state index out of bounds"),
+            }
+        }
+    }
+
+    impl SolverState<f64> for CoupledState {
+        const LEN: usize = 2;
+
+        fn zero() -> Self {
+            Self {
+                source: [0.0],
+                follower: [0.0],
+            }
+        }
+    }
+
+    struct CoupledModel;
+
+    impl DifferentialModel<f64, CoupledState> for CoupledModel {
+        fn derivative(&self, state: &CoupledState, input: f64, result: &mut CoupledState) {
+            result.source[0] = input - state.source[0];
+            result.follower[0] = state.source[0] - state.follower[0];
+        }
+    }
+
+    #[test]
+    fn coupled_state_integrates_both_components_at_the_same_rk_stages() {
+        let outcome = integrate(
+            &CoupledModel,
+            &CoupledState::zero(),
+            InputSegment::new(0.0, 1.0, InputModel::CurrentHold),
+            1.0,
+            1.0,
+            IntegrationConfig::default(),
+        )
+        .unwrap();
+        assert_relative_eq!(
+            outcome.state.source[0],
+            1.0 - (-1.0_f64).exp(),
+            epsilon = 2.0e-8
+        );
+        assert_relative_eq!(
+            outcome.state.follower[0],
+            1.0 - 2.0 / core::f64::consts::E,
+            epsilon = 2.0e-8
+        );
+    }
 
     #[test]
     fn adaptive_solver_matches_exact_first_order_step() {

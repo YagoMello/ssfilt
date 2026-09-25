@@ -104,7 +104,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
 /// complete filter for every supported [`Response`].
 #[derive(Clone, Copy, Debug)]
 pub struct LowPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, LowPassModel<T, N>, N>,
+    pub(crate) runtime: StreamingCore<T, LowPassModel<T, N>, N>,
     cutoff_hz: T,
     response: Response<T>,
 }
@@ -129,6 +129,28 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     #[must_use]
     pub const fn response(&self) -> Response<T> {
         self.response
+    }
+
+    /// Adds a delayed, continuous-time all-pass equalizer over a passband.
+    ///
+    /// `M` is the number of first-order all-pass sections (1 through 4).
+    /// The design succeeds only when those sections measurably flatten the
+    /// model's group delay in `lower_hz..=upper_hz`. The upper bound cannot
+    /// exceed this low-pass filter's −3 dB cutoff. The returned filter is
+    /// independent of `self`. If `self` has already processed samples, its
+    /// current state is copied and the new equalizer starts in equilibrium
+    /// with its current output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::PhaseEqualizationError`] for an invalid band or
+    /// section count, or when this section family cannot improve the delay.
+    pub fn equalize_phase<const M: usize>(
+        &self,
+        lower_hz: T,
+        upper_hz: T,
+    ) -> Result<crate::PhaseEqualizedLowPass<N, M, T>, crate::PhaseEqualizationError> {
+        crate::PhaseEqualizedLowPass::new(*self, lower_hz, upper_hz)
     }
 
     /// Advances the filter and returns its new output.

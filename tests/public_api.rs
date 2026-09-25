@@ -202,3 +202,15 @@ fn forward_backward_batch_supports_irregular_and_uniform_time() {
     }
     assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
 }
+
+#[test]
+fn low_pass_can_add_a_delayed_phase_equalizer() {
+    let base = LowPass::<4>::builder(20.0)
+        .response(Response::Butterworth)
+        .build()
+        .unwrap();
+    let mut equalized: Box<dyn StreamingFilter<Scalar = f64>> =
+        Box::new(base.equalize_phase::<2>(0.0, 20.0).unwrap());
+    assert!(equalized.update(1.0, 0.01).unwrap().is_finite());
+    assert_relative_eq!(base.output(), 0.0, epsilon = 0.0);
+}
