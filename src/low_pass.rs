@@ -246,30 +246,42 @@ mod tests {
     )]
 
     use approx::assert_relative_eq;
+    use rstest::rstest;
 
     use super::*;
     use crate::Tolerances;
     use crate::model::RepeatedPole;
 
     #[test]
-    fn builder_rejects_invalid_values() {
+    fn builder_rejects_zero_order() {
         assert!(matches!(
             LowPass::<0>::builder(1.0).build(),
             Err(BuildError::ZeroOrder)
         ));
+    }
 
-        for cutoff in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            assert!(matches!(
-                LowPass::<1>::builder(cutoff).build(),
-                Err(BuildError::InvalidCutoff)
-            ));
-        }
+    #[rstest]
+    #[case::zero(0.0)]
+    #[case::negative(-1.0)]
+    #[case::nan(f64::NAN)]
+    #[case::infinite(f64::INFINITY)]
+    fn builder_rejects_invalid_cutoff(#[case] cutoff: f64) {
+        assert!(matches!(
+            LowPass::<1>::builder(cutoff).build(),
+            Err(BuildError::InvalidCutoff)
+        ));
+    }
 
+    #[test]
+    fn builder_rejects_invalid_initial_input() {
         assert!(matches!(
             LowPass::<1>::builder(1.0).initial_input(f64::NAN).build(),
             Err(BuildError::InvalidInitialInput)
         ));
+    }
 
+    #[test]
+    fn builder_rejects_invalid_integration_config() {
         let invalid_integration = IntegrationConfig {
             tolerances: Tolerances::new(0.0, 1.0e-7),
             ..IntegrationConfig::default()
@@ -301,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_updates_are_transactional() {
+    fn non_finite_input_is_transactional() {
         let mut filter = LowPass::<3>::builder(2.0)
             .input_model(InputModel::CurrentHold)
             .build()
@@ -316,16 +328,28 @@ mod tests {
         assert_eq!(filter.state, before.state);
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
+    }
 
-        for invalid_dt in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(
-                filter.update(2.0, invalid_dt),
-                Err(UpdateError::InvalidDeltaTime)
-            );
-            assert_eq!(filter.state, before.state);
-            assert_eq!(filter.previous_input, before.previous_input);
-            assert_eq!(filter.output, before.output);
-        }
+    #[rstest]
+    #[case::zero(0.0)]
+    #[case::negative(-1.0)]
+    #[case::nan(f64::NAN)]
+    #[case::infinite(f64::INFINITY)]
+    fn invalid_delta_time_is_transactional(#[case] invalid_dt: f64) {
+        let mut filter = LowPass::<3>::builder(2.0)
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap();
+        filter.update(1.0, 0.1).unwrap();
+        let before = filter;
+
+        assert_eq!(
+            filter.update(2.0, invalid_dt),
+            Err(UpdateError::InvalidDeltaTime)
+        );
+        assert_eq!(filter.state, before.state);
+        assert_eq!(filter.previous_input, before.previous_input);
+        assert_eq!(filter.output, before.output);
     }
 
     #[test]
@@ -351,12 +375,13 @@ mod tests {
         assert_eq!(filter.output, before.output);
     }
 
-    #[test]
-    fn current_hold_matches_repeated_pole_step_response() {
-        check_step_response::<1>();
-        check_step_response::<2>();
-        check_step_response::<4>();
-        check_step_response::<8>();
+    #[rstest]
+    #[case::order_1(check_step_response::<1>)]
+    #[case::order_2(check_step_response::<2>)]
+    #[case::order_4(check_step_response::<4>)]
+    #[case::order_8(check_step_response::<8>)]
+    fn current_hold_matches_repeated_pole_step_response(#[case] check: fn()) {
+        check();
     }
 
     fn check_step_response<const N: usize>() {
@@ -451,14 +476,18 @@ mod tests {
         assert!(output > 0.0 && output < 1.0);
     }
 
-    #[test]
-    fn simulated_cutoff_gain_matches_minus_three_db() {
-        for response in [Response::RepeatedPole, Response::Butterworth] {
-            check_cutoff_gain::<1>(response);
-            check_cutoff_gain::<2>(response);
-            check_cutoff_gain::<4>(response);
-            check_cutoff_gain::<6>(response);
-        }
+    type CutoffCheck = fn(Response);
+
+    #[rstest]
+    #[case::order_1(check_cutoff_gain::<1>)]
+    #[case::order_2(check_cutoff_gain::<2>)]
+    #[case::order_4(check_cutoff_gain::<4>)]
+    #[case::order_6(check_cutoff_gain::<6>)]
+    fn simulated_cutoff_gain_matches_minus_three_db(
+        #[case] check: CutoffCheck,
+        #[values(Response::RepeatedPole, Response::Butterworth)] response: Response,
+    ) {
+        check(response);
     }
 
     fn check_cutoff_gain<const N: usize>(response: Response) {
@@ -489,13 +518,17 @@ mod tests {
         assert_relative_eq!(gain, 1.0 / 2.0_f64.sqrt(), epsilon = 8.0e-5);
     }
 
-    #[test]
-    fn butterworth_streaming_response_matches_closed_form() {
-        for frequency_ratio in [0.25, 1.0, 2.0] {
-            check_butterworth_gain::<2>(frequency_ratio);
-            check_butterworth_gain::<3>(frequency_ratio);
-            check_butterworth_gain::<4>(frequency_ratio);
-        }
+    type ButterworthGainCheck = fn(f64);
+
+    #[rstest]
+    #[case::order_2(check_butterworth_gain::<2>)]
+    #[case::order_3(check_butterworth_gain::<3>)]
+    #[case::order_4(check_butterworth_gain::<4>)]
+    fn butterworth_streaming_response_matches_closed_form(
+        #[case] check: ButterworthGainCheck,
+        #[values(0.25, 1.0, 2.0)] frequency_ratio: f64,
+    ) {
+        check(frequency_ratio);
     }
 
     fn check_butterworth_gain<const N: usize>(frequency_ratio: f64) {

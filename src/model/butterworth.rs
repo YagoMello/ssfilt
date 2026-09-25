@@ -97,6 +97,7 @@ mod tests {
     #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
 
     use approx::assert_relative_eq;
+    use rstest::rstest;
 
     use super::*;
 
@@ -107,13 +108,12 @@ mod tests {
         assert_relative_eq!(model.damping()[1], 0.765_366_864_730_179_6, epsilon = 1e-15);
     }
 
-    #[test]
-    fn cascade_matches_closed_form_magnitude() {
-        for order in 1..=16 {
-            check_magnitude::<f64>(order, 0.1);
-            check_magnitude::<f64>(order, 1.0);
-            check_magnitude::<f64>(order, 3.0);
-        }
+    #[rstest]
+    fn cascade_matches_closed_form_magnitude(
+        #[values(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)] order: usize,
+        #[values(0.1, 1.0, 3.0)] frequency: f64,
+    ) {
+        check_magnitude::<f64>(order, frequency);
     }
 
     fn check_magnitude<T: Scalar>(order: usize, frequency: T) {
@@ -136,10 +136,11 @@ mod tests {
         assert!((actual - expected).abs() <= from_f64(2.0e-13));
     }
 
-    #[test]
-    fn equilibrium_has_zero_derivative_for_odd_and_even_orders() {
-        check_equilibrium::<3>();
-        check_equilibrium::<4>();
+    #[rstest]
+    #[case::odd_order(check_equilibrium::<3>)]
+    #[case::even_order(check_equilibrium::<4>)]
+    fn equilibrium_has_zero_derivative_for_odd_and_even_orders(#[case] check: fn()) {
+        check();
     }
 
     fn check_equilibrium<const ORDER: usize>() {
