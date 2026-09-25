@@ -162,14 +162,20 @@ The Criterion benchmarks cover order and response scaling, input reconstruction
 policies, and increasingly large normalized sample intervals. Benchmark
 dependencies are development-only and do not affect library users.
 
-To generate an SVG magnitude plot by driving the public streaming API, run:
+To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
+delay, and unit-step responses by driving the public streaming API, run:
 
 ```text
 cargo run --release --example plot_responses -- 4 target/filter-responses.svg
 ```
 
-Orders 1 through 8 are accepted. The output path and order are optional and
-default to `target/filter-responses.svg` and order 4.
+Orders 1 through 50 are accepted through a compile-time dispatch macro. The
+output path and order are optional and default to
+`target/filter-responses.svg` and order 4. Frequency curves use 1,601
+logarithmically spaced points; high orders can therefore take noticeably
+longer to measure. Because the curves are measured from the streaming filter
+rather than synthesized from pole formulas, a stopband curve ends if residual
+transients become larger than the attenuated steady-state signal.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.
