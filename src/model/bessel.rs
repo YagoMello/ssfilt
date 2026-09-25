@@ -44,8 +44,11 @@ impl<T: Scalar, const N: usize> Bessel<T, N> {
         })
     }
 
-    #[cfg(test)]
-    fn section_coefficients(&self) -> (&[T], &[T]) {
+    pub(crate) fn real_rate(&self) -> T {
+        self.real_rate
+    }
+
+    pub(crate) fn section_coefficients(&self) -> (&[T], &[T]) {
         (&self.damping[..N / 2], &self.frequency_squared[..N / 2])
     }
 }

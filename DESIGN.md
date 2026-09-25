@@ -5,8 +5,8 @@
 `ssfilt` is a focused continuous-time streaming filter library. It is not meant
 to become a general ODE solver, linear-algebra package, or full DSP toolbox.
 Users construct one filter object and update it with an input and elapsed time.
-Model, interpolation, and integration components remain private until a real
-customization requirement justifies stabilizing them.
+Model, interpolation, integration, and the shared streaming runtime remain
+private until a real customization requirement justifies stabilizing them.
 
 ## Current normalized models
 
@@ -102,6 +102,34 @@ coefficients. This keeps construction deterministic, allocation-free, and
 `no_std`; larger Bessel orders fail explicitly rather than silently using
 unreliable coefficients. Low-Q sections are again placed first.
 
+### High-pass transformation
+
+High-pass models apply the normalized analog transformation `s -> 1/s` to the
+selected low-pass prototype. A real low-pass section
+
+```text
+r / (s + r)
+```
+
+becomes `s / (s + 1/r)`. A second-order section with denominator
+`s^2 + a*s + b` becomes:
+
+```text
+s^2 / (s^2 + (a/b)*s + 1/b)
+```
+
+Each section uses a well-scaled low-pass state internally and computes its
+high-pass output as the complementary direct-feedthrough term. This preserves
+the prototype's magnitude at normalized frequency one, so the public cutoff
+remains the complete filter's -3 dB point. Constant-input equilibrium has zero
+output.
+
+The direct term also makes endpoint semantics observable: integration uses the
+chosen input reconstruction over the interval, then `output` is evaluated with
+the newly supplied endpoint sample. In particular, `PreviousHold` does not
+smear the new sample backward into the interval, but the returned endpoint can
+still jump when that sample arrives.
+
 ## Sample timing contract
 
 `update(u_new, dt)` advances from the preceding sample to the new sample.
@@ -169,6 +197,7 @@ updates preserve the preceding snapshot transactionally.
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics.
+   High-pass is complete; band-pass is pending.
 7. Optional delayed group-delay equalization and offline forward-backward
    filtering as separate phase-handling approaches.
 8. Advanced custom kernels or alternative integrators only after concrete use

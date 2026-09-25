@@ -1,6 +1,6 @@
 use approx::assert_relative_eq;
 use ssfilt::{
-    BuildError, InputModel, IntegrationDiagnostics, LowPass, MAX_BESSEL_ORDER, Response,
+    BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass, MAX_BESSEL_ORDER, Response,
     StreamingFilter, UpdateError,
 };
 
@@ -118,4 +118,39 @@ fn bessel_response_and_order_limit_are_public() {
             .build(),
         Err(BuildError::UnsupportedBesselOrder)
     ));
+}
+
+#[test]
+fn high_pass_uses_the_common_builder_and_streaming_trait() {
+    let mut filter: Box<dyn StreamingFilter<Scalar = f64>> = Box::new(
+        HighPass::<1>::builder(20.0)
+            .response(Response::Butterworth)
+            .input_model(InputModel::CurrentHold)
+            .initial_input(1.0)
+            .build()
+            .unwrap(),
+    );
+    assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
+    let output = filter.update(0.0, 0.01).unwrap();
+    assert!(output.is_finite());
+    assert!(output < 0.0);
+    filter.reset_to_steady(4.0).unwrap();
+    assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
+}
+
+#[test]
+fn high_pass_errors_are_transactional() {
+    let mut tested = HighPass::<3>::builder(3.0)
+        .response(Response::Bessel)
+        .build()
+        .unwrap();
+    let mut untouched = tested;
+
+    assert_eq!(
+        tested.update(f64::NAN, 0.1),
+        Err(UpdateError::NonFiniteInput)
+    );
+    let after_error = tested.update(0.75, 0.04).unwrap();
+    let direct = untouched.update(0.75, 0.04).unwrap();
+    assert_relative_eq!(after_error, direct, epsilon = 0.0);
 }

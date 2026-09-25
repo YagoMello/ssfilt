@@ -2,11 +2,13 @@ mod bessel;
 mod bessel_table;
 mod butterworth;
 mod chebyshev1;
+mod high_pass;
 mod low_pass;
 mod repeated_pole;
 
 pub(crate) use butterworth::Butterworth;
 pub(crate) use chebyshev1::Chebyshev1;
+pub(crate) use high_pass::HighPassModel;
 pub(crate) use low_pass::LowPassModel;
 pub(crate) use repeated_pole::RepeatedPole;
 

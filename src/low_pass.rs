@@ -1,5 +1,5 @@
-use crate::model::{ContinuousModel, LowPassModel};
-use crate::solver::{InputSegment, integrate};
+use crate::model::LowPassModel;
+use crate::streaming::StreamingCore;
 use crate::{
     BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
     Scalar, StreamingFilter, UpdateError,
@@ -83,19 +83,17 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
         }
 
         let model = LowPassModel::new(self.response)?;
-        let state = model.equilibrium(self.initial_input);
-        Ok(LowPass {
+        let runtime = StreamingCore::new(
             model,
-            state,
-            previous_input: self.initial_input,
-            output: self.initial_input,
-            cutoff_hz: self.cutoff_hz,
+            self.initial_input,
             angular_cutoff,
+            self.input_model,
+            self.integration,
+        );
+        Ok(LowPass {
+            runtime,
+            cutoff_hz: self.cutoff_hz,
             response: self.response,
-            input_model: self.input_model,
-            integration: self.integration,
-            last_diagnostics: IntegrationDiagnostics::empty(),
-            at_equilibrium: true,
         })
     }
 }
@@ -106,17 +104,9 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
 /// complete filter for every supported [`Response`].
 #[derive(Clone, Copy, Debug)]
 pub struct LowPass<const N: usize, T: Scalar = f64> {
-    model: LowPassModel<T, N>,
-    state: [T; N],
-    previous_input: T,
-    output: T,
+    runtime: StreamingCore<T, LowPassModel<T, N>, N>,
     cutoff_hz: T,
-    angular_cutoff: T,
     response: Response<T>,
-    input_model: InputModel,
-    integration: IntegrationConfig<T>,
-    last_diagnostics: IntegrationDiagnostics<T>,
-    at_equilibrium: bool,
 }
 
 impl<const N: usize, T: Scalar> LowPass<N, T> {
@@ -155,7 +145,7 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     /// Returns the most recently accepted output.
     #[must_use]
     pub fn output(&self) -> T {
-        self.output
+        self.runtime.output
     }
 
     /// Returns work performed by the most recent successful update.
@@ -164,7 +154,7 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     /// update preserves the preceding successful snapshot.
     #[must_use]
     pub const fn last_diagnostics(&self) -> IntegrationDiagnostics<T> {
-        self.last_diagnostics
+        self.runtime.last_diagnostics
     }
 
     /// Returns the filter to zero-input steady state.
@@ -186,90 +176,19 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
-        if !input.is_finite() {
-            return Err(UpdateError::NonFiniteInput);
-        }
-        if !dt_seconds.is_finite() || dt_seconds <= T::zero() {
-            return Err(UpdateError::InvalidDeltaTime);
-        }
-
-        let normalized_duration = self.angular_cutoff * dt_seconds;
-        if !normalized_duration.is_finite() || normalized_duration <= T::zero() {
-            return Err(UpdateError::InvalidDeltaTime);
-        }
-
-        let previous_input = self.previous_input;
-        let constant_at_equilibrium = self.at_equilibrium
-            && match self.input_model {
-                InputModel::Linear | InputModel::CurrentHold => input == previous_input,
-                InputModel::PreviousHold => true,
-            };
-        if constant_at_equilibrium {
-            let next_output = self.model.output(&self.state, input);
-            if !next_output.is_finite() {
-                return Err(UpdateError::NonFiniteState);
-            }
-            self.previous_input = input;
-            self.output = next_output;
-            self.last_diagnostics = IntegrationDiagnostics::equilibrium_shortcut();
-            self.at_equilibrium = input == previous_input;
-            return Ok(next_output);
-        }
-
-        let mut max_normalized_step = self.model.max_normalized_step();
-        if let Some(max_step_seconds) = self.integration.max_step_seconds {
-            let configured = self.angular_cutoff * max_step_seconds;
-            if !configured.is_finite() {
-                return Err(UpdateError::InvalidDeltaTime);
-            }
-            max_normalized_step = max_normalized_step.min(configured);
-        }
-
-        let segment = InputSegment::new(self.previous_input, input, self.input_model);
-        let outcome = integrate(
-            &self.model,
-            &self.state,
-            segment,
-            normalized_duration,
-            max_normalized_step,
-            self.integration,
-        )?;
-        let next_output = self.model.output(&outcome.state, input);
-        if !next_output.is_finite() {
-            return Err(UpdateError::NonFiniteState);
-        }
-
-        self.state = outcome.state;
-        self.previous_input = input;
-        self.output = next_output;
-        self.last_diagnostics =
-            IntegrationDiagnostics::from_solver(outcome.diagnostics, self.angular_cutoff);
-        self.at_equilibrium = false;
-        Ok(next_output)
+        self.runtime.update(input, dt_seconds)
     }
 
     fn output(&self) -> T {
-        self.output
+        self.runtime.output
     }
 
     fn reset(&mut self) {
-        self.state = [T::zero(); N];
-        self.previous_input = T::zero();
-        self.output = T::zero();
-        self.last_diagnostics = IntegrationDiagnostics::empty();
-        self.at_equilibrium = true;
+        self.runtime.reset();
     }
 
     fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
-        if !input.is_finite() {
-            return Err(ResetError::NonFiniteInput);
-        }
-        self.state = self.model.equilibrium(input);
-        self.previous_input = input;
-        self.output = input;
-        self.last_diagnostics = IntegrationDiagnostics::empty();
-        self.at_equilibrium = true;
-        Ok(())
+        self.runtime.reset_to_steady(input)
     }
 }
 
@@ -377,12 +296,12 @@ mod tests {
 
         filter.reset();
         assert_eq!(filter.output(), 0.0);
-        assert_eq!(filter.state, [0.0; 4]);
+        assert_eq!(filter.runtime.state, [0.0; 4]);
         assert_eq!(filter.last_diagnostics(), IntegrationDiagnostics::default());
 
         filter.reset_to_steady(-2.0).unwrap();
         assert_eq!(filter.output(), -2.0);
-        assert_eq!(filter.state, [-2.0; 4]);
+        assert_eq!(filter.runtime.state, [-2.0; 4]);
         assert_eq!(filter.last_diagnostics(), IntegrationDiagnostics::default());
     }
 
@@ -399,11 +318,14 @@ mod tests {
             filter.update(f64::NAN, 0.1),
             Err(UpdateError::NonFiniteInput)
         );
-        assert_eq!(filter.state, before.state);
-        assert_eq!(filter.previous_input, before.previous_input);
-        assert_eq!(filter.output, before.output);
-        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
-        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
+        assert_eq!(filter.runtime.state, before.runtime.state);
+        assert_eq!(filter.runtime.previous_input, before.runtime.previous_input);
+        assert_eq!(filter.runtime.output, before.runtime.output);
+        assert_eq!(
+            filter.runtime.last_diagnostics,
+            before.runtime.last_diagnostics
+        );
+        assert_eq!(filter.runtime.at_equilibrium, before.runtime.at_equilibrium);
     }
 
     #[rstest]
@@ -423,11 +345,14 @@ mod tests {
             filter.update(2.0, invalid_dt),
             Err(UpdateError::InvalidDeltaTime)
         );
-        assert_eq!(filter.state, before.state);
-        assert_eq!(filter.previous_input, before.previous_input);
-        assert_eq!(filter.output, before.output);
-        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
-        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
+        assert_eq!(filter.runtime.state, before.runtime.state);
+        assert_eq!(filter.runtime.previous_input, before.runtime.previous_input);
+        assert_eq!(filter.runtime.output, before.runtime.output);
+        assert_eq!(
+            filter.runtime.last_diagnostics,
+            before.runtime.last_diagnostics
+        );
+        assert_eq!(filter.runtime.at_equilibrium, before.runtime.at_equilibrium);
     }
 
     #[test]
@@ -448,11 +373,14 @@ mod tests {
             filter.update(1.0, 0.1),
             Err(UpdateError::StepBudgetExceeded)
         );
-        assert_eq!(filter.state, before.state);
-        assert_eq!(filter.previous_input, before.previous_input);
-        assert_eq!(filter.output, before.output);
-        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
-        assert_eq!(filter.at_equilibrium, before.at_equilibrium);
+        assert_eq!(filter.runtime.state, before.runtime.state);
+        assert_eq!(filter.runtime.previous_input, before.runtime.previous_input);
+        assert_eq!(filter.runtime.output, before.runtime.output);
+        assert_eq!(
+            filter.runtime.last_diagnostics,
+            before.runtime.last_diagnostics
+        );
+        assert_eq!(filter.runtime.at_equilibrium, before.runtime.at_equilibrium);
     }
 
     #[rstest]
@@ -522,7 +450,7 @@ mod tests {
 
         assert_eq!(filter.update(1.0, 100.0).unwrap(), 0.0);
         assert!(filter.last_diagnostics().used_equilibrium_shortcut());
-        assert!(!filter.at_equilibrium);
+        assert!(!filter.runtime.at_equilibrium);
 
         assert!(filter.update(1.0, 0.1).unwrap() > 0.0);
         assert!(!filter.last_diagnostics().used_equilibrium_shortcut());

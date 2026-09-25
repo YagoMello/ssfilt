@@ -4,7 +4,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use ssfilt::{InputModel, LowPass, Response};
+use ssfilt::{HighPass, InputModel, LowPass, Response};
 
 const CUTOFF_HZ: f64 = 1_000.0;
 const AUDIO_SAMPLE_INTERVAL: f64 = 1.0 / 48_000.0;
@@ -120,5 +120,47 @@ fn adaptive_work(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, order_scaling, input_models, adaptive_work);
+fn topologies(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("streaming/topology");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("low-pass/4", |bencher| {
+        let mut filter = LowPass::<4>::builder(CUTOFF_HZ)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let mut index = 0;
+        bencher.iter(|| {
+            index = (index + 1) % INPUTS.len();
+            black_box(
+                filter
+                    .update(black_box(INPUTS[index]), black_box(AUDIO_SAMPLE_INTERVAL))
+                    .unwrap(),
+            )
+        });
+    });
+    group.bench_function("high-pass/4", |bencher| {
+        let mut filter = HighPass::<4>::builder(CUTOFF_HZ)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let mut index = 0;
+        bencher.iter(|| {
+            index = (index + 1) % INPUTS.len();
+            black_box(
+                filter
+                    .update(black_box(INPUTS[index]), black_box(AUDIO_SAMPLE_INTERVAL))
+                    .unwrap(),
+            )
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    order_scaling,
+    input_models,
+    adaptive_work,
+    topologies
+);
 criterion_main!(benches);

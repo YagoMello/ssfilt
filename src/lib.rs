@@ -12,15 +12,18 @@ compile_error!("enable either the `std` or `libm` feature");
 mod config;
 mod diagnostics;
 mod error;
+mod high_pass;
 mod low_pass;
 mod model;
 mod response;
 mod scalar;
 mod solver;
+mod streaming;
 
 pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
+pub use high_pass::{HighPass, HighPassBuilder};
 pub use low_pass::{LowPass, LowPassBuilder};
 pub use response::{MAX_BESSEL_ORDER, Response};
 pub use scalar::Scalar;
@@ -33,7 +36,9 @@ pub trait StreamingFilter {
     /// Advances the filter by `dt_seconds` and returns the new output.
     ///
     /// The interpretation of `input` over the elapsed interval is selected by
-    /// [`InputModel`]. Failed updates leave the filter unchanged.
+    /// [`InputModel`]. The returned output is evaluated at the newly supplied
+    /// endpoint input, which matters for filters with direct feedthrough.
+    /// Failed updates leave the filter unchanged.
     ///
     /// # Errors
     ///

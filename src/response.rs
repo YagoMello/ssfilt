@@ -3,7 +3,7 @@
 /// Other response families are not subject to this limit.
 pub const MAX_BESSEL_ORDER: usize = 25;
 
-/// Analog low-pass response family.
+/// Analog response family used by the supported filter topologies.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub enum Response<T = f64> {

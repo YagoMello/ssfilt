@@ -16,7 +16,6 @@ impl<T: Scalar> RepeatedPole<T> {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn rate(self) -> T {
         self.rate
     }

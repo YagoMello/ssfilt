@@ -5,8 +5,8 @@ irregularly sampled signals. Instead of designing a digital filter for one
 fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
-The current milestone intentionally provides one carefully tested low-pass
-filter with four response families:
+The current milestone provides carefully tested low-pass and high-pass filters
+with four response families:
 
 - repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
@@ -16,8 +16,7 @@ filter with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-High-pass, band-pass, and phase handling are planned, but are not yet part of
-the API.
+Band-pass and phase handling are planned, but are not yet part of the API.
 
 ## Example
 
@@ -44,6 +43,30 @@ defines what is assumed between that sample and the preceding one:
 - `CurrentHold` applies the new input throughout the interval.
 
 The first interval begins at `initial_input`, which defaults to zero.
+
+### High-pass
+
+`HighPass` uses the same builder and streaming trait as `LowPass`:
+
+```rust
+use ssfilt::{HighPass, InputModel, Response};
+
+let mut filter = HighPass::<4>::builder(20.0)
+    .response(Response::Bessel)
+    .input_model(InputModel::CurrentHold)
+    .initial_input(0.0)
+    .build()?;
+
+let value = filter.update(1.0, 0.012)?;
+# assert!(value.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+High-pass filters have direct feedthrough: their endpoint output depends on the
+new sample as well as the integrated state. With `PreviousHold`, the preceding
+sample drives the elapsed interval, then the newly arriving sample is used to
+evaluate the returned endpoint output. A constant-input equilibrium always has
+zero high-pass output, including after `initial_input` or `reset_to_steady`.
 
 ### Runtime-selected order
 
@@ -113,6 +136,11 @@ whole-filter meaning for every family.
 Internally the models use normalized time `tau = 2*pi*cutoff_hz*t`, preventing
 absolute cutoff frequency from creating huge polynomial coefficients.
 
+High-pass responses are obtained with the analog low-pass-to-high-pass
+frequency transformation. This preserves the response family and the same
+whole-filter -3 dB cutoff meaning while introducing zeros at DC and unity gain
+at infinite frequency.
+
 ## Scalar types
 
 The public `Scalar` trait is sealed and implemented for `f32` and `f64`. The
@@ -168,9 +196,9 @@ and shrinking property tests for numerical invariants such as partition and
 frequency-scaling independence. Explicit non-finite and transactional failures
 remain ordinary regression tests so their contracts stay easy to read.
 
-The Criterion benchmarks cover order and response scaling, input reconstruction
-policies, and increasingly large normalized sample intervals. Benchmark
-dependencies are development-only and do not affect library users.
+The Criterion benchmarks cover order, response and topology scaling, input
+reconstruction policies, and increasingly large normalized sample intervals.
+Benchmark dependencies are development-only and do not affect library users.
 
 To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
 delay, and unit-step responses, run:

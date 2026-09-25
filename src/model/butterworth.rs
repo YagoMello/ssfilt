@@ -36,7 +36,6 @@ impl<T: Scalar, const N: usize> Butterworth<T, N> {
         Self { damping }
     }
 
-    #[cfg(test)]
     pub(crate) fn damping(&self) -> &[T] {
         &self.damping[..N / 2]
     }
