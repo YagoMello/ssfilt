@@ -4,6 +4,35 @@ use crate::{IntegrationConfig, Scalar, UpdateError};
 
 use super::InputSegment;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SolverDiagnostics<T> {
+    pub(crate) accepted_steps: usize,
+    pub(crate) rejected_steps: usize,
+    pub(crate) derivative_evaluations: usize,
+    pub(crate) smallest_accepted_step: Option<T>,
+    pub(crate) largest_accepted_step: Option<T>,
+    pub(crate) equilibrium_shortcut: bool,
+}
+
+impl<T> SolverDiagnostics<T> {
+    const fn new() -> Self {
+        Self {
+            accepted_steps: 0,
+            rejected_steps: 0,
+            derivative_evaluations: 0,
+            smallest_accepted_step: None,
+            largest_accepted_step: None,
+            equilibrium_shortcut: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct IntegrationOutcome<T, const N: usize> {
+    pub(crate) state: [T; N],
+    pub(crate) diagnostics: SolverDiagnostics<T>,
+}
+
 pub(crate) fn integrate<T: Scalar, M, const N: usize>(
     model: &M,
     initial_state: &[T; N],
@@ -11,7 +40,7 @@ pub(crate) fn integrate<T: Scalar, M, const N: usize>(
     normalized_duration: T,
     max_normalized_step: T,
     config: IntegrationConfig<T>,
-) -> Result<[T; N], UpdateError>
+) -> Result<IntegrationOutcome<T, N>, UpdateError>
 where
     M: ContinuousModel<T, N>,
 {
@@ -19,11 +48,17 @@ where
         return Err(UpdateError::InvalidDeltaTime);
     }
 
+    let mut diagnostics = SolverDiagnostics::new();
     if input.is_constant() {
         let mut derivative = [T::zero(); N];
         model.derivative(initial_state, input.value_at(T::zero()), &mut derivative);
+        diagnostics.derivative_evaluations = 1;
         if derivative.iter().all(|value| *value == T::zero()) {
-            return Ok(*initial_state);
+            diagnostics.equilibrium_shortcut = true;
+            return Ok(IntegrationOutcome {
+                state: *initial_state,
+                diagnostics,
+            });
         }
     }
 
@@ -34,7 +69,7 @@ where
     for _ in 0..config.max_step_attempts {
         let remaining = normalized_duration - position;
         if remaining <= T::zero() {
-            return Ok(state);
+            return Ok(IntegrationOutcome { state, diagnostics });
         }
 
         step = step.min(remaining).min(max_normalized_step);
@@ -44,16 +79,29 @@ where
 
         let (candidate, error) =
             dormand_prince_step(model, &state, input, position, step, normalized_duration);
+        diagnostics.derivative_evaluations = diagnostics.derivative_evaluations.saturating_add(7);
 
         let error_norm = scaled_error(&state, &candidate, &error, config);
         if error_norm.is_finite() && error_norm <= T::one() && all_finite(&candidate) {
+            diagnostics.accepted_steps = diagnostics.accepted_steps.saturating_add(1);
+            diagnostics.smallest_accepted_step = Some(
+                diagnostics
+                    .smallest_accepted_step
+                    .map_or(step, |smallest| smallest.min(step)),
+            );
+            diagnostics.largest_accepted_step = Some(
+                diagnostics
+                    .largest_accepted_step
+                    .map_or(step, |largest| largest.max(step)),
+            );
             state = candidate;
             if step == remaining {
-                return Ok(state);
+                return Ok(IntegrationOutcome { state, diagnostics });
             }
             position = position + step;
             step = (step * accepted_factor(error_norm)).min(max_normalized_step);
         } else {
+            diagnostics.rejected_steps = diagnostics.rejected_steps.saturating_add(1);
             let factor = if error_norm.is_finite() {
                 rejected_factor(error_norm)
             } else {
@@ -276,7 +324,8 @@ mod tests {
             1.0 / rate,
             IntegrationConfig::default(),
         )
-        .unwrap()[0];
+        .unwrap()
+        .state[0];
         let expected = 1.0 - (-rate * duration).exp();
         assert_relative_eq!(actual, expected, epsilon = 5.0e-9);
     }

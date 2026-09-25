@@ -1,8 +1,8 @@
 use crate::model::{ContinuousModel, LowPassModel};
 use crate::solver::{InputSegment, integrate};
 use crate::{
-    BuildError, InputModel, IntegrationConfig, ResetError, Response, Scalar, StreamingFilter,
-    UpdateError,
+    BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
+    Scalar, StreamingFilter, UpdateError,
 };
 
 /// Builder for a continuous-time low-pass filter.
@@ -94,6 +94,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             response: self.response,
             input_model: self.input_model,
             integration: self.integration,
+            last_diagnostics: IntegrationDiagnostics::empty(),
         })
     }
 }
@@ -113,6 +114,7 @@ pub struct LowPass<const N: usize, T: Scalar = f64> {
     response: Response,
     input_model: InputModel,
     integration: IntegrationConfig<T>,
+    last_diagnostics: IntegrationDiagnostics<T>,
 }
 
 impl<const N: usize, T: Scalar> LowPass<N, T> {
@@ -152,6 +154,15 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     #[must_use]
     pub fn output(&self) -> T {
         self.output
+    }
+
+    /// Returns work performed by the most recent successful update.
+    ///
+    /// Construction and reset operations leave an empty snapshot. A failed
+    /// update preserves the preceding successful snapshot.
+    #[must_use]
+    pub const fn last_diagnostics(&self) -> IntegrationDiagnostics<T> {
+        self.last_diagnostics
     }
 
     /// Returns the filter to zero-input steady state.
@@ -195,7 +206,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         }
 
         let segment = InputSegment::new(self.previous_input, input, self.input_model);
-        let next_state = integrate(
+        let outcome = integrate(
             &self.model,
             &self.state,
             segment,
@@ -203,14 +214,16 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
             max_normalized_step,
             self.integration,
         )?;
-        let next_output = self.model.output(&next_state, input);
+        let next_output = self.model.output(&outcome.state, input);
         if !next_output.is_finite() {
             return Err(UpdateError::NonFiniteState);
         }
 
-        self.state = next_state;
+        self.state = outcome.state;
         self.previous_input = input;
         self.output = next_output;
+        self.last_diagnostics =
+            IntegrationDiagnostics::from_solver(outcome.diagnostics, self.angular_cutoff);
         Ok(next_output)
     }
 
@@ -222,6 +235,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         self.state = [T::zero(); N];
         self.previous_input = T::zero();
         self.output = T::zero();
+        self.last_diagnostics = IntegrationDiagnostics::empty();
     }
 
     fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
@@ -231,6 +245,7 @@ impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
         self.state = self.model.equilibrium(input);
         self.previous_input = input;
         self.output = input;
+        self.last_diagnostics = IntegrationDiagnostics::empty();
         Ok(())
     }
 }
@@ -303,14 +318,23 @@ mod tests {
             .unwrap();
         assert_eq!(filter.output(), 3.5);
         assert_eq!(filter.update(3.5, 100.0).unwrap(), 3.5);
+        let diagnostics = filter.last_diagnostics();
+        assert!(diagnostics.used_equilibrium_shortcut());
+        assert_eq!(diagnostics.accepted_steps(), 0);
+        assert_eq!(diagnostics.rejected_steps(), 0);
+        assert_eq!(diagnostics.derivative_evaluations(), 1);
+        assert_eq!(diagnostics.smallest_accepted_step_seconds(), None);
+        assert_eq!(diagnostics.largest_accepted_step_seconds(), None);
 
         filter.reset();
         assert_eq!(filter.output(), 0.0);
         assert_eq!(filter.state, [0.0; 4]);
+        assert_eq!(filter.last_diagnostics(), IntegrationDiagnostics::default());
 
         filter.reset_to_steady(-2.0).unwrap();
         assert_eq!(filter.output(), -2.0);
         assert_eq!(filter.state, [-2.0; 4]);
+        assert_eq!(filter.last_diagnostics(), IntegrationDiagnostics::default());
     }
 
     #[test]
@@ -329,6 +353,7 @@ mod tests {
         assert_eq!(filter.state, before.state);
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
+        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
     }
 
     #[rstest]
@@ -351,6 +376,7 @@ mod tests {
         assert_eq!(filter.state, before.state);
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
+        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
     }
 
     #[test]
@@ -374,6 +400,7 @@ mod tests {
         assert_eq!(filter.state, before.state);
         assert_eq!(filter.previous_input, before.previous_input);
         assert_eq!(filter.output, before.output);
+        assert_eq!(filter.last_diagnostics, before.last_diagnostics);
     }
 
     #[rstest]
@@ -739,6 +766,16 @@ mod tests {
             .build()
             .unwrap();
         let actual = filter.update(1.0, 0.05).unwrap();
+        let diagnostics = filter.last_diagnostics();
+        assert!(diagnostics.accepted_steps() >= 200);
+        assert_eq!(
+            diagnostics.attempted_steps(),
+            diagnostics.accepted_steps() + diagnostics.rejected_steps()
+        );
+        assert!(diagnostics.derivative_evaluations() >= 7 * diagnostics.attempted_steps());
+        assert!(diagnostics.smallest_accepted_step_seconds().unwrap() > 0.0);
+        assert!(diagnostics.largest_accepted_step_seconds().unwrap() <= 0.000_25);
+        assert!(!diagnostics.used_equilibrium_shortcut());
 
         let normalized_time = core::f64::consts::TAU * 8.0 * 0.05;
         let rate = RepeatedPole::<f64>::new(3).rate();

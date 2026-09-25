@@ -97,6 +97,11 @@ fast path, allowing arbitrarily large elapsed intervals without needless work.
 Forward Euler exists only in tests for convergence and comparison. It is not
 an accuracy oracle or public backend.
 
+The most recent successful update exposes an observational diagnostics snapshot
+with work counters and its accepted physical step-size range. Diagnostics do
+not select an integrator and are not part of the generic filter trait. Failed
+updates preserve the preceding snapshot transactionally.
+
 ## Invariants
 
 - `cutoff_hz` is finite, positive, and describes the complete -3 dB response.

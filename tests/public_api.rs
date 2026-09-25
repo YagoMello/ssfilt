@@ -1,5 +1,5 @@
 use approx::assert_relative_eq;
-use ssfilt::{InputModel, LowPass, Response, StreamingFilter, UpdateError};
+use ssfilt::{InputModel, IntegrationDiagnostics, LowPass, Response, StreamingFilter, UpdateError};
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
 where
@@ -53,4 +53,25 @@ fn public_reset_establishes_a_new_equilibrium() {
         .unwrap();
     filter.reset_to_steady(42.0).unwrap();
     assert_relative_eq!(filter.update(42.0, 50.0).unwrap(), 42.0, epsilon = 0.0);
+}
+
+#[test]
+fn integration_diagnostics_are_available_without_extending_the_trait() {
+    let mut filter = LowPass::<4>::builder(20.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::CurrentHold)
+        .build()
+        .unwrap();
+    assert_eq!(
+        filter.last_diagnostics(),
+        IntegrationDiagnostics::<f64>::default()
+    );
+
+    filter.update(1.0, 0.01).unwrap();
+    let diagnostics = filter.last_diagnostics();
+    assert!(diagnostics.accepted_steps() > 0);
+    assert!(diagnostics.attempted_steps() >= diagnostics.accepted_steps());
+    assert!(diagnostics.derivative_evaluations() > 0);
+    assert!(diagnostics.smallest_accepted_step_seconds().unwrap() > 0.0);
+    assert!(diagnostics.largest_accepted_step_seconds().unwrap() <= 0.01);
 }

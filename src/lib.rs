@@ -10,6 +10,7 @@
 compile_error!("enable either the `std` or `libm` feature");
 
 mod config;
+mod diagnostics;
 mod error;
 mod low_pass;
 mod model;
@@ -18,6 +19,7 @@ mod scalar;
 mod solver;
 
 pub use config::{InputModel, IntegrationConfig, Tolerances};
+pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use low_pass::{LowPass, LowPassBuilder};
 pub use response::Response;

@@ -13,7 +13,8 @@ filter with two response families:
 - adaptive Dormand-Prince 5(4) integration;
 - linear, previous-value hold, and current-value hold input models;
 - `f32`, `f64`, `no_std`, and allocation-free operation;
-- transactional errors and explicit steady-state reset.
+- transactional errors and explicit steady-state reset;
+- per-update integration diagnostics for observing adaptive work.
 
 Chebyshev, Bessel, high-pass, band-pass, and phase equalization are planned,
 but are not yet part of the API.
@@ -86,6 +87,15 @@ An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
 controls numerical stability; the separate attempt budget bounds worst-case
 work. No elapsed time is silently discarded.
+
+## Integration diagnostics
+
+`LowPass::last_diagnostics()` reports the work performed by the most recent
+successful update: accepted and rejected steps, derivative evaluations, the
+smallest and largest accepted step in seconds, and whether the exact-equilibrium
+shortcut avoided integration. This is intentionally observational rather than
+another configuration interface. Failed updates preserve the previous snapshot;
+construction and resets clear it.
 
 ## `no_std`
 
