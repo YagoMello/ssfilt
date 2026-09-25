@@ -130,6 +130,41 @@ the newly supplied endpoint sample. In particular, `PreviousHold` does not
 smear the new sample backward into the interval, but the returned endpoint can
 still jump when that sample arrives.
 
+### Band-pass transformation
+
+For lower and upper -3 dB edges `f_l` and `f_h`, band-pass models normalize
+time by their geometric center and define the fractional bandwidth:
+
+```text
+f_0  = sqrt(f_l * f_h)
+beta = (f_h - f_l) / f_0
+tau  = 2*pi*f_0*t
+```
+
+The analog substitution is `z = (s^2 + 1)/(beta*s)`. Every real low-pass pole
+therefore becomes one second-order band-pass section, while every complex pole
+pair becomes two real second-order sections. The final band-pass order is twice
+the prototype order and must consequently be even.
+
+The direct complex-root mapping is poorly conditioned for narrow bands. For a
+low-pass factor `z^2 + a*z + b`, ssfilt instead factors the transformed
+denominator using reciprocal natural frequencies `W` and `1/W`:
+
+```text
+s^4 + a*beta*s^3 + (2 + b*beta^2)*s^2 + a*beta*s + 1
+
+y = W + 1/W
+c*y = a*beta
+c^2 + y^2 = 4 + b*beta^2
+```
+
+The two section damping coefficients are `c*W` and `c/W`. The small quantity
+`y^2 - 4` is evaluated directly rather than by subtracting two nearly equal
+numbers. This preserves the -3 dB edge normalization for narrow, high-order
+filters without polynomial expansion or complex arithmetic. Low-Q sections
+are placed first, and every constant input has exactly zero output at
+equilibrium.
+
 ## Sample timing contract
 
 `update(u_new, dt)` advances from the preceding sample to the new sample.
@@ -196,8 +231,7 @@ updates preserve the preceding snapshot transactionally.
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
-6. High-pass and band-pass topologies, including direct-feedthrough semantics.
-   High-pass is complete; band-pass is pending.
+6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
 7. Optional delayed group-delay equalization and offline forward-backward
    filtering as separate phase-handling approaches.
 8. Advanced custom kernels or alternative integrators only after concrete use

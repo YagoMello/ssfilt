@@ -9,6 +9,7 @@
 #[cfg(not(any(feature = "std", feature = "libm")))]
 compile_error!("enable either the `std` or `libm` feature");
 
+mod band_pass;
 mod config;
 mod diagnostics;
 mod error;
@@ -20,12 +21,13 @@ mod scalar;
 mod solver;
 mod streaming;
 
+pub use band_pass::{BandPass, BandPassBuilder};
 pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use high_pass::{HighPass, HighPassBuilder};
 pub use low_pass::{LowPass, LowPassBuilder};
-pub use response::{MAX_BESSEL_ORDER, Response};
+pub use response::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
 pub use scalar::Scalar;
 
 /// Common behavior for a stateful streaming filter.

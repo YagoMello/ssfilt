@@ -5,8 +5,8 @@ irregularly sampled signals. Instead of designing a digital filter for one
 fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
-The current milestone provides carefully tested low-pass and high-pass filters
-with four response families:
+The current milestone provides carefully tested low-pass, high-pass, and
+band-pass filters with four response families:
 
 - repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
@@ -16,7 +16,7 @@ with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Band-pass and phase handling are planned, but are not yet part of the API.
+Phase handling is planned, but is not yet part of the API.
 
 ## Example
 
@@ -67,6 +67,29 @@ new sample as well as the integrated state. With `PreviousHold`, the preceding
 sample drives the elapsed interval, then the newly arriving sample is used to
 evaluate the returned endpoint output. A constant-input equilibrium always has
 zero high-pass output, including after `initial_input` or `reset_to_steady`.
+
+### Band-pass
+
+`BandPass` takes the complete response's lower and upper -3 dB edges:
+
+```rust
+use ssfilt::{BandPass, Response};
+
+let mut filter = BandPass::<4>::builder(10.0, 40.0)
+    .response(Response::Butterworth)
+    .initial_input(0.0)
+    .build()?;
+
+let value = filter.update(1.0, 0.012)?;
+# assert!(value.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The const generic is the final band-pass order. It must be positive and even;
+the analog transformation doubles the prototype order, so `BandPass::<4>`
+uses a second-order low-pass prototype. The geometric center is available from
+`center_hz()`. Constant-input equilibrium has zero output. Bessel band-pass
+orders are supported through `MAX_BESSEL_BAND_PASS_ORDER` (currently 50).
 
 ### Runtime-selected order
 
@@ -141,6 +164,13 @@ frequency transformation. This preserves the response family and the same
 whole-filter -3 dB cutoff meaning while introducing zeros at DC and unity gain
 at infinite frequency.
 
+Band-pass responses use the analog low-pass-to-band-pass transformation. The
+two public cutoffs are both complete-filter -3 dB points, their geometric mean
+is the center frequency, and their difference determines the bandwidth. The
+implementation factors the transformed model into real second-order sections
+without expanding a high-order polynomial or subtracting nearly equal complex
+roots.
+
 ## Scalar types
 
 The public `Scalar` trait is sealed and implemented for `f32` and `f64`. The
@@ -151,10 +181,11 @@ validated. Precision-specific integration defaults live in
 
 ## Error behavior
 
-Construction rejects zero order, non-positive or non-finite cutoff, invalid
-Chebyshev ripple, unsupported Bessel order, non-finite initial input, and
-invalid integration controls. Updates reject non-finite input and non-positive
-or non-finite elapsed time.
+Construction rejects zero order, non-positive or non-finite cutoff, odd
+band-pass order, invalid or reversed band-pass edges, invalid Chebyshev ripple,
+unsupported Bessel order, non-finite initial input, and invalid integration
+controls. Updates reject non-finite input and non-positive or non-finite
+elapsed time.
 
 An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
@@ -163,12 +194,12 @@ work. No elapsed time is silently discarded.
 
 ## Integration diagnostics
 
-`LowPass::last_diagnostics()` reports the work performed by the most recent
-successful update: accepted and rejected steps, derivative evaluations, the
-smallest and largest accepted step in seconds, and whether the exact-equilibrium
-shortcut avoided integration. This is intentionally observational rather than
-another configuration interface. Failed updates preserve the previous snapshot;
-construction and resets clear it.
+Each concrete topology's `last_diagnostics()` reports the work performed by
+the most recent successful update: accepted and rejected steps, derivative
+evaluations, the smallest and largest accepted step in seconds, and whether
+the exact-equilibrium shortcut avoided integration. This is intentionally
+observational rather than another configuration interface. Failed updates
+preserve the previous snapshot; construction and resets clear it.
 
 ## `no_std`
 

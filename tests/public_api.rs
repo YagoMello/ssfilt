@@ -1,7 +1,7 @@
 use approx::assert_relative_eq;
 use ssfilt::{
-    BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass, MAX_BESSEL_ORDER, Response,
-    StreamingFilter, UpdateError,
+    BandPass, BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass,
+    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response, StreamingFilter, UpdateError,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -153,4 +153,37 @@ fn high_pass_errors_are_transactional() {
     let after_error = tested.update(0.75, 0.04).unwrap();
     let direct = untouched.update(0.75, 0.04).unwrap();
     assert_relative_eq!(after_error, direct, epsilon = 0.0);
+}
+
+#[test]
+fn band_pass_uses_final_order_and_two_public_cutoff_edges() {
+    let mut filter: Box<dyn StreamingFilter<Scalar = f64>> = Box::new(
+        BandPass::<4>::builder(10.0, 40.0)
+            .response(Response::Butterworth)
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap(),
+    );
+    assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
+    assert!(filter.update(1.0, 0.01).unwrap().is_finite());
+    filter.reset_to_steady(4.0).unwrap();
+    assert_relative_eq!(filter.output(), 0.0, epsilon = 0.0);
+
+    let concrete = BandPass::<8>::builder(10.0, 40.0).build().unwrap();
+    assert_relative_eq!(concrete.lower_cutoff_hz(), 10.0, epsilon = 0.0);
+    assert_relative_eq!(concrete.upper_cutoff_hz(), 40.0, epsilon = 0.0);
+    assert_relative_eq!(concrete.center_hz(), 20.0, epsilon = 0.0);
+    assert_eq!(MAX_BESSEL_BAND_PASS_ORDER, 50);
+}
+
+#[test]
+fn band_pass_rejects_odd_order_and_invalid_edges() {
+    assert!(matches!(
+        BandPass::<3>::builder(10.0, 40.0).build(),
+        Err(BuildError::InvalidBandPassOrder)
+    ));
+    assert!(matches!(
+        BandPass::<4>::builder(40.0, 10.0).build(),
+        Err(BuildError::InvalidBandPassEdges)
+    ));
 }

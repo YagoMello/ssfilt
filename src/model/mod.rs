@@ -1,3 +1,4 @@
+mod band_pass;
 mod bessel;
 mod bessel_table;
 mod butterworth;
@@ -20,4 +21,5 @@ pub(crate) trait ContinuousModel<T: Scalar, const N: usize> {
     fn equilibrium(&self, input: T) -> [T; N];
     fn max_normalized_step(&self) -> T;
 }
+pub(crate) use band_pass::BandPassModel;
 pub(crate) use bessel::Bessel;

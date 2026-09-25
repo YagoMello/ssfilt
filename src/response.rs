@@ -3,6 +3,11 @@
 /// Other response families are not subject to this limit.
 pub const MAX_BESSEL_ORDER: usize = 25;
 
+/// Largest final band-pass order supported by [`Response::Bessel`].
+///
+/// Band-pass transformation doubles the prototype order.
+pub const MAX_BESSEL_BAND_PASS_ORDER: usize = 2 * MAX_BESSEL_ORDER;
+
 /// Analog response family used by the supported filter topologies.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[non_exhaustive]
@@ -16,7 +21,9 @@ pub enum Response<T = f64> {
     /// Maximally flat group delay at DC with little transient ringing.
     ///
     /// The response has unity DC gain and is magnitude-normalized to −3 dB at
-    /// the requested cutoff. Orders through [`MAX_BESSEL_ORDER`] are supported.
+    /// the requested cutoff. Low-pass and high-pass orders through
+    /// [`MAX_BESSEL_ORDER`] are supported; band-pass uses
+    /// [`MAX_BESSEL_BAND_PASS_ORDER`].
     Bessel,
     /// Equiripple passband with a steeper transition than Butterworth.
     ///

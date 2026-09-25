@@ -4,7 +4,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use ssfilt::{HighPass, InputModel, LowPass, Response};
+use ssfilt::{BandPass, HighPass, InputModel, LowPass, Response};
 
 const CUTOFF_HZ: f64 = 1_000.0;
 const AUDIO_SAMPLE_INTERVAL: f64 = 1.0 / 48_000.0;
@@ -140,6 +140,21 @@ fn topologies(criterion: &mut Criterion) {
     });
     group.bench_function("high-pass/4", |bencher| {
         let mut filter = HighPass::<4>::builder(CUTOFF_HZ)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let mut index = 0;
+        bencher.iter(|| {
+            index = (index + 1) % INPUTS.len();
+            black_box(
+                filter
+                    .update(black_box(INPUTS[index]), black_box(AUDIO_SAMPLE_INTERVAL))
+                    .unwrap(),
+            )
+        });
+    });
+    group.bench_function("band-pass/4", |bencher| {
+        let mut filter = BandPass::<4>::builder(CUTOFF_HZ / 2.0, CUTOFF_HZ * 2.0)
             .response(Response::Butterworth)
             .build()
             .unwrap();

@@ -16,6 +16,10 @@ pub enum BuildError {
     InvalidPassbandRipple,
     /// The requested Bessel order exceeds [`crate::MAX_BESSEL_ORDER`].
     UnsupportedBesselOrder,
+    /// A band-pass filter's final order was not positive and even.
+    InvalidBandPassOrder,
+    /// Band-pass edge frequencies were invalid or numerically unsupported.
+    InvalidBandPassEdges,
 }
 
 impl fmt::Display for BuildError {
@@ -29,6 +33,10 @@ impl fmt::Display for BuildError {
                 "passband ripple must be finite, positive, and less than 3.0103 dB"
             }
             Self::UnsupportedBesselOrder => "Bessel filter order exceeds the supported maximum",
+            Self::InvalidBandPassOrder => "band-pass filter order must be positive and even",
+            Self::InvalidBandPassEdges => {
+                "band-pass edges must be finite, positive, ordered, and numerically supported"
+            }
         };
         formatter.write_str(message)
     }
