@@ -56,6 +56,38 @@ with unit magnitude. Its closed-form magnitude is:
 |H(j*Omega)| = 1 / sqrt(1 + Omega^(2*N))
 ```
 
+### Chebyshev Type I
+
+For passband ripple `r_p` in decibels, define:
+
+```text
+epsilon^2 = expm1(ln(10) * r_p / 10)
+mu        = asinh(1 / epsilon) / N
+```
+
+The standard prototype poles lie on an ellipse:
+
+```text
+p_k = -sinh(mu)*sin(theta_k) + j*cosh(mu)*cos(theta_k)
+theta_k = (2*k - 1)*pi/(2*N)
+```
+
+Textbook prototypes define normalized frequency one as the ripple edge, not
+the -3 dB point. ssfilt gives every real and conjugate-pair section unity DC
+gain, then divides all poles by the prototype frequency whose gain is 1/sqrt(2)
+relative to DC. If `C0` is zero for odd orders and one for even orders:
+
+```text
+T_target^2 = (1 + 2*epsilon^2*C0) / epsilon^2
+Omega_3dB  = cosh(acosh(T_target) / N)
+```
+
+This retains a consistent public cutoff and exact constant-input equilibrium.
+It also means even-order ripple extends above unity after DC normalization;
+`ripple_db` consistently describes peak-to-peak variation. Ripple is restricted
+to `(0, 10*log10(2))` dB so the -3 dB normalization remains unambiguous for all
+orders.
+
 ## Sample timing contract
 
 `update(u_new, dt)` advances from the preceding sample to the new sample.
@@ -122,6 +154,7 @@ updates preserve the preceding snapshot transactionally.
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions.
+   Chebyshev I is complete; Bessel is pending.
 6. High-pass and band-pass topologies, including direct-feedthrough semantics.
 7. Optional delayed group-delay equalization and offline forward-backward
    filtering as separate phase-handling approaches.

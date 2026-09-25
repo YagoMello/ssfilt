@@ -89,3 +89,13 @@ fn runtime_order_can_use_the_object_safe_streaming_trait() {
         assert!(output.is_finite());
     }
 }
+
+#[test]
+fn chebyshev_response_is_configurable_through_the_public_builder() {
+    let mut filter = LowPass::<4>::builder(20.0)
+        .response(Response::Chebyshev1 { ripple_db: 0.5 })
+        .build()
+        .unwrap();
+    assert_eq!(filter.response(), Response::Chebyshev1 { ripple_db: 0.5 });
+    assert!(filter.update(1.0, 0.01).unwrap().is_finite());
+}

@@ -9,7 +9,7 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub struct LowPassBuilder<const N: usize, T: Scalar = f64> {
     cutoff_hz: T,
-    response: Response,
+    response: Response<T>,
     input_model: InputModel,
     initial_input: T,
     integration: IntegrationConfig<T>,
@@ -31,7 +31,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
 
     /// Selects the analog low-pass response family.
     #[must_use]
-    pub const fn response(mut self, response: Response) -> Self {
+    pub const fn response(mut self, response: Response<T>) -> Self {
         self.response = response;
         self
     }
@@ -82,7 +82,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             return Err(BuildError::InvalidCutoff);
         }
 
-        let model = LowPassModel::new(self.response);
+        let model = LowPassModel::new(self.response).ok_or(BuildError::InvalidPassbandRipple)?;
         let state = model.equilibrium(self.initial_input);
         Ok(LowPass {
             model,
@@ -112,7 +112,7 @@ pub struct LowPass<const N: usize, T: Scalar = f64> {
     output: T,
     cutoff_hz: T,
     angular_cutoff: T,
-    response: Response,
+    response: Response<T>,
     input_model: InputModel,
     integration: IntegrationConfig<T>,
     last_diagnostics: IntegrationDiagnostics<T>,
@@ -137,7 +137,7 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
 
     /// Returns the selected response family.
     #[must_use]
-    pub const fn response(&self) -> Response {
+    pub const fn response(&self) -> Response<T> {
         self.response
     }
 
@@ -330,6 +330,22 @@ mod tests {
                 .integration(invalid_integration)
                 .build(),
             Err(BuildError::InvalidIntegrationConfig)
+        ));
+    }
+
+    #[rstest]
+    #[case::zero(0.0)]
+    #[case::negative(-0.5)]
+    #[case::nan(f64::NAN)]
+    #[case::infinite(f64::INFINITY)]
+    #[case::three_db(3.010_299_956_639_812)]
+    #[case::above_three_db(4.0)]
+    fn builder_rejects_invalid_chebyshev_ripple(#[case] ripple_db: f64) {
+        assert!(matches!(
+            LowPass::<4>::builder(1.0)
+                .response(Response::Chebyshev1 { ripple_db })
+                .build(),
+            Err(BuildError::InvalidPassbandRipple)
         ));
     }
 
@@ -543,6 +559,13 @@ mod tests {
         let output = filter.update(1.0, 0.02).unwrap();
         assert!(output.is_finite());
         assert!(output > 0.0 && output < 1.0);
+
+        let mut chebyshev = LowPass::<4, f32>::builder(10.0)
+            .response(Response::Chebyshev1 { ripple_db: 0.5 })
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap();
+        assert!(chebyshev.update(1.0, 0.02).unwrap().is_finite());
     }
 
     type CutoffCheck = fn(Response);
@@ -554,7 +577,12 @@ mod tests {
     #[case::order_6(check_cutoff_gain::<6>)]
     fn simulated_cutoff_gain_matches_minus_three_db(
         #[case] check: CutoffCheck,
-        #[values(Response::RepeatedPole, Response::Butterworth)] response: Response,
+        #[values(
+            Response::RepeatedPole,
+            Response::Butterworth,
+            Response::Chebyshev1 { ripple_db: 0.5 }
+        )]
+        response: Response,
     ) {
         check(response);
     }
@@ -562,7 +590,11 @@ mod tests {
     fn check_cutoff_gain<const N: usize>(response: Response) {
         let cutoff_hz = 5.0;
         let samples_per_period = 200;
-        let periods = 20;
+        let periods = if matches!(response, Response::Chebyshev1 { .. }) {
+            60
+        } else {
+            20
+        };
         let dt = 1.0 / (cutoff_hz * samples_per_period as f64);
         let mut filter = LowPass::<N>::builder(cutoff_hz)
             .response(response)
@@ -640,6 +672,15 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(butterworth.response(), Response::Butterworth);
+
+        let chebyshev = LowPass::<2>::builder(10.0)
+            .response(Response::Chebyshev1 { ripple_db: 0.5 })
+            .build()
+            .unwrap();
+        assert_eq!(
+            chebyshev.response(),
+            Response::Chebyshev1 { ripple_db: 0.5 }
+        );
     }
 
     #[test]
@@ -664,7 +705,11 @@ mod tests {
     }
 
     fn response_strategy() -> impl Strategy<Value = Response> {
-        prop_oneof![Just(Response::RepeatedPole), Just(Response::Butterworth),]
+        prop_oneof![
+            Just(Response::RepeatedPole),
+            Just(Response::Butterworth),
+            (0.05_f64..2.5).prop_map(|ripple_db| Response::Chebyshev1 { ripple_db }),
+        ]
     }
 
     proptest! {

@@ -6,9 +6,9 @@ fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
 The current milestone intentionally provides one carefully tested low-pass
-filter with two response families:
+filter with three response families:
 
-- repeated-pole and Butterworth responses;
+- repeated-pole, Butterworth, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
 - adaptive Dormand-Prince 5(4) integration;
 - linear, previous-value hold, and current-value hold input models;
@@ -16,8 +16,8 @@ filter with two response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Chebyshev, Bessel, high-pass, band-pass, and phase equalization are planned,
-but are not yet part of the API.
+Bessel, high-pass, band-pass, and phase equalization are planned, but are not
+yet part of the API.
 
 ## Example
 
@@ -82,6 +82,13 @@ a cascade of normalized real first-/second-order continuous sections rather
 than an expanded denominator polynomial. Low-Q sections precede high-Q
 sections to reduce internal peaking.
 
+`Response::Chebyshev1 { ripple_db }` provides a steeper transition at the cost
+of equiripple passband gain and greater ringing. `ripple_db` is the peak-to-peak
+passband variation and must be greater than zero and less than 3.0103 dB. Every
+section has unity DC gain. Consequently, odd-order responses ripple downward
+from unity while even-order responses ripple upward from unity; both retain
+the same peak-to-peak variation and exact steady-state behavior.
+
 ## Cutoff convention
 
 For `Response::RepeatedPole` of order `N`, the repeated pole is placed at
@@ -90,10 +97,12 @@ For `Response::RepeatedPole` of order `N`, the repeated pole is placed at
 p = omega_c / sqrt(2^(1/N) - 1)
 ```
 
-Butterworth is naturally -3 dB at its normalized cutoff. Therefore,
-`cutoff_hz` has the same whole-filter meaning for both families. Internally the
-models use normalized time `tau = 2*pi*cutoff_hz*t`, preventing absolute cutoff
-frequency from creating huge polynomial coefficients.
+Butterworth is naturally -3 dB at its normalized cutoff. Chebyshev prototypes
+normally use the passband-ripple edge as their reference frequency, so ssfilt
+rescales their poles to place the unity-DC-gain response at -3 dB instead.
+Therefore, `cutoff_hz` has the same whole-filter meaning for every family.
+Internally the models use normalized time `tau = 2*pi*cutoff_hz*t`, preventing
+absolute cutoff frequency from creating huge polynomial coefficients.
 
 ## Scalar types
 
@@ -105,9 +114,9 @@ validated. Precision-specific integration defaults live in
 
 ## Error behavior
 
-Construction rejects zero order, non-positive or non-finite cutoff, non-finite
-initial input, and invalid integration controls. Updates reject non-finite
-input and non-positive or non-finite elapsed time.
+Construction rejects zero order, non-positive or non-finite cutoff, invalid
+Chebyshev ripple, non-finite initial input, and invalid integration controls.
+Updates reject non-finite input and non-positive or non-finite elapsed time.
 
 An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep

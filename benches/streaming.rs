@@ -14,6 +14,7 @@ fn response_name(response: Response) -> &'static str {
     match response {
         Response::RepeatedPole => "repeated-pole",
         Response::Butterworth => "butterworth",
+        Response::Chebyshev1 { .. } => "chebyshev-1",
         _ => "other",
     }
 }
@@ -43,7 +44,11 @@ fn benchmark_order<const N: usize>(group: &mut BenchmarkGroup<'_, WallTime>, res
 fn order_scaling(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("streaming/order");
     group.throughput(Throughput::Elements(1));
-    for response in [Response::RepeatedPole, Response::Butterworth] {
+    for response in [
+        Response::RepeatedPole,
+        Response::Butterworth,
+        Response::Chebyshev1 { ripple_db: 0.5 },
+    ] {
         benchmark_order::<1>(&mut group, response);
         benchmark_order::<2>(&mut group, response);
         benchmark_order::<4>(&mut group, response);

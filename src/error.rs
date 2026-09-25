@@ -12,6 +12,8 @@ pub enum BuildError {
     InvalidInitialInput,
     /// Integration configuration contained an invalid value.
     InvalidIntegrationConfig,
+    /// Chebyshev passband ripple was outside its supported range.
+    InvalidPassbandRipple,
 }
 
 impl fmt::Display for BuildError {
@@ -21,6 +23,9 @@ impl fmt::Display for BuildError {
             Self::InvalidCutoff => "cutoff frequency must be finite and positive",
             Self::InvalidInitialInput => "initial input must be finite",
             Self::InvalidIntegrationConfig => "integration configuration is invalid",
+            Self::InvalidPassbandRipple => {
+                "passband ripple must be finite, positive, and less than 3.0103 dB"
+            }
         };
         formatter.write_str(message)
     }
