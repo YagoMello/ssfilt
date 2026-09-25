@@ -120,7 +120,7 @@ updates preserve the preceding snapshot transactionally.
 1. Repeated-pole low-pass, explicit input timing, RK45, `no_std`, analytic tests. ✓
 2. Named case matrices, shrinking numerical properties, and CI quality gates. ✓
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
-4. Runtime integration diagnostics and benchmarks.
+4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions.
 6. High-pass and band-pass topologies, including direct-feedthrough semantics.
 7. Optional delayed group-delay equalization and offline forward-backward

@@ -115,12 +115,17 @@ cargo check --no-default-features --features libm
 cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --all-features --no-deps
 cargo +1.85.0 check --all-targets --all-features
+cargo bench --bench streaming
 ```
 
 The suite uses named, table-driven cases for boundary and response matrices,
 and shrinking property tests for numerical invariants such as partition and
 frequency-scaling independence. Explicit non-finite and transactional failures
 remain ordinary regression tests so their contracts stay easy to read.
+
+The Criterion benchmarks cover order and response scaling, input reconstruction
+policies, and increasingly large normalized sample intervals. Benchmark
+dependencies are development-only and do not affect library users.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.
