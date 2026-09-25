@@ -162,5 +162,14 @@ The Criterion benchmarks cover order and response scaling, input reconstruction
 policies, and increasingly large normalized sample intervals. Benchmark
 dependencies are development-only and do not affect library users.
 
+To generate an SVG magnitude plot by driving the public streaming API, run:
+
+```text
+cargo run --release --example plot_responses -- 4 target/filter-responses.svg
+```
+
+Orders 1 through 8 are accepted. The output path and order are optional and
+default to `target/filter-responses.svg` and order 4.
+
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.
