@@ -17,16 +17,18 @@ use ssfilt::{InputModel, LowPass, Response};
 const CUTOFF_HZ: f64 = 1.0;
 const FREQUENCY_POINTS: u32 = 1_601;
 const TRANSIENT_POINTS: u32 = 1_601;
-const SAMPLES_PER_PERIOD: u32 = 160;
-const MEASURED_PERIODS: u32 = 6;
-const SETTLING_TIME_CONSTANTS: f64 = 20.0;
 const MIN_FREQUENCY_RATIO: f64 = 0.01;
 const MAX_FREQUENCY_RATIO: f64 = 20.0;
 const MAGNITUDE_FLOOR_DB: f64 = -140.0;
-const PHASE_GAIN_FLOOR_DB: f64 = -80.0;
-const GROUP_DELAY_GAIN_FLOOR_DB: f64 = -50.0;
 const GROUP_DELAY_HALF_WINDOW: usize = 4;
 const RESPONSE_STROKES: [&str; 3] = ["#2E6FD6", "#E05B4A", "#249D5C"];
+const DISPLAY_WIDTH: u32 = 1_600;
+const DISPLAY_HEIGHT: u32 = 1_180;
+const RENDER_SCALE: u32 = 8;
+
+const fn scaled(value: u32) -> u32 {
+    value * RENDER_SCALE
+}
 
 #[derive(Clone, Copy)]
 struct ResponseSpec {
@@ -39,7 +41,6 @@ struct FrequencyPoint {
     ratio: f64,
     gain_db: f64,
     phase_radians: f64,
-    reliable: bool,
 }
 
 struct ResponseData {
@@ -118,12 +119,10 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
 
     let mut responses = Vec::with_capacity(specs.len());
     for spec in specs {
-        println!("measuring {}", spec.label);
-        let mut frequency = frequency_ratios()
-            .map(|ratio| measure_frequency_point::<N>(spec.response, ratio))
+        println!("evaluating {}", spec.label);
+        let frequency = frequency_ratios()
+            .map(|ratio| exact_frequency_point::<N>(spec.response, ratio))
             .collect::<Result<Vec<_>, _>>()?;
-        mark_stopband_measurement_limit(&mut frequency);
-        unwrap_phase(&mut frequency);
         let group_delay = group_delay(&frequency);
         let step = measure_step_response::<N>(spec.response)?;
         responses.push(ResponseData {
@@ -134,11 +133,12 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let root = SVGBackend::new(output_path, (1_600, 1_180)).into_drawing_area();
+    let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
+        .into_drawing_area();
     root.fill(&WHITE)?;
     let root = root.titled(
         &format!("ssfilt order {N} low-pass responses"),
-        ("sans-serif", 30),
+        ("sans-serif", scaled(30)),
     )?;
     let panels = root.split_evenly((2, 2));
     draw_magnitude(&panels[0], &responses)?;
@@ -157,10 +157,10 @@ fn draw_magnitude(
     responses: &[ResponseData],
 ) -> Result<(), Box<dyn Error>> {
     let mut chart = ChartBuilder::on(area)
-        .caption("Magnitude response", ("sans-serif", 22))
-        .margin(16)
-        .x_label_area_size(46)
-        .y_label_area_size(62)
+        .caption("Magnitude response", ("sans-serif", scaled(22)))
+        .margin(scaled(16))
+        .x_label_area_size(scaled(46))
+        .y_label_area_size(scaled(62))
         .build_cartesian_2d(
             (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
             MAGNITUDE_FLOOR_DB..5.0_f64,
@@ -171,35 +171,41 @@ fn draw_magnitude(
         .y_desc("gain relative to DC (dB)")
         .x_labels(9)
         .y_labels(10)
-        .light_line_style(RGBColor(225, 229, 235))
+        .label_style(("sans-serif", scaled(12)))
+        .axis_desc_style(("sans-serif", scaled(15)))
+        .axis_style(BLACK.stroke_width(RENDER_SCALE))
+        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
+        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
         [(MIN_FREQUENCY_RATIO, -3.0), (MAX_FREQUENCY_RATIO, -3.0)],
-        &BLACK.mix(0.25),
+        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     chart.draw_series(LineSeries::new(
         [(1.0, MAGNITUDE_FLOOR_DB), (1.0, 5.0)],
-        &BLACK.mix(0.25),
+        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     for response in responses {
         chart
             .draw_series(LineSeries::new(
-                response
-                    .frequency
-                    .iter()
-                    .filter(|point| point.reliable)
-                    .map(|point| (point.ratio, point.gain_db)),
-                response.spec.color.stroke_width(2),
+                visible_magnitude_points(&response.frequency),
+                response.spec.color.stroke_width(scaled(2)),
             ))?
             .label(response.spec.label)
             .legend(move |(x, y)| {
-                PathElement::new([(x, y), (x + 24, y)], response.spec.color.stroke_width(2))
+                PathElement::new(
+                    [(x, y), (x + i32::try_from(scaled(24)).unwrap(), y)],
+                    response.spec.color.stroke_width(scaled(2)),
+                )
             });
     }
     chart
         .configure_series_labels()
-        .background_style(WHITE.mix(0.9))
-        .border_style(BLACK.mix(0.35))
+        .label_font(("sans-serif", scaled(12)))
+        .margin(scaled(5))
+        .legend_area_size(scaled(30))
+        .background_style(WHITE)
+        .border_style(BLACK.mix(0.35).stroke_width(RENDER_SCALE))
         .position(SeriesLabelPosition::LowerLeft)
         .draw()?;
     Ok(())
@@ -211,10 +217,10 @@ fn draw_phase<const N: usize>(
 ) -> Result<(), Box<dyn Error>> {
     let phase_floor = -90.0 * N.to_f64().ok_or("order does not fit in f64")?;
     let mut chart = ChartBuilder::on(area)
-        .caption("Unwrapped phase response", ("sans-serif", 22))
-        .margin(16)
-        .x_label_area_size(46)
-        .y_label_area_size(68)
+        .caption("Unwrapped phase response", ("sans-serif", scaled(22)))
+        .margin(scaled(16))
+        .x_label_area_size(scaled(46))
+        .y_label_area_size(scaled(68))
         .build_cartesian_2d(
             (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
             phase_floor..5.0_f64,
@@ -225,20 +231,23 @@ fn draw_phase<const N: usize>(
         .y_desc("phase (degrees)")
         .x_labels(9)
         .y_labels(10)
-        .light_line_style(RGBColor(225, 229, 235))
+        .label_style(("sans-serif", scaled(12)))
+        .axis_desc_style(("sans-serif", scaled(15)))
+        .axis_style(BLACK.stroke_width(RENDER_SCALE))
+        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
+        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
         [(1.0, phase_floor), (1.0, 5.0)],
-        &BLACK.mix(0.25),
+        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     for response in responses {
         chart.draw_series(LineSeries::new(
             response
                 .frequency
                 .iter()
-                .filter(|point| point.reliable && point.gain_db >= PHASE_GAIN_FLOOR_DB)
                 .map(|point| (point.ratio, point.phase_radians.to_degrees())),
-            response.spec.color.stroke_width(2),
+            response.spec.color.stroke_width(scaled(2)),
         ))?;
     }
     Ok(())
@@ -255,10 +264,10 @@ fn draw_group_delay(
         .fold(1.0_f64, f64::max);
     let upper = maximum.mul_add(1.05, 0.05);
     let mut chart = ChartBuilder::on(area)
-        .caption("Group delay", ("sans-serif", 22))
-        .margin(16)
-        .x_label_area_size(46)
-        .y_label_area_size(68)
+        .caption("Group delay", ("sans-serif", scaled(22)))
+        .margin(scaled(16))
+        .x_label_area_size(scaled(46))
+        .y_label_area_size(scaled(68))
         .build_cartesian_2d(
             (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
             0.0_f64..upper,
@@ -269,16 +278,20 @@ fn draw_group_delay(
         .y_desc("normalized group delay (ωc τg)")
         .x_labels(9)
         .y_labels(10)
-        .light_line_style(RGBColor(225, 229, 235))
+        .label_style(("sans-serif", scaled(12)))
+        .axis_desc_style(("sans-serif", scaled(15)))
+        .axis_style(BLACK.stroke_width(RENDER_SCALE))
+        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
+        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
         [(1.0, 0.0), (1.0, upper)],
-        &BLACK.mix(0.25),
+        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     for response in responses {
         chart.draw_series(LineSeries::new(
             response.group_delay.iter().copied(),
-            response.spec.color.stroke_width(2),
+            response.spec.color.stroke_width(scaled(2)),
         ))?;
     }
     Ok(())
@@ -298,10 +311,10 @@ fn draw_step(
         .filter(|value| value.is_finite())
         .fold(1.0_f64, f64::max);
     let mut chart = ChartBuilder::on(area)
-        .caption("Unit-step response", ("sans-serif", 22))
-        .margin(16)
-        .x_label_area_size(46)
-        .y_label_area_size(62)
+        .caption("Unit-step response", ("sans-serif", scaled(22)))
+        .margin(scaled(16))
+        .x_label_area_size(scaled(46))
+        .y_label_area_size(scaled(62))
         .build_cartesian_2d(0.0_f64..end, -0.1_f64..maximum.mul_add(1.05, 0.05))?;
     chart
         .configure_mesh()
@@ -309,13 +322,20 @@ fn draw_step(
         .y_desc("output")
         .x_labels(9)
         .y_labels(10)
-        .light_line_style(RGBColor(225, 229, 235))
+        .label_style(("sans-serif", scaled(12)))
+        .axis_desc_style(("sans-serif", scaled(15)))
+        .axis_style(BLACK.stroke_width(RENDER_SCALE))
+        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
+        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
-    chart.draw_series(LineSeries::new([(0.0, 1.0), (end, 1.0)], &BLACK.mix(0.25)))?;
+    chart.draw_series(LineSeries::new(
+        [(0.0, 1.0), (end, 1.0)],
+        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
+    ))?;
     for response in responses {
         chart.draw_series(LineSeries::new(
             response.step.iter().copied(),
-            response.spec.color.stroke_width(2),
+            response.spec.color.stroke_width(scaled(2)),
         ))?;
     }
     Ok(())
@@ -330,77 +350,125 @@ fn frequency_ratios() -> impl Iterator<Item = f64> {
     })
 }
 
-fn measure_frequency_point<const N: usize>(
+fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
+    let mut visible = Vec::with_capacity(points.len());
+    for point in points {
+        if point.gain_db >= MAGNITUDE_FLOOR_DB {
+            visible.push((point.ratio, point.gain_db));
+            continue;
+        }
+        if let Some(&(preceding_ratio, preceding_gain)) = visible.last() {
+            let fraction = (MAGNITUDE_FLOOR_DB - preceding_gain) / (point.gain_db - preceding_gain);
+            let log_ratio = fraction.mul_add(
+                point.ratio.ln() - preceding_ratio.ln(),
+                preceding_ratio.ln(),
+            );
+            visible.push((log_ratio.exp(), MAGNITUDE_FLOOR_DB));
+        }
+        break;
+    }
+    visible
+}
+
+fn exact_frequency_point<const N: usize>(
     response: Response,
     frequency_ratio: f64,
 ) -> Result<FrequencyPoint, Box<dyn Error>> {
-    let frequency_hz = CUTOFF_HZ * frequency_ratio;
-    let dt = 1.0 / (frequency_hz * f64::from(SAMPLES_PER_PERIOD));
     let order = N.to_f64().ok_or("order does not fit in f64")?;
-    let settling_duration = SETTLING_TIME_CONSTANTS.max(order) / CUTOFF_HZ;
-    let settling_samples = (settling_duration / dt)
-        .ceil()
-        .to_u32()
-        .ok_or("settling sample count does not fit in u32")?;
-    let measured_samples = MEASURED_PERIODS * SAMPLES_PER_PERIOD;
-    let mut filter = LowPass::<N>::builder(CUTOFF_HZ)
-        .response(response)
-        .input_model(InputModel::Linear)
-        .build()?;
-
-    for index in 1..=settling_samples {
-        let phase = core::f64::consts::TAU * frequency_hz * f64::from(index) * dt;
-        filter.update(phase.sin(), dt)?;
+    let mut log_magnitude = 0.0;
+    let mut phase_radians = 0.0;
+    match response {
+        Response::RepeatedPole => {
+            let rate = 1.0 / (core::f64::consts::LN_2 / order).exp_m1().sqrt();
+            for _ in 0..N {
+                accumulate_first_order(
+                    rate,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+        }
+        Response::Butterworth => {
+            if N % 2 == 1 {
+                accumulate_first_order(
+                    1.0,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+            for index in 0..N / 2 {
+                let angle =
+                    core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
+                accumulate_second_order(
+                    2.0 * angle.sin(),
+                    1.0,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+        }
+        Response::Chebyshev1 { ripple_db } => {
+            let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
+            let epsilon = epsilon_squared.sqrt();
+            let mu = (1.0 / epsilon).asinh() / order;
+            let cutoff_target = if N % 2 == 0 {
+                (1.0 / epsilon_squared + 2.0).sqrt()
+            } else {
+                1.0 / epsilon
+            };
+            let cutoff_scale = (cutoff_target.acosh() / order).cosh();
+            if N % 2 == 1 {
+                accumulate_first_order(
+                    mu.sinh() / cutoff_scale,
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+            for index in 0..N / 2 {
+                let angle =
+                    core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
+                let real = mu.sinh() * angle.sin() / cutoff_scale;
+                let imaginary = mu.cosh() * angle.cos() / cutoff_scale;
+                accumulate_second_order(
+                    2.0 * real,
+                    real.mul_add(real, imaginary * imaginary),
+                    frequency_ratio,
+                    &mut log_magnitude,
+                    &mut phase_radians,
+                );
+            }
+        }
+        _ => return Err("response is not supported by this development plot".into()),
     }
 
-    let mut in_phase = 0.0;
-    let mut quadrature = 0.0;
-    for offset in 1..=measured_samples {
-        let index = settling_samples + offset;
-        let phase = core::f64::consts::TAU * frequency_hz * f64::from(index) * dt;
-        let output = filter.update(phase.sin(), dt)?;
-        in_phase += output * phase.sin();
-        quadrature += output * phase.cos();
-    }
-
-    let scale = 2.0 / f64::from(measured_samples);
-    let real = scale * in_phase;
-    let imaginary = scale * quadrature;
-    let gain = real.hypot(imaginary);
     Ok(FrequencyPoint {
         ratio: frequency_ratio,
-        gain_db: (20.0 * gain.max(f64::MIN_POSITIVE).log10()).max(MAGNITUDE_FLOOR_DB),
-        phase_radians: imaginary.atan2(real),
-        reliable: true,
+        gain_db: 20.0 / core::f64::consts::LN_10 * log_magnitude,
+        phase_radians,
     })
 }
 
-fn unwrap_phase(points: &mut [FrequencyPoint]) {
-    let Some((first, remaining)) = points.split_first_mut() else {
-        return;
-    };
-    let mut previous = first.phase_radians;
-    for point in remaining {
-        while point.phase_radians - previous > core::f64::consts::PI {
-            point.phase_radians -= core::f64::consts::TAU;
-        }
-        while point.phase_radians - previous < -core::f64::consts::PI {
-            point.phase_radians += core::f64::consts::TAU;
-        }
-        previous = point.phase_radians;
-    }
+fn accumulate_first_order(rate: f64, frequency: f64, log_magnitude: &mut f64, phase: &mut f64) {
+    *log_magnitude += rate.ln() - rate.hypot(frequency).ln();
+    *phase -= frequency.atan2(rate);
 }
 
-fn mark_stopband_measurement_limit(points: &mut [FrequencyPoint]) {
-    let mut preceding_gain = f64::INFINITY;
-    let mut reliable = true;
-    for point in points.iter_mut().filter(|point| point.ratio >= 1.0) {
-        if point.gain_db > preceding_gain + 0.25 {
-            reliable = false;
-        }
-        point.reliable = reliable;
-        preceding_gain = preceding_gain.min(point.gain_db);
-    }
+fn accumulate_second_order(
+    damping: f64,
+    natural_frequency_squared: f64,
+    frequency: f64,
+    log_magnitude: &mut f64,
+    phase: &mut f64,
+) {
+    let denominator_real = natural_frequency_squared - frequency * frequency;
+    let denominator_imaginary = damping * frequency;
+    *log_magnitude +=
+        natural_frequency_squared.ln() - denominator_real.hypot(denominator_imaginary).ln();
+    *phase -= denominator_imaginary.atan2(denominator_real);
 }
 
 fn group_delay(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
@@ -408,12 +476,6 @@ fn group_delay(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
     points
         .windows(width)
         .filter_map(|window| {
-            if window
-                .iter()
-                .any(|point| !point.reliable || point.gain_db < GROUP_DELAY_GAIN_FLOOR_DB)
-            {
-                return None;
-            }
             let center = &window[GROUP_DELAY_HALF_WINDOW];
             let mean_ratio = window.iter().map(|point| point.ratio).sum::<f64>()
                 / width.to_f64().expect("small constant fits in f64");
@@ -458,6 +520,19 @@ fn smooth_svg_response_curves(output_path: &Path) -> Result<(), Box<dyn Error>> 
     let svg = fs::read_to_string(output_path)?;
     let mut smoothed = String::with_capacity(svg.len());
     for line in svg.lines() {
+        let resized_line;
+        let line = if line.starts_with("<svg ") {
+            let rendered_size = format!(
+                "width=\"{}\" height=\"{}\"",
+                scaled(DISPLAY_WIDTH),
+                scaled(DISPLAY_HEIGHT)
+            );
+            let display_size = format!("width=\"{DISPLAY_WIDTH}\" height=\"{DISPLAY_HEIGHT}\"");
+            resized_line = line.replacen(&rendered_size, &display_size, 1);
+            resized_line.as_str()
+        } else {
+            line
+        };
         let replacement = RESPONSE_STROKES
             .iter()
             .any(|color| line.contains(color))
@@ -598,7 +673,59 @@ fn endpoint_slope(
 
 #[cfg(test)]
 mod svg_tests {
-    use super::{collapse_vertical_pixels, pchip_path, smooth_polyline};
+    use approx::assert_relative_eq;
+
+    use super::{
+        MAGNITUDE_FLOOR_DB, collapse_vertical_pixels, exact_frequency_point, frequency_ratios,
+        pchip_path, smooth_polyline, visible_magnitude_points,
+    };
+    use ssfilt::Response;
+
+    #[test]
+    fn frequency_grid_is_logarithmically_spaced() {
+        let ratios = frequency_ratios().collect::<Vec<_>>();
+        let expected_ratio = ratios[1] / ratios[0];
+        for pair in ratios.windows(2) {
+            assert_relative_eq!(pair[1] / pair[0], expected_ratio, epsilon = 2.0e-15);
+        }
+    }
+
+    #[test]
+    fn exact_responses_share_the_minus_three_db_cutoff() {
+        for response in [
+            Response::RepeatedPole,
+            Response::Butterworth,
+            Response::Chebyshev1 { ripple_db: 0.5 },
+        ] {
+            let point = exact_frequency_point::<36>(response, 1.0).unwrap();
+            assert_relative_eq!(point.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
+            assert!(point.phase_radians.is_finite());
+        }
+    }
+
+    #[test]
+    fn exact_high_order_stopbands_reach_the_plot_floor() {
+        for response in [
+            Response::Butterworth,
+            Response::Chebyshev1 { ripple_db: 0.5 },
+        ] {
+            let point = exact_frequency_point::<36>(response, 20.0).unwrap();
+            assert!(point.gain_db < MAGNITUDE_FLOOR_DB);
+        }
+    }
+
+    #[test]
+    fn magnitude_curve_ends_at_the_visible_floor() {
+        let points = frequency_ratios()
+            .map(|ratio| {
+                exact_frequency_point::<36>(Response::Chebyshev1 { ripple_db: 0.5 }, ratio)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let visible = visible_magnitude_points(&points);
+        assert_eq!(visible.last().unwrap().1, MAGNITUDE_FLOOR_DB);
+        assert!(visible.len() < points.len());
+    }
 
     #[test]
     fn vertical_pixel_runs_are_averaged() {
