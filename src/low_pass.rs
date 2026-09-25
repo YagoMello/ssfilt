@@ -246,6 +246,7 @@ mod tests {
     )]
 
     use approx::assert_relative_eq;
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -594,20 +595,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn randomized_partitions_preserve_a_held_input() {
-        for seed in 1..=12 {
-            let weights = random_weights(seed);
-            let weight_sum: f64 = weights.iter().sum();
-            let total_dt = 0.15;
+    fn response_strategy() -> impl Strategy<Value = Response> {
+        prop_oneof![Just(Response::RepeatedPole), Just(Response::Butterworth),]
+    }
 
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            max_shrink_iters: 4_096,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn arbitrary_partitions_preserve_a_held_input(
+            weights in prop::collection::vec(0.01_f64..1.0, 1..48),
+            total_dt in 1.0e-4_f64..0.2,
+            response in response_strategy(),
+        ) {
+            let weight_sum: f64 = weights.iter().sum();
             let mut single = LowPass::<5>::builder(3.0)
+                .response(response)
                 .input_model(InputModel::CurrentHold)
                 .build()
                 .unwrap();
             let expected = single.update(1.0, total_dt).unwrap();
 
             let mut partitioned = LowPass::<5>::builder(3.0)
+                .response(response)
                 .input_model(InputModel::CurrentHold)
                 .build()
                 .unwrap();
@@ -617,21 +631,26 @@ mod tests {
                     .update(1.0, total_dt * weight / weight_sum)
                     .unwrap();
             }
-            assert_relative_eq!(actual, expected, epsilon = 2.0e-8);
+            prop_assert!((actual - expected).abs() <= 5.0e-7);
         }
-    }
 
-    #[test]
-    fn randomized_partitions_preserve_a_linear_ramp() {
-        for seed in 20..=31 {
-            let weights = random_weights(seed);
+        #[test]
+        fn arbitrary_partitions_preserve_a_linear_ramp(
+            weights in prop::collection::vec(0.01_f64..1.0, 1..48),
+            total_dt in 1.0e-4_f64..0.2,
+            response in response_strategy(),
+        ) {
             let weight_sum: f64 = weights.iter().sum();
-            let total_dt = 0.2;
-
-            let mut single = LowPass::<4>::builder(2.0).build().unwrap();
+            let mut single = LowPass::<4>::builder(2.0)
+                .response(response)
+                .build()
+                .unwrap();
             let expected = single.update(1.0, total_dt).unwrap();
 
-            let mut partitioned = LowPass::<4>::builder(2.0).build().unwrap();
+            let mut partitioned = LowPass::<4>::builder(2.0)
+                .response(response)
+                .build()
+                .unwrap();
             let mut elapsed_fraction = 0.0;
             let mut actual = 0.0;
             for weight in weights {
@@ -641,19 +660,70 @@ mod tests {
                     .update(elapsed_fraction, total_dt * fraction)
                     .unwrap();
             }
-            assert_relative_eq!(actual, expected, epsilon = 2.0e-8);
+            prop_assert!((actual - expected).abs() <= 5.0e-7);
         }
-    }
 
-    #[test]
-    fn long_irregular_stream_remains_finite() {
-        let mut random = 0x5eed_1234_9876_abcd_u64;
-        let mut filter = LowPass::<8>::builder(40.0).build().unwrap();
+        #[test]
+        fn arbitrary_irregular_stream_remains_finite(
+            samples in prop::collection::vec(
+                (-1_000.0_f64..1_000.0, 1.0e-6_f64..0.002),
+                1..256,
+            ),
+            response in response_strategy(),
+        ) {
+            let mut filter = LowPass::<8>::builder(40.0)
+                .response(response)
+                .build()
+                .unwrap();
+            for (input, dt) in samples {
+                let output = filter.update(input, dt);
+                prop_assert!(output.is_ok());
+                prop_assert!(output.unwrap().is_finite());
+            }
+        }
 
-        for _ in 0..2_000 {
-            let input = 2_000.0 * next_random(&mut random) - 1_000.0;
-            let dt = 1.0e-6 + 0.002 * next_random(&mut random);
-            assert!(filter.update(input, dt).unwrap().is_finite());
+        #[test]
+        fn arbitrary_physical_scaling_preserves_normalized_evolution(
+            samples in prop::collection::vec(
+                (-1_000.0_f64..1_000.0, 1.0e-6_f64..0.5),
+                1..32,
+            ),
+            cutoff_hz in 0.01_f64..10_000.0,
+            scale in 0.1_f64..10.0,
+            response in response_strategy(),
+        ) {
+            let mut original = LowPass::<5>::builder(cutoff_hz)
+                .response(response)
+                .build()
+                .unwrap();
+            let mut scaled = LowPass::<5>::builder(cutoff_hz * scale)
+                .response(response)
+                .build()
+                .unwrap();
+            let angular_cutoff = core::f64::consts::TAU * cutoff_hz;
+
+            for (input, normalized_dt) in samples {
+                let dt = normalized_dt / angular_cutoff;
+                let original_output = original.update(input, dt).unwrap();
+                let scaled_output = scaled.update(input, dt / scale).unwrap();
+                prop_assert!((original_output - scaled_output).abs() <= 2.0e-8);
+            }
+        }
+
+        #[test]
+        fn arbitrary_steady_reset_remains_steady(
+            steady_input in -1.0e6_f64..1.0e6,
+            cutoff_hz in 0.01_f64..10_000.0,
+            dt in 1.0e-9_f64..1.0e6,
+            response in response_strategy(),
+        ) {
+            let mut filter = LowPass::<7>::builder(cutoff_hz)
+                .response(response)
+                .build()
+                .unwrap();
+            filter.reset_to_steady(steady_input).unwrap();
+            let output = filter.update(steady_input, dt).unwrap();
+            prop_assert_eq!(output, steady_input);
         }
     }
 
@@ -675,21 +745,5 @@ mod tests {
         let scaled_time = rate * normalized_time;
         let expected = 1.0 - (-scaled_time).exp() * (1.0 + scaled_time + scaled_time.powi(2) / 2.0);
         assert_relative_eq!(actual, expected, epsilon = 2.0e-10);
-    }
-
-    fn random_weights(seed: u64) -> [f64; 31] {
-        let mut random = seed;
-        let mut weights = [0.0; 31];
-        for weight in &mut weights {
-            *weight = 0.01 + next_random(&mut random);
-        }
-        weights
-    }
-
-    fn next_random(state: &mut u64) -> f64 {
-        *state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        ((*state >> 11) as f64) / ((1_u64 << 53) as f64)
     }
 }

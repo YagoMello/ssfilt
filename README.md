@@ -104,7 +104,13 @@ cargo test --all-features
 cargo check --no-default-features --features libm
 cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --all-features --no-deps
+cargo +1.85.0 check --all-targets --all-features
 ```
+
+The suite uses named, table-driven cases for boundary and response matrices,
+and shrinking property tests for numerical invariants such as partition and
+frequency-scaling independence. Explicit non-finite and transactional failures
+remain ordinary regression tests so their contracts stay easy to read.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.

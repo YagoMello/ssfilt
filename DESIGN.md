@@ -113,7 +113,7 @@ an accuracy oracle or public backend.
 ## Planned milestones
 
 1. Repeated-pole low-pass, explicit input timing, RK45, `no_std`, analytic tests. ✓
-2. Deterministic randomized partition coverage and CI quality gates. ✓
+2. Named case matrices, shrinking numerical properties, and CI quality gates. ✓
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
 4. Runtime integration diagnostics and benchmarks.
 5. Chebyshev I and Bessel responses with explicit normalization conventions.
