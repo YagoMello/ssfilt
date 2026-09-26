@@ -8,6 +8,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+extern crate std;
+
 #[cfg(not(any(feature = "std", feature = "libm")))]
 compile_error!("enable either the `std` or `libm` feature");
 
