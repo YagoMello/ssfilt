@@ -308,16 +308,26 @@ Select a focused view without adding panels to the same SVG:
 cargo run --release --example plot_responses -- high-pass 4 target/high-pass-responses.svg
 cargo run --release --example plot_responses -- band-pass 4 target/band-pass-responses.svg
 cargo run --release --example plot_responses -- phase 4 target/phase-responses.svg
+cargo run --release --example plot_responses -- phase chebyshev 4 target/phase-chebyshev.svg
+cargo run --release --example plot_responses -- waveform butterworth 4 target/phase-waveform.svg
 cargo run --release --example plot_performance -- target/filter-performance.svg
 ```
 
-The first command above remains the default low-pass view. Band-pass orders
+The original `plot_responses -- 4 ...` command remains the default low-pass view. Band-pass orders
 must be even; its plot uses cutoff edges at 0.5 and 2 times the geometric
-center. The phase view compares an ordinary Butterworth low-pass with the
-same filter plus two all-pass sections designed over 0 to its cutoff. Their
-magnitude traces coincide, while phase, group delay, and step response show
-the added delay. The phase view can report that no improvement is possible for
-some orders. The performance SVG is intentionally separate: it shows
+center. The `phase` and `waveform` views accept `repeated`, `butterworth`,
+`bessel`, or `chebyshev` as an optional response model before the order;
+Butterworth remains the default, and Chebyshev I uses 0.5 dB ripple. The phase
+view compares an ordinary low-pass with the same filter plus two all-pass
+sections designed over 0 to its cutoff. Their magnitude traces coincide,
+while phase, group delay, and step response show the added delay. The waveform
+view uses a Gaussian-windowed four-tone burst at 0.12, 0.31, 0.57, and 0.88
+times cutoff. Its upper panel shows actual streaming timing; the lower panel
+shifts each output by one fitted constant delay solely to reveal residual
+waveform distortion. This display shift does not remove real latency. If no
+all-pass design improves the selected response, the plots show the ordinary
+filter alone and say so explicitly. The performance SVG is intentionally
+separate: it shows
 indicative median host timings for order-four kernels/topologies, equalization,
 and RK45 tolerance, step-cap, and input-reconstruction settings. There is no
 second production integrator to compare yet. Timings depend on the host and

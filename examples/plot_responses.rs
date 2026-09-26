@@ -1,7 +1,8 @@
 //! Generates end-to-end response plots through the public streaming API.
 //!
 //! Usage:
-//! `cargo run --release --example plot_responses -- [low-pass|high-pass|band-pass|phase] [order] [output.svg]`
+//! `cargo run --release --example plot_responses -- [low-pass|high-pass|band-pass] [order] [output.svg]`
+//! `cargo run --release --example plot_responses -- [phase|waveform] [model] [order] [output.svg]`
 
 use std::env;
 use std::error::Error;
@@ -12,7 +13,10 @@ use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
-use ssfilt::{BandPass, HighPass, InputModel, LowPass, MAX_BESSEL_ORDER, Response};
+use ssfilt::{
+    BandPass, HighPass, InputModel, LowPass, MAX_BESSEL_ORDER, PhaseEqualizationError,
+    PhaseEqualizedLowPass, Response,
+};
 
 #[path = "../src/model/bessel_table.rs"]
 mod bessel_table;
@@ -24,10 +28,12 @@ const MIN_FREQUENCY_RATIO: f64 = 0.01;
 const MAX_FREQUENCY_RATIO: f64 = 20.0;
 const MAGNITUDE_FLOOR_DB: f64 = -140.0;
 const GROUP_DELAY_HALF_WINDOW: usize = 4;
-const RESPONSE_STROKES: [&str; 4] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1"];
+const RESPONSE_STROKES: [&str; 5] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1", "#707882"];
 const DISPLAY_WIDTH: u32 = 1_600;
 const DISPLAY_HEIGHT: u32 = 1_180;
 const RENDER_SCALE: u32 = 8;
+const WAVEFORM_TONES: [f64; 4] = [0.12, 0.31, 0.57, 0.88];
+const WAVEFORM_SAMPLES_PER_CYCLE: u32 = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -35,6 +41,7 @@ enum View {
     HighPass,
     BandPass,
     Phase,
+    Waveform,
 }
 
 impl View {
@@ -44,6 +51,7 @@ impl View {
             Self::HighPass => "high-pass",
             Self::BandPass => "band-pass",
             Self::Phase => "phase comparison",
+            Self::Waveform => "phase waveform",
         }
     }
 
@@ -62,9 +70,62 @@ impl View {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PhaseModel {
+    RepeatedPole,
+    Butterworth,
+    Bessel,
+    Chebyshev1,
+}
+
+impl PhaseModel {
+    fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
+        match value {
+            "repeated" | "repeated-pole" => Ok(Self::RepeatedPole),
+            "butterworth" => Ok(Self::Butterworth),
+            "bessel" => Ok(Self::Bessel),
+            "chebyshev" | "chebyshev1" => Ok(Self::Chebyshev1),
+            _ => Err(format!(
+                "unknown model '{value}'; choose repeated, butterworth, bessel, or chebyshev"
+            )
+            .into()),
+        }
+    }
+
+    fn response(self) -> Response {
+        match self {
+            Self::RepeatedPole => Response::RepeatedPole,
+            Self::Butterworth => Response::Butterworth,
+            Self::Bessel => Response::Bessel,
+            Self::Chebyshev1 => Response::Chebyshev1 { ripple_db: 0.5 },
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::RepeatedPole => "Repeated pole",
+            Self::Butterworth => "Butterworth",
+            Self::Bessel => "Bessel",
+            Self::Chebyshev1 => "Chebyshev I (0.5 dB ripple)",
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::RepeatedPole => "repeated",
+            Self::Butterworth => "butterworth",
+            Self::Bessel => "bessel",
+            Self::Chebyshev1 => "chebyshev",
+        }
+    }
+}
+
 const fn scaled(value: u32) -> u32 {
     value * RENDER_SCALE
 }
+
+#[path = "plot_responses/waveform.rs"]
+mod waveform_plot;
 
 #[derive(Clone, Copy)]
 struct ResponseSpec {
@@ -87,9 +148,9 @@ struct ResponseData {
 }
 
 macro_rules! dispatch_order {
-    ($order:expr, $view:expr, $output:expr; $($supported:literal),+ $(,)?) => {
+    ($order:expr, $view:expr, $model:expr, $output:expr; $($supported:literal),+ $(,)?) => {
         match $order {
-            $($supported => plot::<$supported>($view, $output),)+
+            $($supported => plot::<$supported>($view, $model, $output),)+
             unsupported => Err(format!(
                 "order must be between 1 and {}, got {unsupported}",
                 dispatch_order!(@last $($supported),+)
@@ -101,7 +162,7 @@ macro_rules! dispatch_order {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (view, order, output_path) = arguments()?;
+    let (view, model, order, output_path) = arguments()?;
     if view == View::BandPass && order % 2 != 0 {
         return Err("band-pass order must be positive and even".into());
     }
@@ -112,7 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
 
-    dispatch_order!(order, view, &output_path;
+    dispatch_order!(order, view, model, &output_path;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
@@ -124,23 +185,57 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn arguments() -> Result<(View, usize, PathBuf), Box<dyn Error>> {
+fn arguments() -> Result<(View, PhaseModel, usize, PathBuf), Box<dyn Error>> {
     let mut arguments = env::args().skip(1);
     let first = arguments.next();
-    let (view, order) = match first.as_deref() {
-        None => (View::LowPass, 4),
-        Some("low-pass") => (View::LowPass, parse_order(arguments.next())?),
-        Some("high-pass") => (View::HighPass, parse_order(arguments.next())?),
-        Some("band-pass") => (View::BandPass, parse_order(arguments.next())?),
-        Some("phase") => (View::Phase, parse_order(arguments.next())?),
-        Some(value) => (View::LowPass, value.parse()?),
+    let (view, model, order) = match first.as_deref() {
+        None => (View::LowPass, PhaseModel::Butterworth, 4),
+        Some("low-pass") => (
+            View::LowPass,
+            PhaseModel::Butterworth,
+            parse_order(arguments.next())?,
+        ),
+        Some("high-pass") => (
+            View::HighPass,
+            PhaseModel::Butterworth,
+            parse_order(arguments.next())?,
+        ),
+        Some("band-pass") => (
+            View::BandPass,
+            PhaseModel::Butterworth,
+            parse_order(arguments.next())?,
+        ),
+        Some("phase" | "waveform") => {
+            let view = if first.as_deref() == Some("phase") {
+                View::Phase
+            } else {
+                View::Waveform
+            };
+            let next = arguments.next();
+            match next.as_deref() {
+                None => (view, PhaseModel::Butterworth, 4),
+                Some(value) if value.parse::<usize>().is_ok() => {
+                    (view, PhaseModel::Butterworth, value.parse()?)
+                }
+                Some(value) => (
+                    view,
+                    PhaseModel::parse(value)?,
+                    parse_order(arguments.next())?,
+                ),
+            }
+        }
+        Some(value) => (View::LowPass, PhaseModel::Butterworth, value.parse()?),
     };
     let output = arguments.next().map_or_else(
         || {
-            PathBuf::from(if view == View::LowPass {
-                "target/filter-responses.svg".to_owned()
-            } else {
-                format!("target/{}-responses.svg", view.title().replace(' ', "-"))
+            PathBuf::from(match view {
+                View::LowPass => "target/filter-responses.svg".to_owned(),
+                View::Phase if model == PhaseModel::Butterworth => {
+                    "target/phase-responses.svg".to_owned()
+                }
+                View::Phase => format!("target/phase-{}-responses.svg", model.slug()),
+                View::Waveform => format!("target/phase-{}-waveform.svg", model.slug()),
+                _ => format!("target/{}-responses.svg", view.title()),
             })
         },
         PathBuf::from,
@@ -148,16 +243,23 @@ fn arguments() -> Result<(View, usize, PathBuf), Box<dyn Error>> {
     if let Some(argument) = arguments.next() {
         return Err(format!("unexpected argument: {argument}").into());
     }
-    Ok((view, order, output))
+    Ok((view, model, order, output))
 }
 
 fn parse_order(argument: Option<String>) -> Result<usize, Box<dyn Error>> {
     Ok(argument.map_or(Ok(4), |value| value.parse())?)
 }
 
-fn plot<const N: usize>(view: View, output_path: &Path) -> Result<(), Box<dyn Error>> {
+fn plot<const N: usize>(
+    view: View,
+    model: PhaseModel,
+    output_path: &Path,
+) -> Result<(), Box<dyn Error>> {
     if view == View::Phase {
-        return plot_phase_comparison::<N>(output_path);
+        return plot_phase_comparison::<N>(model, output_path);
+    }
+    if view == View::Waveform {
+        return waveform_plot::plot_waveform_comparison::<N>(model, output_path);
     }
     let mut specs = vec![
         ResponseSpec {
@@ -222,70 +324,102 @@ fn plot<const N: usize>(view: View, output_path: &Path) -> Result<(), Box<dyn Er
     Ok(())
 }
 
-fn plot_phase_comparison<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
+fn phase_equalizer<const N: usize>(
+    ordinary: &LowPass<N>,
+) -> Result<Option<PhaseEqualizedLowPass<N, 2>>, Box<dyn Error>> {
+    match ordinary.equalize_phase::<2>(0.0, CUTOFF_HZ) {
+        Ok(equalized) => Ok(Some(equalized)),
+        Err(PhaseEqualizationError::NoImprovement) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn plot_phase_comparison<const N: usize>(
+    model: PhaseModel,
+    output_path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    if model == PhaseModel::Bessel && N > MAX_BESSEL_ORDER {
+        return Err(format!("Bessel is supported through order {MAX_BESSEL_ORDER}").into());
+    }
+    let response = model.response();
     let ordinary = LowPass::<N>::builder(CUTOFF_HZ)
-        .response(Response::Butterworth)
+        .response(response)
         .input_model(InputModel::CurrentHold)
         .build()?;
-    let mut equalized = ordinary.equalize_phase::<2>(0.0, CUTOFF_HZ)?;
+    let mut equalized = phase_equalizer(&ordinary)?;
+    if equalized.is_none() {
+        println!(
+            "no improving all-pass design for order {N} {}",
+            model.label()
+        );
+    }
     let frequency = frequency_ratios_until(1.0)
-        .map(|ratio| exact_frequency_point::<N>(Response::Butterworth, ratio))
+        .map(|ratio| exact_frequency_point::<N>(response, ratio))
         .collect::<Result<Vec<_>, _>>()?;
-    let plain_step = measure_step_response::<N>(View::LowPass, Response::Butterworth)?;
-    let order = N.to_f64().ok_or("order does not fit in f64")?;
-    let duration = 4.0_f64.max(order);
-    let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
-    let mut equalized_step = Vec::with_capacity(TRANSIENT_POINTS as usize);
-    equalized_step.push((0.0, equalized.output()));
-    for index in 1..TRANSIENT_POINTS {
-        let output = equalized.update(1.0, dt)?;
-        equalized_step.push((f64::from(index) * dt * CUTOFF_HZ, output));
-    }
-
-    let mut phase = 0.0;
-    let mut previous_ratio = 0.0;
-    let mut previous_delay = equalized.group_delay_seconds(0.0)? * std::f64::consts::TAU;
-    let mut equalized_frequency = Vec::with_capacity(frequency.len());
-    let mut equalized_delay = Vec::with_capacity(frequency.len());
-    for point in &frequency {
-        let delay = equalized.group_delay_seconds(point.ratio * CUTOFF_HZ)? * std::f64::consts::TAU;
-        phase -= (previous_delay + delay) * (point.ratio - previous_ratio) / 2.0;
-        equalized_frequency.push(FrequencyPoint {
-            ratio: point.ratio,
-            gain_db: point.gain_db,
-            phase_radians: phase,
-        });
-        equalized_delay.push((point.ratio, delay));
-        previous_ratio = point.ratio;
-        previous_delay = delay;
-    }
-    let responses = [
-        ResponseData {
-            spec: ResponseSpec {
-                label: "Butterworth",
-                response: Response::Butterworth,
-                color: RGBColor(46, 111, 214),
-            },
-            group_delay: group_delay(&frequency),
-            frequency,
-            step: plain_step,
+    let mut responses = Vec::with_capacity(2);
+    responses.push(ResponseData {
+        spec: ResponseSpec {
+            label: model.label(),
+            response,
+            color: RGBColor(46, 111, 214),
         },
-        ResponseData {
+        group_delay: group_delay(&frequency),
+        frequency,
+        step: measure_step_response::<N>(View::LowPass, response)?,
+    });
+    if let Some(ref mut equalized) = equalized {
+        let order = N.to_f64().ok_or("order does not fit in f64")?;
+        let duration = 4.0_f64.max(order);
+        let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
+        let mut equalized_step = Vec::with_capacity(TRANSIENT_POINTS as usize);
+        equalized_step.push((0.0, equalized.output()));
+        for index in 1..TRANSIENT_POINTS {
+            let output = equalized.update(1.0, dt)?;
+            equalized_step.push((f64::from(index) * dt * CUTOFF_HZ, output));
+        }
+
+        let mut phase = 0.0;
+        let mut previous_ratio = 0.0;
+        let mut previous_delay = equalized.group_delay_seconds(0.0)? * std::f64::consts::TAU;
+        let mut equalized_frequency = Vec::with_capacity(responses[0].frequency.len());
+        let mut equalized_delay = Vec::with_capacity(responses[0].frequency.len());
+        for point in &responses[0].frequency {
+            let delay =
+                equalized.group_delay_seconds(point.ratio * CUTOFF_HZ)? * std::f64::consts::TAU;
+            phase -= (previous_delay + delay) * (point.ratio - previous_ratio) / 2.0;
+            equalized_frequency.push(FrequencyPoint {
+                ratio: point.ratio,
+                gain_db: point.gain_db,
+                phase_radians: phase,
+            });
+            equalized_delay.push((point.ratio, delay));
+            previous_ratio = point.ratio;
+            previous_delay = delay;
+        }
+        responses.push(ResponseData {
             spec: ResponseSpec {
-                label: "Butterworth + 2 all-pass sections",
-                response: Response::Butterworth,
+                label: "With 2 all-pass sections",
+                response,
                 color: RGBColor(224, 91, 74),
             },
             group_delay: equalized_delay,
             frequency: equalized_frequency,
             step: equalized_step,
-        },
-    ];
+        });
+    }
     let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
         .into_drawing_area();
     root.fill(&WHITE)?;
     let root = root.titled(
-        &format!("ssfilt order {N} Butterworth: plain vs phase-equalized (0–fc)"),
+        &format!(
+            "ssfilt order {N} {}: {}",
+            model.label(),
+            if equalized.is_some() {
+                "plain vs equalized (0–fc)"
+            } else {
+                "no improving all-pass design"
+            }
+        ),
         ("sans-serif", scaled(30)),
     )?;
     let panels = root.split_evenly((2, 2));
@@ -315,7 +449,7 @@ fn draw_magnitude(
     let ceiling = if view == View::Phase { 2.0 } else { 5.0 };
     let mut chart = ChartBuilder::on(area)
         .caption(
-            if view == View::Phase {
+            if view == View::Phase && responses.len() > 1 {
                 "Magnitude response (traces coincide)"
             } else {
                 "Magnitude response"
@@ -597,7 +731,9 @@ fn topology_frequency_point<const N: usize>(
     frequency_ratio: f64,
 ) -> Result<FrequencyPoint, Box<dyn Error>> {
     match view {
-        View::LowPass | View::Phase => exact_frequency_point::<N>(response, frequency_ratio),
+        View::LowPass | View::Phase | View::Waveform => {
+            exact_frequency_point::<N>(response, frequency_ratio)
+        }
         View::HighPass => {
             let mut point = exact_frequency_point::<N>(response, 1.0 / frequency_ratio)?;
             point.ratio = frequency_ratio;
@@ -771,7 +907,7 @@ fn measure_step_response<const N: usize>(
     let duration = 4.0_f64.max(order);
     let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
     let mut filter: Box<dyn ssfilt::StreamingFilter<Scalar = f64>> = match view {
-        View::LowPass | View::Phase => Box::new(
+        View::LowPass | View::Phase | View::Waveform => Box::new(
             LowPass::<N>::builder(CUTOFF_HZ)
                 .response(response)
                 .input_model(InputModel::CurrentHold)
@@ -962,11 +1098,24 @@ mod svg_tests {
     use approx::assert_relative_eq;
 
     use super::{
-        MAGNITUDE_FLOOR_DB, View, collapse_vertical_pixels, exact_frequency_point,
+        MAGNITUDE_FLOOR_DB, PhaseModel, View, collapse_vertical_pixels, exact_frequency_point,
         frequency_ratios, pchip_path, smooth_polyline, topology_frequency_point,
         visible_magnitude_points,
     };
     use ssfilt::Response;
+
+    #[test]
+    fn phase_view_models_map_to_all_supported_response_families() {
+        for (name, expected) in [
+            ("repeated", PhaseModel::RepeatedPole),
+            ("butterworth", PhaseModel::Butterworth),
+            ("bessel", PhaseModel::Bessel),
+            ("chebyshev", PhaseModel::Chebyshev1),
+        ] {
+            assert_eq!(PhaseModel::parse(name).unwrap(), expected);
+        }
+        assert!(PhaseModel::parse("unknown").is_err());
+    }
 
     #[test]
     fn frequency_grid_is_logarithmically_spaced() {
