@@ -302,6 +302,27 @@ delay, and unit-step responses, run:
 cargo run --release --example plot_responses -- 4 target/filter-responses.svg
 ```
 
+Select a focused view without adding panels to the same SVG:
+
+```text
+cargo run --release --example plot_responses -- high-pass 4 target/high-pass-responses.svg
+cargo run --release --example plot_responses -- band-pass 4 target/band-pass-responses.svg
+cargo run --release --example plot_responses -- phase 4 target/phase-responses.svg
+cargo run --release --example plot_performance -- target/filter-performance.svg
+```
+
+The first command above remains the default low-pass view. Band-pass orders
+must be even; its plot uses cutoff edges at 0.5 and 2 times the geometric
+center. The phase view compares an ordinary Butterworth low-pass with the
+same filter plus two all-pass sections designed over 0 to its cutoff. Their
+magnitude traces coincide, while phase, group delay, and step response show
+the added delay. The phase view can report that no improvement is possible for
+some orders. The performance SVG is intentionally separate: it shows
+indicative median host timings for order-four kernels/topologies, equalization,
+and RK45 tolerance, step-cap, and input-reconstruction settings. There is no
+second production integrator to compare yet. Timings depend on the host and
+load and should not be treated as portable benchmarks.
+
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to
 `target/filter-responses.svg` and order 4. Frequency curves use 1,601
