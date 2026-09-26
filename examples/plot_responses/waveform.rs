@@ -244,11 +244,11 @@ fn draw_panel(
     chart
         .draw_series(LineSeries::new(input, INPUT_COLOR.stroke_width(scaled(2))))?
         .label("Input")
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 24, y)], INPUT_COLOR.stroke_width(2)));
+        .legend(|anchor| legend_sample(anchor, INPUT_COLOR));
     chart
         .draw_series(LineSeries::new(plain, PLAIN_COLOR.stroke_width(scaled(2))))?
         .label(format!("Plain (fit {:.2} cycles)", trace.plain_delay))
-        .legend(|(x, y)| PathElement::new([(x, y), (x + 24, y)], PLAIN_COLOR.stroke_width(2)));
+        .legend(|anchor| legend_sample(anchor, PLAIN_COLOR));
     if let Some(equalized) = equalized {
         chart
             .draw_series(LineSeries::new(
@@ -259,9 +259,7 @@ fn draw_panel(
                 "Equalized (fit {:.2} cycles)",
                 trace.equalized_delay.unwrap_or(0.0)
             ))
-            .legend(|(x, y)| {
-                PathElement::new([(x, y), (x + 24, y)], EQUALIZED_COLOR.stroke_width(2))
-            });
+            .legend(|anchor| legend_sample(anchor, EQUALIZED_COLOR));
     }
     chart
         .configure_series_labels()
@@ -273,6 +271,11 @@ fn draw_panel(
         .position(SeriesLabelPosition::UpperRight)
         .draw()?;
     Ok(())
+}
+
+fn legend_sample((x, y): (i32, i32), color: RGBColor) -> PathElement<(i32, i32)> {
+    let length = i32::try_from(scaled(24)).expect("legend length fits in i32");
+    PathElement::new([(x, y), (x + length, y)], color.stroke_width(scaled(2)))
 }
 
 fn points(samples: &[f64], dt: f64, range: std::ops::Range<f64>, advance: f64) -> Vec<(f64, f64)> {
@@ -300,6 +303,7 @@ fn interpolate(samples: &[f64], index: f64) -> Option<f64> {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+    use std::fs;
 
     #[test]
     fn burst_is_coherent_at_center_and_small_at_start() {
@@ -341,5 +345,37 @@ mod tests {
         let samples = [0.0, 2.0, 4.0];
         assert_relative_eq!(interpolate(&samples, 1.0).unwrap(), 2.0);
         assert_relative_eq!(interpolate(&samples, 1.5).unwrap(), 3.0);
+    }
+
+    #[test]
+    fn legend_samples_use_the_same_scale_as_response_curves() {
+        let path =
+            std::env::temp_dir().join(format!("ssfilt-waveform-legend-{}.svg", std::process::id()));
+        plot_waveform_comparison::<4>(PhaseModel::Butterworth, &path).unwrap();
+        let svg = fs::read_to_string(&path).unwrap();
+        fs::remove_file(path).unwrap();
+
+        for color in ["#707882", "#2E6FD6", "#E05B4A"] {
+            let markers = svg
+                .lines()
+                .filter(|line| line.starts_with("<polyline ") && line.contains(color))
+                .collect::<Vec<_>>();
+            assert_eq!(markers.len(), 2, "expected both panel legends for {color}");
+            for line in markers {
+                assert!(line.contains("stroke-width=\"16\""), "{line}");
+                let points = line
+                    .split_once(" points=\"")
+                    .unwrap()
+                    .1
+                    .split_once('"')
+                    .unwrap()
+                    .0;
+                let x_positions = points
+                    .split_ascii_whitespace()
+                    .map(|point| point.split_once(',').unwrap().0.parse::<i32>().unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(x_positions[1] - x_positions[0], 192);
+            }
+        }
     }
 }
