@@ -1,7 +1,7 @@
 //! Generates end-to-end response plots through the public streaming API.
 //!
 //! Usage:
-//! `cargo run --release --example plot_responses -- [order] [output.svg]`
+//! `cargo run --release --example plot_responses -- [low-pass|high-pass|band-pass|phase] [order] [output.svg]`
 
 use std::env;
 use std::error::Error;
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
-use ssfilt::{InputModel, LowPass, MAX_BESSEL_ORDER, Response};
+use ssfilt::{BandPass, HighPass, InputModel, LowPass, MAX_BESSEL_ORDER, Response};
 
 #[path = "../src/model/bessel_table.rs"]
 mod bessel_table;
@@ -28,6 +28,39 @@ const RESPONSE_STROKES: [&str; 4] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1"]
 const DISPLAY_WIDTH: u32 = 1_600;
 const DISPLAY_HEIGHT: u32 = 1_180;
 const RENDER_SCALE: u32 = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum View {
+    LowPass,
+    HighPass,
+    BandPass,
+    Phase,
+}
+
+impl View {
+    fn title(self) -> &'static str {
+        match self {
+            Self::LowPass => "low-pass",
+            Self::HighPass => "high-pass",
+            Self::BandPass => "band-pass",
+            Self::Phase => "phase comparison",
+        }
+    }
+
+    fn frequency_label(self) -> &'static str {
+        match self {
+            Self::BandPass => "frequency / geometric band center",
+            _ => "frequency / −3 dB cutoff",
+        }
+    }
+
+    fn step_reference(self) -> f64 {
+        match self {
+            Self::HighPass | Self::BandPass => 0.0,
+            _ => 1.0,
+        }
+    }
+}
 
 const fn scaled(value: u32) -> u32 {
     value * RENDER_SCALE
@@ -54,9 +87,9 @@ struct ResponseData {
 }
 
 macro_rules! dispatch_order {
-    ($order:expr, $output:expr; $($supported:literal),+ $(,)?) => {
+    ($order:expr, $view:expr, $output:expr; $($supported:literal),+ $(,)?) => {
         match $order {
-            $($supported => plot::<$supported>($output),)+
+            $($supported => plot::<$supported>($view, $output),)+
             unsupported => Err(format!(
                 "order must be between 1 and {}, got {unsupported}",
                 dispatch_order!(@last $($supported),+)
@@ -68,7 +101,10 @@ macro_rules! dispatch_order {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (order, output_path) = arguments()?;
+    let (view, order, output_path) = arguments()?;
+    if view == View::BandPass && order % 2 != 0 {
+        return Err("band-pass order must be positive and even".into());
+    }
     if let Some(parent) = output_path
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -76,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
 
-    dispatch_order!(order, &output_path;
+    dispatch_order!(order, view, &output_path;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
@@ -88,20 +124,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn arguments() -> Result<(usize, PathBuf), Box<dyn Error>> {
+fn arguments() -> Result<(View, usize, PathBuf), Box<dyn Error>> {
     let mut arguments = env::args().skip(1);
-    let order = arguments.next().map_or(Ok(4), |value| value.parse())?;
+    let first = arguments.next();
+    let (view, order) = match first.as_deref() {
+        None => (View::LowPass, 4),
+        Some("low-pass") => (View::LowPass, parse_order(arguments.next())?),
+        Some("high-pass") => (View::HighPass, parse_order(arguments.next())?),
+        Some("band-pass") => (View::BandPass, parse_order(arguments.next())?),
+        Some("phase") => (View::Phase, parse_order(arguments.next())?),
+        Some(value) => (View::LowPass, value.parse()?),
+    };
     let output = arguments.next().map_or_else(
-        || PathBuf::from("target/filter-responses.svg"),
+        || {
+            PathBuf::from(if view == View::LowPass {
+                "target/filter-responses.svg".to_owned()
+            } else {
+                format!("target/{}-responses.svg", view.title().replace(' ', "-"))
+            })
+        },
         PathBuf::from,
     );
     if let Some(argument) = arguments.next() {
         return Err(format!("unexpected argument: {argument}").into());
     }
-    Ok((order, output))
+    Ok((view, order, output))
 }
 
-fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
+fn parse_order(argument: Option<String>) -> Result<usize, Box<dyn Error>> {
+    Ok(argument.map_or(Ok(4), |value| value.parse())?)
+}
+
+fn plot<const N: usize>(view: View, output_path: &Path) -> Result<(), Box<dyn Error>> {
+    if view == View::Phase {
+        return plot_phase_comparison::<N>(output_path);
+    }
     let mut specs = vec![
         ResponseSpec {
             label: "Repeated pole",
@@ -124,19 +181,20 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
             color: RGBColor(36, 157, 92),
         },
     ];
-    if N > MAX_BESSEL_ORDER {
+    let bessel_order = if view == View::BandPass { N / 2 } else { N };
+    if bessel_order > MAX_BESSEL_ORDER {
         specs.retain(|spec| spec.response != Response::Bessel);
-        println!("omitting Bessel: supported through order {MAX_BESSEL_ORDER}");
+        println!("omitting Bessel: supported through prototype order {MAX_BESSEL_ORDER}");
     }
 
     let mut responses = Vec::with_capacity(specs.len());
     for spec in specs {
         println!("evaluating {}", spec.label);
         let frequency = frequency_ratios()
-            .map(|ratio| exact_frequency_point::<N>(spec.response, ratio))
+            .map(|ratio| topology_frequency_point::<N>(view, spec.response, ratio))
             .collect::<Result<Vec<_>, _>>()?;
         let group_delay = group_delay(&frequency);
-        let step = measure_step_response::<N>(spec.response)?;
+        let step = measure_step_response::<N>(view, spec.response)?;
         responses.push(ResponseData {
             spec,
             frequency,
@@ -149,14 +207,92 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
         .into_drawing_area();
     root.fill(&WHITE)?;
     let root = root.titled(
-        &format!("ssfilt order {N} low-pass responses"),
+        &format!("ssfilt order {N} {} responses", view.title()),
         ("sans-serif", scaled(30)),
     )?;
     let panels = root.split_evenly((2, 2));
-    draw_magnitude(&panels[0], &responses)?;
-    draw_phase::<N>(&panels[1], &responses)?;
-    draw_group_delay(&panels[2], &responses)?;
-    draw_step(&panels[3], &responses)?;
+    draw_magnitude(&panels[0], &responses, view)?;
+    draw_phase(&panels[1], &responses, view)?;
+    draw_group_delay(&panels[2], &responses, view)?;
+    draw_step(&panels[3], &responses, view)?;
+    root.present()?;
+    drop(panels);
+    drop(root);
+    smooth_svg_response_curves(output_path)?;
+    Ok(())
+}
+
+fn plot_phase_comparison<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
+    let ordinary = LowPass::<N>::builder(CUTOFF_HZ)
+        .response(Response::Butterworth)
+        .input_model(InputModel::CurrentHold)
+        .build()?;
+    let mut equalized = ordinary.equalize_phase::<2>(0.0, CUTOFF_HZ)?;
+    let frequency = frequency_ratios_until(1.0)
+        .map(|ratio| exact_frequency_point::<N>(Response::Butterworth, ratio))
+        .collect::<Result<Vec<_>, _>>()?;
+    let plain_step = measure_step_response::<N>(View::LowPass, Response::Butterworth)?;
+    let order = N.to_f64().ok_or("order does not fit in f64")?;
+    let duration = 4.0_f64.max(order);
+    let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
+    let mut equalized_step = Vec::with_capacity(TRANSIENT_POINTS as usize);
+    equalized_step.push((0.0, equalized.output()));
+    for index in 1..TRANSIENT_POINTS {
+        let output = equalized.update(1.0, dt)?;
+        equalized_step.push((f64::from(index) * dt * CUTOFF_HZ, output));
+    }
+
+    let mut phase = 0.0;
+    let mut previous_ratio = 0.0;
+    let mut previous_delay = equalized.group_delay_seconds(0.0)? * std::f64::consts::TAU;
+    let mut equalized_frequency = Vec::with_capacity(frequency.len());
+    let mut equalized_delay = Vec::with_capacity(frequency.len());
+    for point in &frequency {
+        let delay = equalized.group_delay_seconds(point.ratio * CUTOFF_HZ)? * std::f64::consts::TAU;
+        phase -= (previous_delay + delay) * (point.ratio - previous_ratio) / 2.0;
+        equalized_frequency.push(FrequencyPoint {
+            ratio: point.ratio,
+            gain_db: point.gain_db,
+            phase_radians: phase,
+        });
+        equalized_delay.push((point.ratio, delay));
+        previous_ratio = point.ratio;
+        previous_delay = delay;
+    }
+    let responses = [
+        ResponseData {
+            spec: ResponseSpec {
+                label: "Butterworth",
+                response: Response::Butterworth,
+                color: RGBColor(46, 111, 214),
+            },
+            group_delay: group_delay(&frequency),
+            frequency,
+            step: plain_step,
+        },
+        ResponseData {
+            spec: ResponseSpec {
+                label: "Butterworth + 2 all-pass sections",
+                response: Response::Butterworth,
+                color: RGBColor(224, 91, 74),
+            },
+            group_delay: equalized_delay,
+            frequency: equalized_frequency,
+            step: equalized_step,
+        },
+    ];
+    let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
+        .into_drawing_area();
+    root.fill(&WHITE)?;
+    let root = root.titled(
+        &format!("ssfilt order {N} Butterworth: plain vs phase-equalized (0–fc)"),
+        ("sans-serif", scaled(30)),
+    )?;
+    let panels = root.split_evenly((2, 2));
+    draw_magnitude(&panels[0], &responses, View::Phase)?;
+    draw_phase(&panels[1], &responses, View::Phase)?;
+    draw_group_delay(&panels[2], &responses, View::Phase)?;
+    draw_step(&panels[3], &responses, View::Phase)?;
     root.present()?;
     drop(panels);
     drop(root);
@@ -167,20 +303,37 @@ fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
 fn draw_magnitude(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
+    view: View,
 ) -> Result<(), Box<dyn Error>> {
+    let start = responses[0].frequency[0].ratio;
+    let end = responses[0].frequency.last().unwrap().ratio;
+    let floor = if view == View::Phase {
+        -5.0
+    } else {
+        MAGNITUDE_FLOOR_DB
+    };
+    let ceiling = if view == View::Phase { 2.0 } else { 5.0 };
     let mut chart = ChartBuilder::on(area)
-        .caption("Magnitude response", ("sans-serif", scaled(22)))
+        .caption(
+            if view == View::Phase {
+                "Magnitude response (traces coincide)"
+            } else {
+                "Magnitude response"
+            },
+            ("sans-serif", scaled(22)),
+        )
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(62))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            MAGNITUDE_FLOOR_DB..5.0_f64,
-        )?;
+        .build_cartesian_2d((start..end).log_scale(), floor..ceiling)?;
     chart
         .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
-        .y_desc("gain relative to DC (dB)")
+        .x_desc(view.frequency_label())
+        .y_desc(if view == View::LowPass || view == View::Phase {
+            "gain relative to DC (dB)"
+        } else {
+            "gain relative to passband (dB)"
+        })
         .x_labels(9)
         .y_labels(10)
         .label_style(("sans-serif", scaled(12)))
@@ -190,13 +343,21 @@ fn draw_magnitude(
         .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
-        [(MIN_FREQUENCY_RATIO, -3.0), (MAX_FREQUENCY_RATIO, -3.0)],
+        [(start, -3.0), (end, -3.0)],
         BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     chart.draw_series(LineSeries::new(
-        [(1.0, MAGNITUDE_FLOOR_DB), (1.0, 5.0)],
+        [(1.0, floor), (1.0, ceiling)],
         BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
+    if view == View::BandPass {
+        for edge in [0.5, 2.0] {
+            chart.draw_series(LineSeries::new(
+                [(edge, floor), (edge, ceiling)],
+                BLACK.mix(0.25).stroke_width(RENDER_SCALE),
+            ))?;
+        }
+    }
     for response in responses {
         chart
             .draw_series(LineSeries::new(
@@ -223,23 +384,36 @@ fn draw_magnitude(
     Ok(())
 }
 
-fn draw_phase<const N: usize>(
+fn draw_phase(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
+    view: View,
 ) -> Result<(), Box<dyn Error>> {
-    let phase_floor = -90.0 * N.to_f64().ok_or("order does not fit in f64")?;
+    let start = responses[0].frequency[0].ratio;
+    let end = responses[0].frequency.last().unwrap().ratio;
+    let (minimum, maximum) = responses
+        .iter()
+        .flat_map(|response| {
+            response
+                .frequency
+                .iter()
+                .map(|point| point.phase_radians.to_degrees())
+        })
+        .fold((0.0_f64, 0.0_f64), |(min, max), value| {
+            (min.min(value), max.max(value))
+        });
+    let padding = ((maximum - minimum) * 0.03).max(5.0);
+    let phase_floor = minimum - padding;
+    let phase_ceiling = maximum + padding;
     let mut chart = ChartBuilder::on(area)
         .caption("Unwrapped phase response", ("sans-serif", scaled(22)))
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(68))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            phase_floor..5.0_f64,
-        )?;
+        .build_cartesian_2d((start..end).log_scale(), phase_floor..phase_ceiling)?;
     chart
         .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
+        .x_desc(view.frequency_label())
         .y_desc("phase (degrees)")
         .x_labels(9)
         .y_labels(10)
@@ -250,7 +424,7 @@ fn draw_phase<const N: usize>(
         .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
-        [(1.0, phase_floor), (1.0, 5.0)],
+        [(1.0, phase_floor), (1.0, phase_ceiling)],
         BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     for response in responses {
@@ -268,7 +442,15 @@ fn draw_phase<const N: usize>(
 fn draw_group_delay(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
+    view: View,
 ) -> Result<(), Box<dyn Error>> {
+    let start = responses[0].frequency[0].ratio;
+    let end = responses[0].frequency.last().unwrap().ratio;
+    let minimum = responses
+        .iter()
+        .flat_map(|response| response.group_delay.iter().map(|(_, delay)| *delay))
+        .filter(|delay| delay.is_finite())
+        .fold(0.0_f64, f64::min);
     let maximum = responses
         .iter()
         .flat_map(|response| response.group_delay.iter().map(|(_, delay)| *delay))
@@ -280,14 +462,15 @@ fn draw_group_delay(
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(68))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            0.0_f64..upper,
-        )?;
+        .build_cartesian_2d((start..end).log_scale(), minimum.min(-0.05)..upper)?;
     chart
         .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
-        .y_desc("normalized group delay (ωc τg)")
+        .x_desc(view.frequency_label())
+        .y_desc(if view == View::BandPass {
+            "normalized delay (ωcenter τg)"
+        } else {
+            "normalized delay (ωc τg)"
+        })
         .x_labels(9)
         .y_labels(10)
         .label_style(("sans-serif", scaled(12)))
@@ -312,6 +495,7 @@ fn draw_group_delay(
 fn draw_step(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
+    view: View,
 ) -> Result<(), Box<dyn Error>> {
     let end = responses
         .first()
@@ -322,15 +506,25 @@ fn draw_step(
         .flat_map(|response| response.step.iter().map(|(_, value)| *value))
         .filter(|value| value.is_finite())
         .fold(1.0_f64, f64::max);
+    let minimum = responses
+        .iter()
+        .flat_map(|response| response.step.iter().map(|(_, value)| *value))
+        .filter(|value| value.is_finite())
+        .fold(0.0_f64, f64::min);
+    let padding = ((maximum - minimum) * 0.05).max(0.05);
     let mut chart = ChartBuilder::on(area)
         .caption("Unit-step response", ("sans-serif", scaled(22)))
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(62))
-        .build_cartesian_2d(0.0_f64..end, -0.1_f64..maximum.mul_add(1.05, 0.05))?;
+        .build_cartesian_2d(0.0_f64..end, minimum - padding..maximum + padding)?;
     chart
         .configure_mesh()
-        .x_desc("time × cutoff frequency")
+        .x_desc(if view == View::BandPass {
+            "time × band center frequency"
+        } else {
+            "time × cutoff frequency"
+        })
         .y_desc("output")
         .x_labels(9)
         .y_labels(10)
@@ -341,7 +535,7 @@ fn draw_step(
         .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
         .draw()?;
     chart.draw_series(LineSeries::new(
-        [(0.0, 1.0), (end, 1.0)],
+        [(0.0, view.step_reference()), (end, view.step_reference())],
         BLACK.mix(0.25).stroke_width(RENDER_SCALE),
     ))?;
     for response in responses {
@@ -354,8 +548,12 @@ fn draw_step(
 }
 
 fn frequency_ratios() -> impl Iterator<Item = f64> {
+    frequency_ratios_until(MAX_FREQUENCY_RATIO)
+}
+
+fn frequency_ratios_until(maximum: f64) -> impl Iterator<Item = f64> {
     let start = MIN_FREQUENCY_RATIO.log10();
-    let end = MAX_FREQUENCY_RATIO.log10();
+    let end = maximum.log10();
     (0..FREQUENCY_POINTS).map(move |index| {
         let fraction = f64::from(index) / f64::from(FREQUENCY_POINTS - 1);
         10.0_f64.powf(start + fraction * (end - start))
@@ -364,20 +562,24 @@ fn frequency_ratios() -> impl Iterator<Item = f64> {
 
 fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
     let mut visible = Vec::with_capacity(points.len());
-    for point in points {
-        if point.gain_db >= MAGNITUDE_FLOOR_DB {
-            visible.push((point.ratio, point.gain_db));
-            continue;
+    for pair in points.windows(2) {
+        let preceding = &pair[0];
+        let current = &pair[1];
+        if preceding.gain_db >= MAGNITUDE_FLOOR_DB && visible.is_empty() {
+            visible.push((preceding.ratio, preceding.gain_db));
         }
-        if let Some(&(preceding_ratio, preceding_gain)) = visible.last() {
-            let fraction = (MAGNITUDE_FLOOR_DB - preceding_gain) / (point.gain_db - preceding_gain);
+        if (preceding.gain_db >= MAGNITUDE_FLOOR_DB) != (current.gain_db >= MAGNITUDE_FLOOR_DB) {
+            let fraction =
+                (MAGNITUDE_FLOOR_DB - preceding.gain_db) / (current.gain_db - preceding.gain_db);
             let log_ratio = fraction.mul_add(
-                point.ratio.ln() - preceding_ratio.ln(),
-                preceding_ratio.ln(),
+                current.ratio.ln() - preceding.ratio.ln(),
+                preceding.ratio.ln(),
             );
             visible.push((log_ratio.exp(), MAGNITUDE_FLOOR_DB));
         }
-        break;
+        if current.gain_db >= MAGNITUDE_FLOOR_DB {
+            visible.push((current.ratio, current.gain_db));
+        }
     }
     visible
 }
@@ -386,13 +588,45 @@ fn exact_frequency_point<const N: usize>(
     response: Response,
     frequency_ratio: f64,
 ) -> Result<FrequencyPoint, Box<dyn Error>> {
-    let order = N.to_f64().ok_or("order does not fit in f64")?;
+    exact_frequency_point_for_order(response, N, frequency_ratio)
+}
+
+fn topology_frequency_point<const N: usize>(
+    view: View,
+    response: Response,
+    frequency_ratio: f64,
+) -> Result<FrequencyPoint, Box<dyn Error>> {
+    match view {
+        View::LowPass | View::Phase => exact_frequency_point::<N>(response, frequency_ratio),
+        View::HighPass => {
+            let mut point = exact_frequency_point::<N>(response, 1.0 / frequency_ratio)?;
+            point.ratio = frequency_ratio;
+            point.phase_radians = -point.phase_radians;
+            Ok(point)
+        }
+        View::BandPass => {
+            // Low-pass to band-pass substitution with edges at 0.5 and 2.0.
+            let mapped = (frequency_ratio - 1.0 / frequency_ratio) / 1.5;
+            let mut point = exact_frequency_point_for_order(response, N / 2, mapped.abs())?;
+            point.ratio = frequency_ratio;
+            point.phase_radians *= mapped.signum();
+            Ok(point)
+        }
+    }
+}
+
+fn exact_frequency_point_for_order(
+    response: Response,
+    order_usize: usize,
+    frequency_ratio: f64,
+) -> Result<FrequencyPoint, Box<dyn Error>> {
+    let order = order_usize.to_f64().ok_or("order does not fit in f64")?;
     let mut log_magnitude = 0.0;
     let mut phase_radians = 0.0;
     match response {
         Response::RepeatedPole => {
             let rate = 1.0 / (core::f64::consts::LN_2 / order).exp_m1().sqrt();
-            for _ in 0..N {
+            for _ in 0..order_usize {
                 accumulate_first_order(
                     rate,
                     frequency_ratio,
@@ -402,7 +636,7 @@ fn exact_frequency_point<const N: usize>(
             }
         }
         Response::Butterworth => {
-            if N % 2 == 1 {
+            if order_usize % 2 == 1 {
                 accumulate_first_order(
                     1.0,
                     frequency_ratio,
@@ -410,7 +644,7 @@ fn exact_frequency_point<const N: usize>(
                     &mut phase_radians,
                 );
             }
-            for index in 0..N / 2 {
+            for index in 0..order_usize / 2 {
                 let angle =
                     core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
                 accumulate_second_order(
@@ -423,9 +657,9 @@ fn exact_frequency_point<const N: usize>(
             }
         }
         Response::Bessel => {
-            let prototype = bessel_table::prototype(N)
+            let prototype = bessel_table::prototype(order_usize)
                 .ok_or("Bessel response order exceeds the supported table")?;
-            if N % 2 == 1 {
+            if order_usize % 2 == 1 {
                 accumulate_first_order(
                     prototype.real_rate,
                     frequency_ratio,
@@ -449,13 +683,13 @@ fn exact_frequency_point<const N: usize>(
             let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
             let epsilon = epsilon_squared.sqrt();
             let mu = (1.0 / epsilon).asinh() / order;
-            let cutoff_target = if N % 2 == 0 {
+            let cutoff_target = if order_usize % 2 == 0 {
                 (1.0 / epsilon_squared + 2.0).sqrt()
             } else {
                 1.0 / epsilon
             };
             let cutoff_scale = (cutoff_target.acosh() / order).cosh();
-            if N % 2 == 1 {
+            if order_usize % 2 == 1 {
                 accumulate_first_order(
                     mu.sinh() / cutoff_scale,
                     frequency_ratio,
@@ -463,7 +697,7 @@ fn exact_frequency_point<const N: usize>(
                     &mut phase_radians,
                 );
             }
-            for index in 0..N / 2 {
+            for index in 0..order_usize / 2 {
                 let angle =
                     core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
                 let real = mu.sinh() * angle.sin() / cutoff_scale;
@@ -524,21 +758,38 @@ fn group_delay(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
                 )
             });
             let delay = -covariance / variance;
-            (delay.is_finite() && delay >= 0.0).then_some((center.ratio, delay))
+            delay.is_finite().then_some((center.ratio, delay))
         })
         .collect()
 }
 
 fn measure_step_response<const N: usize>(
+    view: View,
     response: Response,
 ) -> Result<Vec<(f64, f64)>, Box<dyn Error>> {
     let order = N.to_f64().ok_or("order does not fit in f64")?;
     let duration = 4.0_f64.max(order);
     let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
-    let mut filter = LowPass::<N>::builder(CUTOFF_HZ)
-        .response(response)
-        .input_model(InputModel::CurrentHold)
-        .build()?;
+    let mut filter: Box<dyn ssfilt::StreamingFilter<Scalar = f64>> = match view {
+        View::LowPass | View::Phase => Box::new(
+            LowPass::<N>::builder(CUTOFF_HZ)
+                .response(response)
+                .input_model(InputModel::CurrentHold)
+                .build()?,
+        ),
+        View::HighPass => Box::new(
+            HighPass::<N>::builder(CUTOFF_HZ)
+                .response(response)
+                .input_model(InputModel::CurrentHold)
+                .build()?,
+        ),
+        View::BandPass => Box::new(
+            BandPass::<N>::builder(0.5 * CUTOFF_HZ, 2.0 * CUTOFF_HZ)
+                .response(response)
+                .input_model(InputModel::CurrentHold)
+                .build()?,
+        ),
+    };
     let mut points = Vec::with_capacity(TRANSIENT_POINTS as usize);
     points.push((0.0, filter.output()));
     for index in 1..TRANSIENT_POINTS {
@@ -711,8 +962,9 @@ mod svg_tests {
     use approx::assert_relative_eq;
 
     use super::{
-        MAGNITUDE_FLOOR_DB, collapse_vertical_pixels, exact_frequency_point, frequency_ratios,
-        pchip_path, smooth_polyline, visible_magnitude_points,
+        MAGNITUDE_FLOOR_DB, View, collapse_vertical_pixels, exact_frequency_point,
+        frequency_ratios, pchip_path, smooth_polyline, topology_frequency_point,
+        visible_magnitude_points,
     };
     use ssfilt::Response;
 
@@ -762,6 +1014,42 @@ mod svg_tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         let visible = visible_magnitude_points(&points);
+        assert_eq!(visible.last().unwrap().1, MAGNITUDE_FLOOR_DB);
+        assert!(visible.len() < points.len());
+    }
+
+    #[test]
+    fn high_pass_and_band_pass_edges_reach_minus_three_db() {
+        let target = -3.010_299_956_639_812;
+        for response in [
+            Response::RepeatedPole,
+            Response::Butterworth,
+            Response::Bessel,
+            Response::Chebyshev1 { ripple_db: 0.5 },
+        ] {
+            let high = topology_frequency_point::<4>(View::HighPass, response, 1.0).unwrap();
+            assert_relative_eq!(high.gain_db, target, epsilon = 1.0e-10);
+            assert!(high.phase_radians > 0.0);
+            for edge in [0.5, 2.0] {
+                let band = topology_frequency_point::<4>(View::BandPass, response, edge).unwrap();
+                assert_relative_eq!(band.gain_db, target, epsilon = 1.0e-10);
+            }
+            let center = topology_frequency_point::<4>(View::BandPass, response, 1.0).unwrap();
+            assert_relative_eq!(center.gain_db, 0.0, epsilon = 1.0e-12);
+            assert_relative_eq!(center.phase_radians, 0.0, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn band_pass_curve_enters_and_leaves_visible_range() {
+        let points = frequency_ratios()
+            .map(|ratio| {
+                topology_frequency_point::<36>(View::BandPass, Response::Butterworth, ratio)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let visible = visible_magnitude_points(&points);
+        assert_eq!(visible.first().unwrap().1, MAGNITUDE_FLOOR_DB);
         assert_eq!(visible.last().unwrap().1, MAGNITUDE_FLOOR_DB);
         assert!(visible.len() < points.len());
     }
