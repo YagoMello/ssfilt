@@ -95,6 +95,32 @@ fn runtime_order_can_use_the_object_safe_streaming_trait() {
 }
 
 #[test]
+fn runtime_order_can_use_an_allocation_free_f32_enum() {
+    enum SensorFilter {
+        Two(LowPass<2, f32>),
+        Four(LowPass<4, f32>),
+    }
+
+    impl SensorFilter {
+        fn update(&mut self, input: f32, dt: f32) -> Result<f32, UpdateError> {
+            match self {
+                Self::Two(filter) => filter.update(input, dt),
+                Self::Four(filter) => filter.update(input, dt),
+            }
+        }
+    }
+
+    for order in [2, 4] {
+        let mut filter = match order {
+            2 => SensorFilter::Two(LowPass::<2, f32>::builder(20.0).build().unwrap()),
+            4 => SensorFilter::Four(LowPass::<4, f32>::builder(20.0).build().unwrap()),
+            _ => unreachable!(),
+        };
+        assert!(filter.update(1.0, 0.012).unwrap().is_finite());
+    }
+}
+
+#[test]
 fn chebyshev_response_is_configurable_through_the_public_builder() {
     let mut filter = LowPass::<4>::builder(20.0)
         .response(Response::Chebyshev1 { ripple_db: 0.5 })

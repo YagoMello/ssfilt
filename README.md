@@ -52,6 +52,27 @@ defines what is assumed between that sample and the preceding one:
 
 The first interval begins at `initial_input`, which defaults to zero.
 
+### Choosing a starting point
+
+- To smooth a noisy sensor value, start with a low-pass Butterworth response.
+  Try Bessel when preserving pulse or motion shape matters more than a sharp
+  cutoff; use repeated-pole for a simple monotonic response. Chebyshev I
+  trades passband ripple and more ringing for a sharper transition.
+- To remove slow baseline drift, use `HighPass`. To keep a frequency range
+  between two edges, use `BandPass` (with an even final order).
+- Choose the input model based on what happened *between* timestamps, not on
+  the sensor name. `PreviousHold` fits a value held until the next sample;
+  `Linear` fits a smoothly changing estimate; `CurrentHold` treats the newly
+  received value as having applied throughout the preceding interval.
+- If the signal starts near a known constant value, set `initial_input` to
+  that value to avoid a startup transient. Use `reset_to_steady` after a known
+  change of baseline, rather than to mask invalid samples.
+
+All cutoff frequencies refer to the whole filter's −3 dB point. Begin with a
+low order and inspect the transient response before increasing it; a sharper
+cutoff usually costs more work and delay. The [response plot tool](#development)
+can help compare those tradeoffs.
+
 ### High-pass
 
 `HighPass` uses the same builder and streaming trait as `LowPass`:
@@ -124,6 +145,45 @@ let value = filter.update(1.0, 0.01)?;
 This approach requires an allocator and exposes the common streaming methods;
 order-specific inherent methods remain available only on concrete `LowPass`
 values.
+
+For embedded applications with a small set of configurable orders, an enum
+keeps the same choice allocation-free and preserves the concrete variants:
+
+```rust
+use ssfilt::{BuildError, LowPass, UpdateError};
+
+enum Order { Two, Four }
+enum SensorFilter {
+    Two(LowPass<2, f32>),
+    Four(LowPass<4, f32>),
+}
+
+impl SensorFilter {
+    fn new(order: Order, cutoff_hz: f32) -> Result<Self, BuildError> {
+        match order {
+            Order::Two => Ok(Self::Two(LowPass::<2, f32>::builder(cutoff_hz).build()?)),
+            Order::Four => Ok(Self::Four(LowPass::<4, f32>::builder(cutoff_hz).build()?)),
+        }
+    }
+
+    fn update(&mut self, input: f32, dt_seconds: f32) -> Result<f32, UpdateError> {
+        match self {
+            Self::Two(filter) => filter.update(input, dt_seconds),
+            Self::Four(filter) => filter.update(input, dt_seconds),
+        }
+    }
+}
+
+let mut filter = SensorFilter::new(Order::Four, 20.0)?;
+let output = filter.update(1.0, 0.012)?;
+# assert!(output.is_finite());
+# let _ = SensorFilter::new(Order::Two, 20.0)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The final `Ok` line is only an example harness; `SensorFilter` itself never
+allocates. On a `no_std` target, use a concrete error type in the surrounding
+application instead.
 
 ### Offline forward-backward filtering
 
@@ -274,11 +334,18 @@ the pure-Rust math backend:
 ssfilt = { version = "0.1", default-features = false, features = ["libm"] }
 ```
 
+Use `LowPass::<N, f32>` (or `HighPass`/`BandPass`) when `f32` is appropriate for
+the target's precision and range. The `f32` choice does not guarantee speed on
+an MCU without a floating-point unit: benchmark the actual target, especially
+for high orders and adaptive integration. The fixed-size enum above also works
+without `std` or an allocator.
+
 ## Development
 
 ```text
 cargo test --all-features
 cargo check --no-default-features --features libm
+cargo test --no-default-features --features libm --lib
 cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --all-features --no-deps
 cargo +1.85.0 check --all-targets --all-features
@@ -351,3 +418,6 @@ SciPy, while the crate itself does not.
 
 See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
 development sequence.
+
+Licensed under either [Apache License 2.0](LICENSE-APACHE) or
+[MIT](LICENSE-MIT), at your option.
