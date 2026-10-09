@@ -232,7 +232,9 @@ updates preserve the preceding snapshot transactionally.
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
-7. Optional delayed group-delay equalization and offline forward-backward
+7. Refactored development measurement tools with analytic curves, public-API
+   sample markers, machine-readable phase reports, and explicit band sweeps.
+8. Optional delayed group-delay equalization and offline forward-backward
    filtering as separate phase-handling approaches.
-8. Advanced custom kernels or alternative integrators only after concrete use
+9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

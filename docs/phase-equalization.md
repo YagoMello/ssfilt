@@ -11,7 +11,7 @@ design gates, not claims that the feature already meets them.
 The first streaming candidate is deliberately narrow:
 
 - low-pass filters only;
-- a fixed useful band from DC through `0.7 * cutoff_hz`;
+- predeclared study bands rather than an implicit whole-passband claim;
 - repeated-pole and Butterworth responses as release candidates;
 - Bessel as the no-equalizer waveform-fidelity baseline;
 - one real second-order continuous-time all-pass section;
@@ -88,9 +88,10 @@ force inactive or negligible sections merely to make an order configurable.
 
 The design tool may use `std`, allocation, dense numerical evaluation, and a
 bounded optimizer. Runtime construction may not. Accepted `sigma` and `eta`
-values are normalized by the low-pass cutoff angular frequency and stored as
-validated data for each supported response/order pair, following the same
-general reliability policy as the Bessel prototypes.
+values are normalized by the low-pass cutoff angular frequency. After the API
+decision, accepted values can be stored as validated data for each exposed
+response/order/band combination, following the same general reliability policy
+as the Bessel prototypes.
 
 This policy gives:
 
@@ -114,10 +115,41 @@ These initial bounds prevent a fit from buying an attractive sampled curve
 with a lightly damped, long-ringing, or needlessly fast section. They may be
 changed only with transient and integration-cost evidence recorded here.
 
+## Band policy
+
+The original `0.7 * cutoff_hz` proposal is retained as a **core-band** test,
+not as a universal definition of the passband. Every candidate is evaluated
+over these predeclared ranges:
+
+```text
+Core:       0 <= W <= 0.7
+Cutoff:     0 <= W <= 1.0
+Diagnostic band-edge sweep: 0.5 through 1.0 in steps of 0.05
+```
+
+Plots extend beyond the cutoff so a curve cannot disappear at the difficult
+edge. Reports contain separate `0..0.7`, `0.7..1.0`, and `0..1.0` summaries.
+The cutoff-wide result is always visible even when only the core study passes.
+
+Chebyshev needs a response-specific interpretation. Its ripple edge is below
+the public -3 dB cutoff by an order- and ripple-dependent amount. For 0.5 dB
+ripple it is approximately `0.904 * cutoff` at order 4 and `0.974 * cutoff` at
+order 8. Passing only the core test is therefore insufficient for Chebyshev:
+either the cutoff study or an explicit ripple-edge study must pass the same
+absolute gates before Chebyshev can be called supported.
+
+The diagnostic sweep maps the error/latency frontier and helps choose a small
+set of useful designs. Sweep points are report columns, not supported library
+values, and do not authorize interpolation between coefficient tables. The
+first public API decision is deferred until this evidence shows whether one
+fixed band, named bands, or a single upper-band argument offers the clearest
+contract.
+
 ## Metrics
 
-Let normalized frequency be `W = f / cutoff_hz`, normalized group delay be
-`t(W) = 2*pi*cutoff_hz*tau(W)`, and the core band be `0 <= W <= 0.7`.
+Let normalized frequency be `W = f / cutoff_hz` and normalized group delay be
+`t(W) = 2*pi*cutoff_hz*tau(W)`. Apply the following scores independently to
+each claimed band.
 
 For the primary minimax score, choose the best constant delay:
 
@@ -143,10 +175,10 @@ maximum relative magnitude change <= 1e-12 for f64
 maximum relative magnitude change <= 1e-5  for f32
 ```
 
-The `0.7` band is the promised operating band. Results through `0.9 * cutoff`
-are a disclosed stress result, not a release gate. Stopband group delay is not
-scored because magnitude there approaches zero and phase ceases to describe a
-useful transmitted waveform.
+The core band remains the minimum release gate for Butterworth orders 4 and 8.
+A whole-passband claim additionally requires the cutoff study to pass. Results
+beyond cutoff are diagnostic rather than scored because magnitude approaches
+zero and phase ceases to describe a useful transmitted waveform.
 
 ## Validation matrix
 
@@ -162,7 +194,9 @@ The offline study covers:
 Only individual response/order pairs that pass may be exposed. The first
 feature is worthwhile only if at least Butterworth orders 4 and 8 pass; this
 ensures it addresses a response with a real selectivity-versus-phase tradeoff
-rather than only a hand-crafted easy case.
+rather than only a hand-crafted easy case. That minimum refers to the core
+study. Every candidate report records its validated band edge; how the eventual
+API communicates that edge remains a later decision.
 
 Analytic group delay comes from pole contributions or the complex logarithmic
 derivative, not finite differences of wrapped phase. Validate on a dense
@@ -170,11 +204,17 @@ holdout grid of at least 8,193 points and cross-check selected cases at twice
 that density. Round accepted coefficients to both `f32` and `f64`, then repeat
 stability and response checks.
 
-Use three time-domain signals whose energy lies in the promised band:
+Use three time-domain signals whose energy lies predominantly in the band being
+evaluated:
 
 - an unequal-amplitude, unequal-phase multi-tone signal;
 - a Gaussian pulse or Gaussian-modulated carrier;
-- a tapered chirp across the core band.
+- a tapered chirp across the selected band.
+
+At least 99% of each pulse or chirp's discrete reference-spectrum energy must
+lie inside the scored band after windowing. Report the remaining leakage and do
+not count it toward the in-band waveform score. Multi-tone frequencies are all
+placed strictly inside the scored band.
 
 The oracle retains the source's analytic magnitude and replaces its phase with
 the best constant delay. After fitting only that constant time shift, the
@@ -259,8 +299,10 @@ optimizer tolerances, and fitting weights remain private.
 ## Staged implementation
 
 0. Fix the independent baseline-review findings in `baseline-review.md`.
-1. Build a development-only analytic evaluator and bounded coefficient search;
-   produce machine-readable reports and plots for the complete matrix.
+1. Refactor and extend the development tools described in
+   `development-tools.md`: build an analytic evaluator, measured streaming
+   overlays, bounded coefficient search, and machine-readable reports for the
+   complete band sweep and response matrix.
 2. Decide supported response/order pairs from the predeclared gates. Stop the
    streaming feature if Butterworth orders 4 and 8 do not pass.
 3. Refactor the private solver to support fixed composite state, with no public

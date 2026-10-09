@@ -26,6 +26,8 @@ Phase handling is planned, but is not yet part of the API.
   problem, evidence requirements, and decision gates before implementation.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps
   found before the phase work began.
+- [Development tools roadmap](docs/development-tools.md) defines analytic
+  references, measured streaming overlays, reports, and plot-tool boundaries.
 - [Agent collaboration guide](AGENTS.md) defines delegated work packages,
   review independence, quality gates, and Git ownership.
 
