@@ -18,6 +18,15 @@ band-pass filters with four response families:
 
 Phase handling is planned, but is not yet part of the API.
 
+## Project documents
+
+- [Design notes](DESIGN.md) define the numerical models, invariants, and
+  milestone sequence.
+- [Phase equalization record](docs/phase-equalization.md) defines the active
+  problem, evidence requirements, and decision gates before implementation.
+- [Agent collaboration guide](AGENTS.md) defines delegated work packages,
+  review independence, quality gates, and Git ownership.
+
 ## Example
 
 ```rust
