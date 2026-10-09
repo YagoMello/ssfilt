@@ -10,6 +10,9 @@ pub enum BuildError {
     InvalidCutoff,
     /// Initial input was not finite.
     InvalidInitialInput,
+    /// A finite initial input has an equilibrium state or output that cannot
+    /// be represented.
+    UnrepresentableInitialEquilibrium,
     /// Integration configuration contained an invalid value.
     InvalidIntegrationConfig,
     /// Chebyshev passband ripple was outside its supported range.
@@ -28,6 +31,9 @@ impl fmt::Display for BuildError {
             Self::ZeroOrder => "filter order must be at least one",
             Self::InvalidCutoff => "cutoff frequency must be finite and positive",
             Self::InvalidInitialInput => "initial input must be finite",
+            Self::UnrepresentableInitialEquilibrium => {
+                "initial input produces an unrepresentable equilibrium"
+            }
             Self::InvalidIntegrationConfig => "integration configuration is invalid",
             Self::InvalidPassbandRipple => {
                 "passband ripple must be finite, positive, and less than 3.0103 dB"
@@ -77,11 +83,20 @@ impl fmt::Display for UpdateError {
 pub enum ResetError {
     /// The supplied steady input was NaN or infinite.
     NonFiniteInput,
+    /// A finite steady input would produce an equilibrium state or output that
+    /// cannot be represented.
+    UnrepresentableSteadyState,
 }
 
 impl fmt::Display for ResetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("steady input must be finite")
+        let message = match self {
+            Self::NonFiniteInput => "steady input must be finite",
+            Self::UnrepresentableSteadyState => {
+                "steady input produces an unrepresentable equilibrium"
+            }
+        };
+        formatter.write_str(message)
     }
 }
 

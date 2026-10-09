@@ -109,7 +109,7 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
             angular_center,
             self.input_model,
             self.integration,
-        );
+        )?;
         Ok(BandPass {
             runtime,
             lower_cutoff_hz: self.lower_cutoff_hz,
@@ -203,7 +203,9 @@ impl<const N: usize, T: Scalar> BandPass<N, T> {
     ///
     /// # Errors
     ///
-    /// Returns [`ResetError::NonFiniteInput`] if `input` is NaN or infinite.
+    /// Returns [`ResetError::NonFiniteInput`] if `input` is NaN or infinite,
+    /// or [`ResetError::UnrepresentableSteadyState`] if its equilibrium cannot
+    /// be represented.
     pub fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
         <Self as StreamingFilter>::reset_to_steady(self, input)
     }

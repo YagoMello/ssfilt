@@ -62,6 +62,8 @@ pub trait StreamingFilter {
     ///
     /// # Errors
     ///
-    /// Returns [`ResetError`] when `input` is not finite.
+    /// Returns [`ResetError::NonFiniteInput`] when `input` is not finite, or
+    /// [`ResetError::UnrepresentableSteadyState`] when its finite equilibrium
+    /// cannot be represented.
     fn reset_to_steady(&mut self, input: Self::Scalar) -> Result<(), ResetError>;
 }
