@@ -2,87 +2,277 @@
 
 ## Status
 
-Planning. No topology or public API has been selected.
+Initial independent proposal, recorded before inspecting the discarded
+equalizer implementation. The proposed topology and thresholds below are
+design gates, not claims that the feature already meets them.
 
-This record must define the problem and acceptance criteria before the
-alternative equalizer implementation is inspected. Findings from that later
-comparison will be added in a separate section with their provenance stated.
+## Decision summary
+
+The first streaming candidate is deliberately narrow:
+
+- low-pass filters only;
+- a fixed useful band from DC through `0.7 * cutoff_hz`;
+- repeated-pole and Butterworth responses as release candidates;
+- Bessel as the no-equalizer waveform-fidelity baseline;
+- one real second-order continuous-time all-pass section;
+- coefficients selected offline and stored as validated normalized data;
+- source and equalizer integrated as one coupled continuous-time model.
+
+Chebyshev Type I remains in the investigation matrix, but is not promised for
+the first release. High-pass and band-pass equalization are deferred because
+their useful-band and latency semantics need separate designs. A Bessel
+equalizer is out of scope: if Bessel already meets the requirement, adding
+states and delay is the wrong tradeoff.
+
+No public API or coefficient table should be added until the candidate passes
+the numerical and waveform gates in this record.
 
 ## Problem statement
 
-A causal low-pass or band-pass filter can give frequencies in its useful band
-different delays. A multi-frequency waveform can therefore change shape even
-when each component's magnitude remains acceptable. A streaming phase feature
-is useful only if it measurably reduces that delay variation over a declared
-band for representative filters and signals.
+A filter can give frequencies in its useful band different delays. A
+multi-frequency waveform can therefore change shape even where its frequency
+components retain acceptable magnitude. A phase equalizer is useful only if
+it measurably reduces that shape change while retaining a source response whose
+magnitude selectivity the user actually wants.
 
-A causal stable equalizer may add delay so earlier frequency components wait
-for later ones. It cannot remove all latency or make a general streaming filter
+An all-pass equalizer cannot repair passband droop or ripple. Comparisons must
+therefore use a reference with the source filter's exact magnitude and a
+constant delay, not the original input waveform.
+
+A causal stable equalizer adds delay so earlier frequency components wait for
+later ones. It cannot remove all latency or make a general streaming filter
 zero phase. Offline forward-backward filtering is a separate noncausal batch
-operation and has a different magnitude response.
+operation and squares the source magnitude response.
 
-## Questions to resolve
+## Candidate topology
 
-- Which metric should drive the design: group-delay ripple, waveform error,
-  or a bounded combination of both?
-- How should users specify the useful band?
-- Which source responses have enough phase distortion for equalization to be
-  worthwhile compared with choosing a Bessel response?
-- Which continuous-time all-pass topology remains well conditioned across the
-  supported orders and scalar types?
-- How are equalizer order, target delay, useful band, and achievable error
-  related?
-- Can construction be deterministic and allocation-free without runtime root
-  finding or nonlinear optimization?
-- Should the equalizer wrap a filter, be independently composable, or remain a
-  batch/offline helper?
-- What failure must construction report when a requested target is infeasible?
+For normalized angular frequency, use a stable real second-order all-pass
+section with poles `-sigma +/- j*eta`:
 
-## Evidence required before implementation
+```text
+A(s) = (s^2 - 2*sigma*s + sigma^2 + eta^2)
+       -------------------------------------
+       (s^2 + 2*sigma*s + sigma^2 + eta^2)
+```
 
-The design proposal must include:
+Its magnitude is one and its group delay is:
 
-1. an independently derived or published transfer-function reference;
-2. a metric evaluated over an explicit normalized passband;
-3. comparison with the uncorrected response and a Bessel response;
-4. a matrix covering multiple source orders and response families;
-5. at least one multi-tone or pulse-like waveform test;
-6. the added delay, equalizer order, runtime state, and derivative cost;
-7. conditioning checks for `f32` and `f64`;
-8. declared cases where no useful equalizer can be built.
+```text
+tau_A(w) = 2*sigma / ((w - eta)^2 + sigma^2)
+         + 2*sigma / ((w + eta)^2 + sigma^2)
+```
 
-Plots should make failures visible, but automated numerical assertions decide
-whether the feature succeeds.
+A section realization that avoids polynomial expansion is:
 
-## Candidate approaches to research
+```text
+x' = v
+v' = u - 2*sigma*v - (sigma^2 + eta^2)*x
+y  = u - 4*sigma*v
+```
 
-- continuous-time first- and second-order all-pass cascades fitted to a target
-  group delay over a bounded passband;
-- closed-form or table-driven delay equalizers associated with classical
-  low-pass prototypes;
-- a direct choice of Bessel response when its magnitude tradeoff already meets
-  the waveform requirement;
-- offline forward-backward filtering for stored samples where noncausality and
-  squared magnitude are acceptable.
+It has unity DC gain and an exact constant-input equilibrium. Stability is
+guaranteed by construction when `sigma > 0`.
 
-Discrete-time equalizers that assume a fixed sampling interval need separate
-justification because the library's primary timing model accepts variable
-elapsed time.
+All-pass delay is nonnegative, and cascaded delays add. If the desired total
+delay is `D`, the equalizer must approximate `D - tau_source(w)`; consequently
+`D` cannot be smaller than the source's greatest delay in the useful band.
+The added delay must be reported as a cost, not hidden inside a relative
+percentage.
 
-## Decision gates
+The initial experiment is limited to one section. A second section may be
+investigated later, but only after the first section's failures are classified
+and the extra section demonstrates material absolute improvement. We will not
+force inactive or negligible sections merely to make an order configurable.
 
-The streaming equalizer proceeds only if one bounded design:
+## Design and coefficient policy
 
-- improves the predeclared metric across the chosen test matrix;
-- has stable, finite coefficients and states at supported boundaries;
-- offers a simpler user decision than manually selecting arbitrary poles;
-- retains fixed-size, allocation-free runtime storage;
-- states its latency and limitations precisely.
+The design tool may use `std`, allocation, dense numerical evaluation, and a
+bounded optimizer. Runtime construction may not. Accepted `sigma` and `eta`
+values are normalized by the low-pass cutoff angular frequency and stored as
+validated data for each supported response/order pair, following the same
+general reliability policy as the Bessel prototypes.
 
-If those gates are not met, the library should document Bessel selection and
-provide only the offline batch operation rather than ship a weak equalizer.
+This policy gives:
+
+- deterministic and inexpensive construction;
+- no runtime root finding or nonlinear convergence failure;
+- fixed two-scalar equalizer state;
+- identical normalized behavior at every physical cutoff;
+- an explicit unsupported result for combinations that fail validation.
+
+Fit and validation grids must be different. The holdout grid must include both
+band endpoints, section pole frequencies that lie nearby, and enough points to
+detect narrow peaks. Candidate sections must also satisfy all of:
+
+```text
+sigma >= 0.2
+section Q <= 2
+sqrt(sigma^2 + eta^2) <= 4
+```
+
+These initial bounds prevent a fit from buying an attractive sampled curve
+with a lightly damped, long-ringing, or needlessly fast section. They may be
+changed only with transient and integration-cost evidence recorded here.
+
+## Metrics
+
+Let normalized frequency be `W = f / cutoff_hz`, normalized group delay be
+`t(W) = 2*pi*cutoff_hz*tau(W)`, and the core band be `0 <= W <= 0.7`.
+
+For the primary minimax score, choose the best constant delay:
+
+```text
+D = (max(t) + min(t)) / 2
+R_peak = max(abs(t(W) - D))
+```
+
+Also report uniform-frequency RMS delay residual about its best constant,
+maximum residual phase after removing the best linear phase, mean and maximum
+equalizer delay, and the corresponding physical delay in seconds. These are
+absolute normalized quantities; dividing residual error by the newly enlarged
+total delay is forbidden as a success metric.
+
+The analytic holdout tier must meet all of these gates:
+
+```text
+R_peak <= 0.10
+R_peak <= 0.25 * uncorrected_R_peak
+maximum residual phase <= 0.05 radian
+mean added normalized delay <= 5.0
+maximum relative magnitude change <= 1e-12 for f64
+maximum relative magnitude change <= 1e-5  for f32
+```
+
+The `0.7` band is the promised operating band. Results through `0.9 * cutoff`
+are a disclosed stress result, not a release gate. Stopband group delay is not
+scored because magnitude there approaches zero and phase ceases to describe a
+useful transmitted waveform.
+
+## Validation matrix
+
+The offline study covers:
+
+| Response | Source orders | Role |
+| --- | --- | --- |
+| Repeated pole | 2, 4, 8, 16 | release candidate |
+| Butterworth | 2, 4, 8, 16 | primary release candidate |
+| Chebyshev I, 0.5 dB ripple | 4, 8, 16 | investigation only |
+| Bessel | 2, 4, 8, 16, 25 | unequalized baseline |
+
+Only individual response/order pairs that pass may be exposed. The first
+feature is worthwhile only if at least Butterworth orders 4 and 8 pass; this
+ensures it addresses a response with a real selectivity-versus-phase tradeoff
+rather than only a hand-crafted easy case.
+
+Analytic group delay comes from pole contributions or the complex logarithmic
+derivative, not finite differences of wrapped phase. Validate on a dense
+holdout grid of at least 8,193 points and cross-check selected cases at twice
+that density. Round accepted coefficients to both `f32` and `f64`, then repeat
+stability and response checks.
+
+Use three time-domain signals whose energy lies in the promised band:
+
+- an unequal-amplitude, unequal-phase multi-tone signal;
+- a Gaussian pulse or Gaussian-modulated carrier;
+- a tapered chirp across the core band.
+
+The oracle retains the source's analytic magnitude and replaces its phase with
+the best constant delay. After fitting only that constant time shift, the
+streaming result must satisfy:
+
+```text
+waveform-shape RMS error <= 2% for f64 and <= 4% for f32
+shape error <= 0.25 * the uncorrected source's shape error
+steady-tone magnitude change <= 0.1% for f64 and <= 0.5% for f32
+```
+
+Run uniform, deterministic-jitter, and bounded gap schedules. The fine-grid
+reference tier limits every interval to at most `1/80` of the shortest tone
+period. A separate linear-ramp partition test verifies that splitting the same
+piecewise-linear input interval does not alter the continuous cascade beyond
+the configured integration tolerance. Repeat at a second physical cutoff with
+the same normalized time trace.
+
+The equalized Butterworth result is also compared with a matched-order Bessel
+filter. The comparison reports both waveform error and their different
+magnitude responses; it must not imply that the all-pass makes Butterworth and
+Bessel equivalent.
+
+## Integration architecture
+
+Feeding a second streaming filter only the source filter's endpoint outputs is
+not the intended continuous-time cascade. It makes the second filter linearly
+interpolate those endpoints and misses the source's Runge-Kutta stage outputs,
+so the answer can depend on how an interval is partitioned.
+
+For source state `x`, equalizer state `z`, and source output `y_s`, each solver
+stage must instead evaluate:
+
+```text
+x' = source.derivative(x, u)
+z' = equalizer.derivative(z, y_s(x, u))
+y  = equalizer.output(z, y_s(x, u))
+```
+
+The likely enabling refactor makes the private solver operate on a private
+fixed-size state abstraction. Ordinary filters continue to use `[T; N]`; the
+composite model uses a structure containing `[T; N]` and `[T; 2]`. This avoids
+unstable generic expressions such as `[T; N + 2]`, preserves allocation-free
+storage, and does not expose a general ODE framework.
+
+The refactor must land separately with exact behavioral-parity tests before an
+equalizer model is introduced.
+
+## Public UX direction
+
+If the evidence passes, the preferred entry point is a terminal operation on
+the existing builder:
+
+```rust,ignore
+let filter = LowPass::<4>::builder(20.0)
+    .response(Response::Butterworth)
+    .build_phase_equalized()?;
+```
+
+It returns one dedicated streaming-filter value containing the coupled model.
+The user does not construct an all-pass section, solver, or composite object.
+The returned type should expose the promised band and nominal/added delay in
+physical units, with wording that does not claim exact latency at every
+frequency. Unsupported responses and orders fail explicitly during build.
+
+The exact public names and error variant are intentionally deferred until the
+prototype meets the gates. Arbitrary poles, target delays, equalizer orders,
+optimizer tolerances, and fitting weights remain private.
+
+## References
+
+- A. Stojanovic and G. Schiro, ["Design of continuous-time all-pass filters
+  with maximally flat group delay"](https://doi.org/10.1049/el.2018.5104),
+  derives continuous-time first- and second-order all-pass delay sections.
+- M. Lang and T. Laakso, ["A method for design of phase
+  equalizers"](https://doi.org/10.1109/ICASSP.1979.1170643), describes fitting
+  all-pass networks to prescribed group delay.
+- W. E. Thomson, ["Delay networks having maximally flat frequency
+  characteristics"](https://doi.org/10.1049/jiee-2.1949.0141), establishes
+  the Bessel/Thomson delay-flat baseline used for comparison.
+
+## Staged implementation
+
+0. Fix the independent baseline-review findings in `baseline-review.md`.
+1. Build a development-only analytic evaluator and bounded coefficient search;
+   produce machine-readable reports and plots for the complete matrix.
+2. Decide supported response/order pairs from the predeclared gates. Stop the
+   streaming feature if Butterworth orders 4 and 8 do not pass.
+3. Refactor the private solver to support fixed composite state, with no public
+   behavior change.
+4. Implement the coupled all-pass model and analytic/model tests privately.
+5. Add public streaming waveform tests, then the smallest self-contained API.
+6. Run an independent numerical and API review before declaring the feature.
+7. Treat offline forward-backward filtering as a later, separate batch
+   milestone; it does not share the streaming equalizer's contract.
 
 ## Independent comparison
 
-Pending. Do not inspect or summarize the alternative implementation until the
-initial design proposal and acceptance thresholds are recorded above.
+Pending. The discarded implementation may be inspected only after this
+proposal and its thresholds are committed. Its choices and failures will be
+recorded here separately so they cannot silently redefine the gates.

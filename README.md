@@ -24,6 +24,8 @@ Phase handling is planned, but is not yet part of the API.
   milestone sequence.
 - [Phase equalization record](docs/phase-equalization.md) defines the active
   problem, evidence requirements, and decision gates before implementation.
+- [Baseline review](docs/baseline-review.md) records correctness and test gaps
+  found before the phase work began.
 - [Agent collaboration guide](AGENTS.md) defines delegated work packages,
   review independence, quality gates, and Git ownership.
 
