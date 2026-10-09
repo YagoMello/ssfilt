@@ -273,6 +273,55 @@ optimizer tolerances, and fitting weights remain private.
 
 ## Independent comparison
 
-Pending. The discarded implementation may be inspected only after this
-proposal and its thresholds are committed. Its choices and failures will be
-recorded here separately so they cannot silently redefine the gates.
+Inspected after the proposal and thresholds above were committed as `bee1418`.
+The discarded implementation is commit `792ab0b` on `main`; none of its code
+was copied into this branch.
+
+It independently reached one important correct conclusion: filter and
+equalizer states must be integrated together at every Runge-Kutta stage. Its
+private `SolverState` abstraction also used separate fixed arrays behind
+component indexing, which supports the composite-state direction proposed
+above without unstable generic array lengths.
+
+Its equalizer design differed substantially:
+
+- one through four first-order all-pass sections, selected by a public const
+  generic;
+- an arbitrary user-supplied band extending as far as the cutoff;
+- runtime coordinate search over only 33 frequency samples;
+- sampled delay variance as the sole design objective;
+- success when variance improved by just 5%;
+- no absolute delay-ripple, latency, holdout-grid, transient, or waveform
+  acceptance threshold.
+
+Additional requested sections could settle at the search's maximum rate and
+add nearly constant delay and runtime work with negligible absolute benefit.
+Tests asserted only that a curve or four-tone phase score became better, not
+that the result became useful.
+
+Re-evaluating its deterministic search on a 16,385-point holdout grid explains
+the observed weak behavior. Values below are normalized peak delay residuals
+before and after equalization:
+
+| Band | Butterworth case | Old design result | Added mean delay |
+| --- | --- | --- | --- |
+| DC–0.7 cutoff | order 4, 2 sections | `0.448 -> 0.112` | `2.79` |
+| DC–0.7 cutoff | order 4, 4 sections | `0.448 -> 0.096` | `3.79` |
+| DC–0.7 cutoff | order 8, 4 sections | `0.711 -> 0.201` | `4.31` |
+| DC–cutoff | order 4, 2 sections | `0.648 -> 0.193` | `2.01` |
+| DC–cutoff | order 8, 4 sections | `2.089 -> 0.841` | `6.10` |
+
+Thus the old design misses the new absolute `0.10` gate for mandatory order 8
+even after four states, and its cutoff-wide order-8 result also exceeds the new
+latency cap. The order-4 four-section core-band result only barely passes while
+using twice the state planned for the new candidate.
+
+The comparison strengthens rather than changes the independent plan:
+
+- retain coupled stage integration and a private composite-state solver;
+- replace arbitrary runtime fitting with offline-validated normalized data;
+- test one second-order section, whose complex pole pair provides more delay
+  shape control for the same two states;
+- keep the useful band and supported source cases explicit;
+- do not expose section count or arbitrary fitting bands in the first API;
+- require absolute and waveform gates before any public feature lands.
