@@ -238,6 +238,8 @@ updates preserve the preceding snapshot transactionally.
 7. Refactored development measurement tools with analytic curves, public-API
    sample markers, machine-readable phase reports, and explicit band sweeps.
 8. Optional delayed group-delay equalization and offline forward-backward
-   filtering as separate phase-handling approaches.
+   filtering as separate phase-handling approaches. Prove Butterworth orders
+   4 and 8 first, then expand the validated order matrix and add analytic plus
+   measured equalized-response overlays before broadening public support.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

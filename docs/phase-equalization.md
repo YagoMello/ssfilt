@@ -212,7 +212,8 @@ zero and phase ceases to describe a useful transmitted waveform.
 
 ## Validation matrix
 
-The offline study covers:
+The eventual offline study matrix covers; entries above order 8 remain deferred
+until the initial streaming gate passes:
 
 | Response | Source orders | Role |
 | --- | --- | --- |
@@ -227,6 +228,16 @@ ensures it addresses a response with a real selectivity-versus-phase tradeoff
 rather than only a hand-crafted easy case. That minimum refers to the core
 study. Every candidate report records its validated band edge; how the eventual
 API communicates that edge remains a later decision.
+
+Orders 4 and 8 are the streaming-design gate, not the intended permanent
+matrix limit. After both pass the coupled streaming and waveform criteria,
+investigate the order sweep incrementally up to order 16 as evidence warrants.
+Treat each response/order pair as a separate result: a higher order may
+require more all-pass sections or may be rejected rather than inheriting
+support from a neighboring order. At that stage, response dashboards should
+overlay the source, analytic equalized response, and measured equalized
+streaming points for magnitude, phase, and group delay. Do not broaden the
+public builder from analytic curves alone.
 
 Analytic group delay comes from pole contributions or the complex logarithmic
 derivative, not finite differences of wrapped phase. Validate on a dense
