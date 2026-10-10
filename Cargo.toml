@@ -22,6 +22,7 @@ criterion = { version = "0.7.0", default-features = false }
 plotters = { version = "0.3.7", default-features = false, features = ["line_series", "svg_backend"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 rstest = { version = "0.27.0", default-features = false }
+rustfft = { version = "6.4.1", default-features = false }
 
 [[bench]]
 name = "streaming"

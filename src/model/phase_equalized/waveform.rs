@@ -1,5 +1,7 @@
 //! Deterministic streaming waveform gate for the private phase prototype.
 
+mod spectral;
+
 use rstest::rstest;
 
 use super::{CoupledState, EqualizedButterworth};
