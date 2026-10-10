@@ -262,7 +262,7 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for BandPassModel<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for BandPassModel<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         for section in 0..N / 2 {

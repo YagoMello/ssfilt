@@ -19,6 +19,7 @@ mod model;
 mod response;
 mod scalar;
 mod solver;
+mod state;
 mod streaming;
 
 pub use band_pass::{BandPass, BandPassBuilder};

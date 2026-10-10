@@ -121,7 +121,7 @@ fn normalized_damping<T: Scalar>(damping: T, frequency_squared: T) -> T {
     damping / frequency_squared.sqrt()
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for Chebyshev1<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for Chebyshev1<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         let mut state_index = 0;

@@ -25,7 +25,7 @@ impl<T: Scalar, const N: usize> LowPassModel<T, N> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for LowPassModel<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         match self {
             Self::RepeatedPole(model) => model.derivative(state, input, derivative),
@@ -56,7 +56,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for LowPassModel<T, N> {
     fn max_normalized_step(&self) -> T {
         match self {
             Self::RepeatedPole(model) => {
-                <RepeatedPole<T> as ContinuousModel<T, N>>::max_normalized_step(model)
+                <RepeatedPole<T> as ContinuousModel<T, [T; N]>>::max_normalized_step(model)
             }
             Self::Butterworth(model) => model.max_normalized_step(),
             Self::Bessel(model) => model.max_normalized_step(),

@@ -21,7 +21,7 @@ impl<T: Scalar> RepeatedPole<T> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for RepeatedPole<T> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for RepeatedPole<T> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         for index in 0..N {
@@ -69,7 +69,8 @@ mod tests {
     #[test]
     fn equilibrium_has_zero_derivative() {
         let model = RepeatedPole::<f64>::new(4);
-        let state = <RepeatedPole<f64> as ContinuousModel<f64, 4>>::equilibrium(&model, 3.25);
+        let state =
+            <RepeatedPole<f64> as ContinuousModel<f64, [f64; 4]>>::equilibrium(&model, 3.25);
         let mut derivative = [1.0; 4];
         model.derivative(&state, 3.25, &mut derivative);
         assert_eq!(derivative, [0.0; 4]);

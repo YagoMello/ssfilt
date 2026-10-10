@@ -13,6 +13,11 @@ The analytic tool also emits one inspectable SVG per case. These plots use the
 stored holdout records and display their actual points as rings; they do not
 claim that a streaming realization has reproduced the analytic curves.
 
+The private solver now accepts a fixed-size state abstraction, with ordinary
+filters still using arrays. An exact parity test covers an equivalent split
+state, so the coupled source/equalizer model can be added without unstable
+generic array expressions or a public solver interface.
+
 ## Decision summary
 
 The first streaming candidate is deliberately narrow:
@@ -350,7 +355,7 @@ optimizer tolerances, and fitting weights remain private.
 2. Decide supported response/order pairs from the predeclared gates. Stop the
    streaming feature if Butterworth orders 4 and 8 do not pass.
 3. Refactor the private solver to support fixed composite state, with no public
-   behavior change.
+   behavior change. ✓
 4. Implement the coupled all-pass model and analytic/model tests privately.
 5. Add public streaming waveform tests, then the smallest self-contained API.
 6. Run an independent numerical and API review before declaring the feature.

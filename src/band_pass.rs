@@ -128,7 +128,7 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
 /// Both cutoff arguments denote complete-filter −3 dB frequencies.
 #[derive(Clone, Copy, Debug)]
 pub struct BandPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, BandPassModel<T, N>, N>,
+    runtime: StreamingCore<T, BandPassModel<T, N>, [T; N]>,
     lower_cutoff_hz: T,
     upper_cutoff_hz: T,
     center_hz: T,

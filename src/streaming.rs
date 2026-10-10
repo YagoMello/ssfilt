@@ -1,14 +1,15 @@
 use crate::model::ContinuousModel;
 use crate::solver::{InputSegment, integrate};
+use crate::state::StateVector;
 use crate::{
     BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Scalar,
     UpdateError,
 };
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct StreamingCore<T, M, const N: usize> {
+pub(crate) struct StreamingCore<T, M, S> {
     pub(crate) model: M,
-    pub(crate) state: [T; N],
+    pub(crate) state: S,
     pub(crate) previous_input: T,
     pub(crate) output: T,
     time_scale: T,
@@ -18,7 +19,7 @@ pub(crate) struct StreamingCore<T, M, const N: usize> {
     pub(crate) at_equilibrium: bool,
 }
 
-impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N> {
+impl<T: Scalar, M: ContinuousModel<T, S>, S: StateVector<T>> StreamingCore<T, M, S> {
     pub(crate) fn new(
         model: M,
         initial_input: T,
@@ -28,7 +29,7 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
     ) -> Result<Self, BuildError> {
         let state = model.equilibrium(initial_input);
         let output = model.output(&state, initial_input);
-        if !state.iter().all(|value| value.is_finite()) || !output.is_finite() {
+        if !state.all_finite() || !output.is_finite() {
             return Err(BuildError::UnrepresentableInitialEquilibrium);
         }
         Ok(Self {
@@ -121,7 +122,7 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         }
         let state = self.model.equilibrium(input);
         let output = self.model.output(&state, input);
-        if !state.iter().all(|value| value.is_finite()) || !output.is_finite() {
+        if !state.all_finite() || !output.is_finite() {
             return Err(ResetError::UnrepresentableSteadyState);
         }
 

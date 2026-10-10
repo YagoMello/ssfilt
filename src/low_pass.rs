@@ -104,7 +104,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
 /// complete filter for every supported [`Response`].
 #[derive(Clone, Copy, Debug)]
 pub struct LowPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, LowPassModel<T, N>, N>,
+    runtime: StreamingCore<T, LowPassModel<T, N>, [T; N]>,
     cutoff_hz: T,
     response: Response<T>,
 }

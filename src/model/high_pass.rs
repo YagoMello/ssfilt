@@ -48,7 +48,7 @@ impl<T: Scalar, const N: usize> HighPassModel<T, N> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for HighPassModel<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for HighPassModel<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         match self {
             Self::RepeatedPole(model) => model.derivative(state, input, derivative),
@@ -73,7 +73,7 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for HighPassModel<T, N> {
     fn max_normalized_step(&self) -> T {
         match self {
             Self::RepeatedPole(model) => {
-                <RepeatedPoleHighPass<T> as ContinuousModel<T, N>>::max_normalized_step(model)
+                <RepeatedPoleHighPass<T> as ContinuousModel<T, [T; N]>>::max_normalized_step(model)
             }
             Self::Classical(model) => model.max_normalized_step(),
         }
@@ -85,7 +85,7 @@ pub(crate) struct RepeatedPoleHighPass<T> {
     rate: T,
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for RepeatedPoleHighPass<T> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for RepeatedPoleHighPass<T> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         for index in 0..N {
@@ -158,7 +158,7 @@ impl<T: Scalar, const N: usize> ClassicalHighPass<T, N> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for ClassicalHighPass<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for ClassicalHighPass<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         let mut state_index = 0;

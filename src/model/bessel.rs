@@ -53,7 +53,7 @@ impl<T: Scalar, const N: usize> Bessel<T, N> {
     }
 }
 
-impl<T: Scalar, const N: usize> ContinuousModel<T, N> for Bessel<T, N> {
+impl<T: Scalar, const N: usize> ContinuousModel<T, [T; N]> for Bessel<T, N> {
     fn derivative(&self, state: &[T; N], input: T, derivative: &mut [T; N]) {
         let mut driving_signal = input;
         let mut state_index = 0;

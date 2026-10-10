@@ -106,7 +106,7 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
 /// returned output immediately.
 #[derive(Clone, Copy, Debug)]
 pub struct HighPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, HighPassModel<T, N>, N>,
+    runtime: StreamingCore<T, HighPassModel<T, N>, [T; N]>,
     cutoff_hz: T,
     response: Response<T>,
 }
