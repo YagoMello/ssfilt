@@ -18,6 +18,13 @@ filters still using arrays. An exact parity test covers an equivalent split
 state, so the coupled source/equalizer model can be added without unstable
 generic array expressions or a public solver interface.
 
+A test-only coupled Butterworth prototype now exercises the accepted order 4
+and 8 core-band candidates. It passes exact equilibrium and steady-tone
+magnitude/phase checks for both `f32` and `f64`; stage coupling, step bounds,
+linear-ramp partition, physical scaling, and transactional failure currently
+have structural `f64` coverage. This is realization evidence, not the required
+waveform matrix, and does not authorize a public phase API.
+
 ## Decision summary
 
 The first streaming candidate is deliberately narrow:
@@ -84,6 +91,19 @@ y  = u - 4*sigma*v
 
 It has unity DC gain and an exact constant-input equilibrium. Stability is
 guaranteed by construction when `sigma > 0`.
+
+The streaming prototype stores the position state in the scaled coordinate
+`q = (sigma^2 + eta^2) * x`:
+
+```text
+q' = (sigma^2 + eta^2)*v
+v' = u - 2*sigma*v - q
+y  = u - 4*sigma*v
+```
+
+This is the same transfer function, while its equilibrium is exactly
+`[q, v] = [u, 0]`. It avoids equilibrium division and keeps the all-pass state
+on roughly the same scale as the source signal.
 
 All-pass delay is nonnegative, and cascaded delays add. If the desired total
 delay is `D`, the equalizer must approximate `D - tau_source(w)`; consequently
@@ -356,7 +376,7 @@ optimizer tolerances, and fitting weights remain private.
    streaming feature if Butterworth orders 4 and 8 do not pass.
 3. Refactor the private solver to support fixed composite state, with no public
    behavior change. ✓
-4. Implement the coupled all-pass model and analytic/model tests privately.
+4. Implement the coupled all-pass model and analytic/model tests privately. ✓
 5. Add public streaming waveform tests, then the smallest self-contained API.
 6. Run an independent numerical and API review before declaring the feature.
 7. Treat offline forward-backward filtering as a later, separate batch

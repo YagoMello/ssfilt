@@ -5,6 +5,8 @@ mod butterworth;
 mod chebyshev1;
 mod high_pass;
 mod low_pass;
+#[cfg(test)]
+mod phase_equalized;
 mod repeated_pole;
 
 pub(crate) use butterworth::Butterworth;
