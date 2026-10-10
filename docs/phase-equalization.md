@@ -6,9 +6,10 @@ Initial independent proposal, recorded before inspecting the discarded
 equalizer implementation, followed by an analytic feasibility implementation.
 The bounded one-section search now passes the mandatory Butterworth order 4
 and 8 core-band gates and rejects cutoff-wide claims for both orders. The
-coupled-integrator realization and first multi-tone streaming tier pass, but
-the full waveform gate remains unmet, so there is still no public
-phase-equalizer feature.
+coupled-integrator realization, steady-tone checks, and complete three-signal
+streaming waveform matrix now pass for both orders and scalar types. There is
+still no public phase-equalizer feature: the narrow public contract and its
+independent API review remain to be completed.
 
 The analytic tool also emits one inspectable SVG per case. These plots use the
 stored holdout records and display their actual points as rings; they do not
@@ -19,12 +20,13 @@ filters still using arrays. An exact parity test covers an equivalent split
 state, so the coupled source/equalizer model can be added without unstable
 generic array expressions or a public solver interface.
 
-A test-only coupled Butterworth prototype now exercises the accepted order 4
-and 8 core-band candidates. It passes exact equilibrium and steady-tone
+A test-only coupled Butterworth prototype exercises the accepted order 4 and
+8 core-band candidates. It passes exact equilibrium and steady-tone
 magnitude/phase checks for both `f32` and `f64`; stage coupling, step bounds,
 linear-ramp partition, physical scaling, and transactional failure currently
-have structural `f64` coverage. This is realization evidence, not the required
-waveform matrix, and does not authorize a public phase API.
+have structural `f64` coverage. Together with the independent waveform tiers
+below, this completes the private order-4/8 core-band numerical gate. It does
+not by itself define or review a public phase API.
 
 The first waveform tier now passes a frozen unequal-amplitude, unequal-phase
 five-tone signal. The test uses an independent closed-form Butterworth
@@ -57,7 +59,24 @@ predeclared absolute and relative gates as the multi-tone tier.
 The raw Gaussian fixture has 99.999897% of its two-sided discrete-spectrum
 energy inside the scored band. The remaining 0.000103% is reported and
 excluded by driving both the streamers and reference from the same in-band
-projection. The tapered-chirp tier remains mandatory before a public API.
+projection.
+
+The tapered linear-chirp tier now passes the same 24-cell matrix. Its
+instantaneous frequency sweeps from `0.05` to `0.65 * cutoff`, and a squared
+sine taper closes the periodic fixture without a hard seam. The raw fixture
+has 99.994350% of its two-sided discrete-spectrum energy inside the scored
+band; the remaining 0.005650% is reported and excluded through the same
+input/reference projection policy.
+
+| Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
+| --- | ---: | ---: | ---: |
+| 4 | 0.0769% | 0.0769% | 0.0601% |
+| 8 | 0.352% | 0.352% | 0.244% |
+
+All three waveform tiers now pass their predeclared absolute and relative
+limits across both precisions, all schedules, and both physical cutoffs. These
+results authorize designing the smallest order-4/8 Butterworth core-band API;
+they do not imply cutoff-wide, higher-order, or other-response support.
 
 ## Decision summary
 
@@ -411,10 +430,11 @@ optimizer tolerances, and fitting weights remain private.
 3. Refactor the private solver to support fixed composite state, with no public
    behavior change. ✓
 4. Implement the coupled all-pass model and analytic/model tests privately. ✓
-5. Complete the private streaming waveform matrix, then add the smallest
-   self-contained public API. Multi-tone and Gaussian tiers pass; tapered
-   chirp remains pending.
-6. Run an independent numerical and API review before declaring the feature.
+5. Complete the private streaming waveform matrix. Multi-tone, Gaussian, and
+   tapered-chirp tiers pass. ✓
+6. Add the smallest self-contained public API for only the validated cases,
+   then run an independent numerical and API review before declaring the
+   feature.
 7. Treat offline forward-backward filtering as a later, separate batch
    milestone; it does not share the streaming equalizer's contract.
 

@@ -12,7 +12,20 @@ use crate::{InputModel, IntegrationConfig, Scalar};
 pub(super) const TICKS_PER_CUTOFF_CYCLE: usize = 1_920;
 pub(super) const FRAME_CYCLES: usize = 20;
 pub(super) const FRAME_TICKS: usize = TICKS_PER_CUTOFF_CYCLE * FRAME_CYCLES;
+pub(super) const SAMPLES_PER_CUTOFF_CYCLE: usize = 64;
+pub(super) const SAMPLE_COUNT: usize = FRAME_CYCLES * SAMPLES_PER_CUTOFF_CYCLE;
+pub(super) const SCORED_BAND_EDGE: f64 = 0.7;
+const CUTOFFS_HZ: [f64; 2] = [1.0, 37.0];
 const TOTAL_TICKS: usize = 2 * FRAME_TICKS;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct WorstMetrics {
+    pub(super) raw_in_band_fraction: f64,
+    pub(super) f64_error: f64,
+    pub(super) f64_ratio: f64,
+    pub(super) f32_error: f64,
+    pub(super) f32_ratio: f64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Schedule {
@@ -84,6 +97,7 @@ impl TransientRecords {
 
     pub(super) fn score<T: Scalar, const N: usize>(
         &self,
+        signal_name: &str,
         cutoff_hz: f64,
         sigma: f64,
         eta: f64,
@@ -91,7 +105,11 @@ impl TransientRecords {
     where
         IntegrationConfig<T>: Default,
     {
-        assert!(cutoff_hz.is_finite() && cutoff_hz > 0.0);
+        assert!(
+            cutoff_hz.is_finite() && cutoff_hz > 0.0,
+            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: cutoff must be finite and positive",
+            self.schedule.name(),
+        );
         let first = self
             .samples
             .first()
@@ -151,16 +169,121 @@ impl TransientRecords {
         let metrics = errors.metrics();
         assert!(
             errors.denominator.is_finite() && errors.denominator > 0.0,
-            "{} reference denominator must be finite and nonzero",
-            self.schedule.name()
+            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: reference energy must be finite and nontrivial (denominator {})",
+            self.schedule.name(),
+            errors.denominator,
         );
         assert!(
             metrics.source_error.is_finite() && metrics.equalized_error.is_finite(),
-            "{} transient errors must be finite",
-            self.schedule.name()
+            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: transient errors must be finite (source {}, corrected {})",
+            self.schedule.name(),
+            metrics.source_error,
+            metrics.equalized_error,
         );
         metrics
     }
+}
+
+/// Apply the shared order/scalar/schedule/cutoff waveform gate to one
+/// projected transient and its independent magnitude-plus-delay reference.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn check_order<const N: usize>(
+    signal_name: &str,
+    input: &Spectrum,
+    reference: &Spectrum,
+    raw_in_band_fraction: f64,
+    sigma: f64,
+    eta: f64,
+    maximum_f64_error: f64,
+    maximum_f32_error: f64,
+) -> WorstMetrics {
+    assert!(
+        raw_in_band_fraction.is_finite()
+            && (0.0..=1.0).contains(&raw_in_band_fraction)
+            && raw_in_band_fraction >= 0.99,
+        "{signal_name}, order {N}, schedules {:?}, cutoffs {:?} Hz: raw two-sided in-band energy fraction was {raw_in_band_fraction}, expected at least 0.99",
+        Schedule::ALL,
+        CUTOFFS_HZ,
+    );
+
+    let mut worst = WorstMetrics {
+        raw_in_band_fraction,
+        ..WorstMetrics::default()
+    };
+    for schedule in Schedule::ALL {
+        let records = TransientRecords::new(input, reference, schedule);
+        let (f64_error, f64_ratio) = check_precision::<f64, N>(
+            signal_name,
+            &records,
+            sigma,
+            eta,
+            maximum_f64_error,
+            schedule,
+        );
+        let (f32_error, f32_ratio) = check_precision::<f32, N>(
+            signal_name,
+            &records,
+            sigma,
+            eta,
+            maximum_f32_error,
+            schedule,
+        );
+        worst.f64_error = worst.f64_error.max(f64_error);
+        worst.f64_ratio = worst.f64_ratio.max(f64_ratio);
+        worst.f32_error = worst.f32_error.max(f32_error);
+        worst.f32_ratio = worst.f32_ratio.max(f32_ratio);
+    }
+    worst
+}
+
+fn check_precision<T: Scalar, const N: usize>(
+    signal_name: &str,
+    records: &TransientRecords,
+    sigma: f64,
+    eta: f64,
+    maximum_error: f64,
+    schedule: Schedule,
+) -> (f64, f64)
+where
+    IntegrationConfig<T>: Default,
+{
+    let metrics = CUTOFFS_HZ.map(|cutoff_hz| {
+        let metrics = records.score::<T, N>(signal_name, cutoff_hz, sigma, eta);
+        assert!(
+            metrics.source_error > 1.0e-6,
+            "{signal_name}, order {N}, {schedule:?}, cutoff {cutoff_hz}: source error was trivial ({})",
+            metrics.source_error
+        );
+        assert!(
+            metrics.equalized_error <= maximum_error,
+            "{signal_name}, order {N}, {schedule:?}, cutoff {cutoff_hz}: corrected error {} exceeded {}",
+            metrics.equalized_error,
+            maximum_error,
+        );
+        let ratio = metrics.equalized_error / metrics.source_error;
+        assert!(
+            ratio.is_finite() && ratio <= 0.25,
+            "{signal_name}, order {N}, {schedule:?}, cutoff {cutoff_hz}: corrected/source ratio {ratio} exceeded 25%"
+        );
+        metrics
+    });
+
+    assert!(
+        (metrics[0].equalized_error - metrics[1].equalized_error).abs() <= maximum_error * 1.0e-3,
+        "{signal_name}, order {N}, {schedule:?}: normalized corrected errors changed across cutoffs {} Hz and {} Hz",
+        CUTOFFS_HZ[0],
+        CUTOFFS_HZ[1],
+    );
+
+    let worst_error = metrics
+        .iter()
+        .map(|metrics| metrics.equalized_error)
+        .fold(0.0, f64::max);
+    let worst_ratio = metrics
+        .iter()
+        .map(|metrics| metrics.equalized_error / metrics.source_error)
+        .fold(0.0, f64::max);
+    (worst_error, worst_ratio)
 }
 
 fn errors_at(source_output: f64, equalized_output: f64, reference: f64) -> SampleErrors {

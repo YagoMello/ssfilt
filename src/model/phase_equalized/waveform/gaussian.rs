@@ -3,18 +3,17 @@
 #![allow(clippy::cast_precision_loss)]
 
 use super::spectral::Spectrum;
-use super::transient::{FRAME_CYCLES, Schedule, TransientRecords};
+use super::transient::{
+    FRAME_CYCLES, SAMPLE_COUNT, SAMPLES_PER_CUTOFF_CYCLE, SCORED_BAND_EDGE, check_order,
+};
 use super::{
     ORDER_4_ETA, ORDER_4_SIGMA, ORDER_4_TARGET_DELAY, ORDER_8_ETA, ORDER_8_SIGMA,
     ORDER_8_TARGET_DELAY,
 };
 
-const SAMPLES_PER_CUTOFF_CYCLE: usize = 64;
-const SAMPLE_COUNT: usize = FRAME_CYCLES * SAMPLES_PER_CUTOFF_CYCLE;
 const SIGMA_CYCLES: f64 = 1.5;
 const CARRIER_W: f64 = 0.375;
 const CARRIER_PHASE: f64 = 0.37;
-const SCORED_BAND_EDGE: f64 = 0.7;
 
 /// Build the projected periodic input and independent magnitude-plus-delay
 /// reference from the frozen raw Gaussian carrier fixture.
@@ -51,11 +50,9 @@ fn raw_periodized_carrier(normalized_time: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IntegrationConfig, Scalar};
 
     const MAX_F64_ERROR: f64 = 0.02;
     const MAX_F32_ERROR: f64 = 0.04;
-    const CUTOFFS_HZ: [f64; 2] = [1.0, 37.0];
 
     #[test]
     fn periodized_gaussian_frame_closes_without_a_window_seam() {
@@ -81,17 +78,25 @@ mod tests {
 
     #[test]
     fn gaussian_transient_meets_the_complete_streaming_shape_matrix() {
+        let (input_4, reference_4, raw_fraction_4) = spectra(4, ORDER_4_TARGET_DELAY);
+        let (input_8, reference_8, raw_fraction_8) = spectra(8, ORDER_8_TARGET_DELAY);
         let order_4 = check_order::<4>(
+            "Gaussian carrier",
+            &input_4,
+            &reference_4,
+            raw_fraction_4,
             ORDER_4_SIGMA,
             ORDER_4_ETA,
-            ORDER_4_TARGET_DELAY,
             MAX_F64_ERROR,
             MAX_F32_ERROR,
         );
         let order_8 = check_order::<8>(
+            "Gaussian carrier",
+            &input_8,
+            &reference_8,
+            raw_fraction_8,
             ORDER_8_SIGMA,
             ORDER_8_ETA,
-            ORDER_8_TARGET_DELAY,
             MAX_F64_ERROR,
             MAX_F32_ERROR,
         );
@@ -108,93 +113,5 @@ mod tests {
             order_8.f64_ratio * 100.0,
             order_8.f32_ratio * 100.0,
         );
-    }
-
-    #[derive(Clone, Copy, Debug, Default)]
-    struct WorstMetrics {
-        raw_in_band_fraction: f64,
-        f64_error: f64,
-        f64_ratio: f64,
-        f32_error: f64,
-        f32_ratio: f64,
-    }
-
-    fn check_order<const N: usize>(
-        sigma: f64,
-        eta: f64,
-        target_delay: f64,
-        maximum_f64_error: f64,
-        maximum_f32_error: f64,
-    ) -> WorstMetrics {
-        let (input, reference, raw_in_band_fraction) = spectra(N, target_delay);
-        assert!(
-            raw_in_band_fraction >= 0.99,
-            "order {N}: raw two-sided in-band energy fraction was {raw_in_band_fraction}"
-        );
-
-        let mut worst = WorstMetrics {
-            raw_in_band_fraction,
-            ..WorstMetrics::default()
-        };
-        for schedule in Schedule::ALL {
-            let records = TransientRecords::new(&input, &reference, schedule);
-            let (f64_error, f64_ratio) =
-                check_precision::<f64, N>(&records, sigma, eta, maximum_f64_error, schedule);
-            let (f32_error, f32_ratio) =
-                check_precision::<f32, N>(&records, sigma, eta, maximum_f32_error, schedule);
-            worst.f64_error = worst.f64_error.max(f64_error);
-            worst.f64_ratio = worst.f64_ratio.max(f64_ratio);
-            worst.f32_error = worst.f32_error.max(f32_error);
-            worst.f32_ratio = worst.f32_ratio.max(f32_ratio);
-        }
-        worst
-    }
-
-    fn check_precision<T: Scalar, const N: usize>(
-        records: &TransientRecords,
-        sigma: f64,
-        eta: f64,
-        maximum_error: f64,
-        schedule: Schedule,
-    ) -> (f64, f64)
-    where
-        IntegrationConfig<T>: Default,
-    {
-        let metrics = CUTOFFS_HZ.map(|cutoff_hz| {
-            let metrics = records.score::<T, N>(cutoff_hz, sigma, eta);
-            assert!(
-                metrics.source_error > 1.0e-6,
-                "order {N}, {schedule:?}, cutoff {cutoff_hz}: source error was trivial ({})",
-                metrics.source_error
-            );
-            assert!(
-                metrics.equalized_error <= maximum_error,
-                "order {N}, {schedule:?}, cutoff {cutoff_hz}: corrected error {} exceeded {}",
-                metrics.equalized_error,
-                maximum_error,
-            );
-            let ratio = metrics.equalized_error / metrics.source_error;
-            assert!(
-                ratio.is_finite() && ratio <= 0.25,
-                "order {N}, {schedule:?}, cutoff {cutoff_hz}: corrected/source ratio {ratio} exceeded 25%"
-            );
-            metrics
-        });
-
-        assert!(
-            (metrics[0].equalized_error - metrics[1].equalized_error).abs()
-                <= maximum_error * 1.0e-3,
-            "order {N}, {schedule:?}: normalized result changed across physical cutoffs"
-        );
-
-        let worst_error = metrics
-            .iter()
-            .map(|metrics| metrics.equalized_error)
-            .fold(0.0, f64::max);
-        let worst_ratio = metrics
-            .iter()
-            .map(|metrics| metrics.equalized_error / metrics.source_error)
-            .fold(0.0, f64::max);
-        (worst_error, worst_ratio)
     }
 }

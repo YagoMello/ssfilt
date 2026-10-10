@@ -1,5 +1,6 @@
 //! Deterministic streaming waveform gate for the private phase prototype.
 
+mod chirp;
 mod gaussian;
 mod spectral;
 mod transient;
