@@ -11,6 +11,7 @@ pub(super) const MIN_FREQUENCY_RATIO: f64 = 0.01;
 pub(super) const MAX_FREQUENCY_RATIO: f64 = 20.0;
 pub(super) const MAGNITUDE_FLOOR_DB: f64 = -140.0;
 const GROUP_DELAY_HALF_WINDOW: usize = 4;
+const SETTLING_E_FOLDS: f64 = 24.0;
 
 pub(super) struct FrequencyPoint {
     pub(super) ratio: f64,
@@ -152,6 +153,62 @@ pub(super) fn exact_frequency_point<const N: usize>(
     })
 }
 
+/// Returns a conservative warm-up time for a one-hertz-cutoff filter.
+///
+/// The bound gives the slowest pole 24 exponential time constants. The tone
+/// measurement also enforces a 60-input-cycle minimum, which dominates the
+/// repeated-pole multiplicity and ordinary low-order cases.
+pub(super) fn minimum_settling_time_seconds<const N: usize>(
+    response: Response,
+) -> Result<f64, Box<dyn Error>> {
+    let order = N.to_f64().ok_or("order does not fit in f64")?;
+    let slowest_normalized_decay = match response {
+        Response::RepeatedPole => 1.0 / (core::f64::consts::LN_2 / order).exp_m1().sqrt(),
+        Response::Butterworth => {
+            if N == 1 {
+                1.0
+            } else {
+                (core::f64::consts::PI / (2.0 * order)).sin()
+            }
+        }
+        Response::Bessel => {
+            let prototype = bessel_table::prototype(N)
+                .ok_or("Bessel response order exceeds the supported table")?;
+            let section_decay = prototype
+                .damping
+                .iter()
+                .map(|damping| damping / 2.0)
+                .fold(f64::INFINITY, f64::min);
+            if prototype.real_rate > 0.0 {
+                prototype.real_rate.min(section_decay)
+            } else {
+                section_decay
+            }
+        }
+        Response::Chebyshev1 { ripple_db } => {
+            let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
+            let epsilon = epsilon_squared.sqrt();
+            let mu = (1.0 / epsilon).asinh() / order;
+            let cutoff_target = if N % 2 == 0 {
+                (1.0 / epsilon_squared + 2.0).sqrt()
+            } else {
+                1.0 / epsilon
+            };
+            let cutoff_scale = (cutoff_target.acosh() / order).cosh();
+            if N == 1 {
+                mu.sinh() / cutoff_scale
+            } else {
+                mu.sinh() * (core::f64::consts::PI / (2.0 * order)).sin() / cutoff_scale
+            }
+        }
+        _ => return Err("response is not supported by this development plot".into()),
+    };
+    if !slowest_normalized_decay.is_finite() || slowest_normalized_decay <= 0.0 {
+        return Err("response has no finite stable settling rate".into());
+    }
+    Ok(SETTLING_E_FOLDS / (core::f64::consts::TAU * slowest_normalized_decay))
+}
+
 fn accumulate_first_order(rate: f64, frequency: f64, log_magnitude: &mut f64, phase: &mut f64) {
     *log_magnitude += rate.ln() - rate.hypot(frequency).ln();
     *phase -= frequency.atan2(rate);
@@ -199,7 +256,8 @@ mod tests {
     use approx::assert_relative_eq;
 
     use super::{
-        MAGNITUDE_FLOOR_DB, exact_frequency_point, frequency_ratios, visible_magnitude_points,
+        MAGNITUDE_FLOOR_DB, exact_frequency_point, frequency_ratios, minimum_settling_time_seconds,
+        visible_magnitude_points,
     };
     use ssfilt::Response;
 
@@ -251,5 +309,16 @@ mod tests {
         let visible = visible_magnitude_points(&points);
         assert_eq!(visible.last().unwrap().1, MAGNITUDE_FLOOR_DB);
         assert!(visible.len() < points.len());
+    }
+
+    #[test]
+    fn high_order_chebyshev_receives_a_longer_settling_window() {
+        let low_order =
+            minimum_settling_time_seconds::<4>(Response::Chebyshev1 { ripple_db: 0.5 }).unwrap();
+        let high_order =
+            minimum_settling_time_seconds::<50>(Response::Chebyshev1 { ripple_db: 0.5 }).unwrap();
+        assert!(low_order > 0.0);
+        assert!(high_order > 3_000.0);
+        assert!(high_order > 100.0 * low_order);
     }
 }

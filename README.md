@@ -263,11 +263,19 @@ output path and order are optional and default to
 logarithmically spaced points; high orders can therefore take noticeably
 longer to render. Bessel is included through its supported maximum order and
 is omitted from higher-order dashboards. Frequency-domain curves are evaluated
-directly from the normalized continuous transfer functions, avoiding settling
-artifacts in deep high-order stopbands. The unit-step panel still drives the
-public streaming API end to end. Curves are written as shape-preserving cubic
-SVG paths from an oversampled internal canvas, so subpixel detail remains
-smooth when zoomed without introducing spline overshoot.
+directly from the normalized continuous transfer functions. Filled dots and
+open rings overlay gain and phase measured through the public streaming API
+under uniform and deterministic bounded-jitter timestamps. A sibling CSV
+contains the exact plotted measurement records, fit residuals, sampling
+details, topology-aware warm-up duration, and integration work; pass
+`--csv path/to/report.csv` to choose another report path. Markers below the
+visible magnitude floor remain available in CSV. Phase fits below −80 dB are
+marked unresolved and kept out of the phase panel.
+
+The unit-step panel also drives the public streaming API end to end. Curves are
+written as shape-preserving cubic SVG paths from an oversampled internal
+canvas, so subpixel detail remains smooth when zoomed without introducing
+spline overshoot.
 
 The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires

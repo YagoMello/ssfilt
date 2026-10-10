@@ -3,12 +3,14 @@ use std::path::Path;
 
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
+use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 
 use super::analytic::{
     FrequencyPoint, MAGNITUDE_FLOOR_DB, MAX_FREQUENCY_RATIO, MIN_FREQUENCY_RATIO,
     visible_magnitude_points,
 };
+use super::measure::{MeasuredFrequencyPoint, SampleSchedule};
 
 pub(super) const RESPONSE_STROKES: [&str; 4] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1"];
 pub(super) const DISPLAY_WIDTH: u32 = 1_600;
@@ -29,6 +31,7 @@ pub(super) struct ResponseSpec {
 pub(super) struct ResponseData {
     pub(super) spec: ResponseSpec,
     pub(super) frequency: Vec<FrequencyPoint>,
+    pub(super) measurements: Vec<MeasuredFrequencyPoint>,
     pub(super) group_delay: Vec<(f64, f64)>,
     pub(super) step: Vec<(f64, f64)>,
 }
@@ -60,7 +63,10 @@ fn draw_magnitude(
     responses: &[ResponseData],
 ) -> Result<(), Box<dyn Error>> {
     let mut chart = ChartBuilder::on(area)
-        .caption("Magnitude response", ("sans-serif", scaled(22)))
+        .caption(
+            "Magnitude response — lines: analytic; dots: uniform; rings: jittered",
+            ("sans-serif", scaled(18)),
+        )
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(62))
@@ -101,6 +107,7 @@ fn draw_magnitude(
                     response.spec.color.stroke_width(scaled(2)),
                 )
             });
+        draw_magnitude_markers(&mut chart, response)?;
     }
     chart
         .configure_series_labels()
@@ -120,7 +127,10 @@ fn draw_phase<const N: usize>(
 ) -> Result<(), Box<dyn Error>> {
     let phase_floor = -90.0 * N.to_f64().ok_or("order does not fit in f64")?;
     let mut chart = ChartBuilder::on(area)
-        .caption("Unwrapped phase response", ("sans-serif", scaled(22)))
+        .caption(
+            "Phase on analytic branch — lines: analytic; dots: uniform; rings: jittered",
+            ("sans-serif", scaled(18)),
+        )
         .margin(scaled(16))
         .x_label_area_size(scaled(46))
         .y_label_area_size(scaled(68))
@@ -152,7 +162,88 @@ fn draw_phase<const N: usize>(
                 .map(|point| (point.ratio, point.phase_radians.to_degrees())),
             response.spec.color.stroke_width(scaled(2)),
         ))?;
+        draw_phase_markers(&mut chart, response)?;
     }
+    Ok(())
+}
+
+fn draw_magnitude_markers(
+    chart: &mut ChartContext<'_, SVGBackend<'_>, Cartesian2d<LogCoord<f64>, RangedCoordf64>>,
+    response: &ResponseData,
+) -> Result<(), Box<dyn Error>> {
+    chart.draw_series(
+        response
+            .measurements
+            .iter()
+            .filter(|point| point.streamed.schedule == SampleSchedule::Uniform)
+            .filter_map(|point| {
+                let gain_db = point.measured_gain_db();
+                (gain_db >= MAGNITUDE_FLOOR_DB).then_some(Circle::new(
+                    (point.streamed.frequency_ratio, gain_db),
+                    scaled(2),
+                    response.spec.color.filled(),
+                ))
+            }),
+    )?;
+    chart.draw_series(
+        response
+            .measurements
+            .iter()
+            .filter(|point| point.streamed.schedule == SampleSchedule::BoundedJitter)
+            .filter_map(|point| {
+                let gain_db = point.measured_gain_db();
+                (gain_db >= MAGNITUDE_FLOOR_DB).then_some(Circle::new(
+                    (point.streamed.frequency_ratio, gain_db),
+                    scaled(4),
+                    response.spec.color.stroke_width(scaled(1)),
+                ))
+            }),
+    )?;
+    Ok(())
+}
+
+fn draw_phase_markers(
+    chart: &mut ChartContext<'_, SVGBackend<'_>, Cartesian2d<LogCoord<f64>, RangedCoordf64>>,
+    response: &ResponseData,
+) -> Result<(), Box<dyn Error>> {
+    chart.draw_series(
+        response
+            .measurements
+            .iter()
+            .filter(|point| {
+                point.streamed.schedule == SampleSchedule::Uniform
+                    && point.streamed.phase_is_resolved()
+            })
+            .map(|point| {
+                Circle::new(
+                    (
+                        point.streamed.frequency_ratio,
+                        point.unwrapped_phase_radians.to_degrees(),
+                    ),
+                    scaled(2),
+                    response.spec.color.filled(),
+                )
+            }),
+    )?;
+    chart.draw_series(
+        response
+            .measurements
+            .iter()
+            .filter(|point| {
+                point.streamed.schedule == SampleSchedule::BoundedJitter
+                    && point.streamed.phase_is_resolved()
+            })
+            .map(|point| {
+                Circle::new(
+                    (
+                        point.streamed.frequency_ratio,
+                        point.unwrapped_phase_radians.to_degrees(),
+                    ),
+                    scaled(4),
+                    response.spec.color.stroke_width(scaled(1)),
+                )
+            }),
+    )?;
     Ok(())
 }
 

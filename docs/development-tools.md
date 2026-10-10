@@ -97,6 +97,23 @@ measurement. The analytic-comparison tolerance additionally includes the
 documented reconstruction and integration budgets rather than silently
 treating sampled chords as an exact sine.
 
+Before fitting, the current low-pass response plot warms a fresh filter for at
+least 60 input cycles and for 24 time constants of its slowest pole, whichever
+is longer. The pole-derived floor matters for high-order Chebyshev filters:
+their lightly damped edge sections can retain startup energy for thousands of
+cutoff periods even though a low-order response appears settled. The CSV
+records both elapsed warm-up seconds and input cycles. This duration is chosen
+from the pole locations, not by waiting until a measurement agrees with the
+analytic gain or phase.
+
+The pole duration is a conservative floor rather than a residual proof. After
+it, the tool fits consecutive eight-cycle windows and accepts a measurement
+only after two successive gain/phase comparisons agree within `1e-4`; eight
+windows is the hard work limit. Failure is reported explicitly. Below −80 dB,
+phase is considered unresolved under the default `f64` integration floor: it
+is retained with its fit residual in CSV but omitted from the phase plot, and
+gain convergence uses a `1e-8` full-scale absolute floor.
+
 Run both uniform timestamps and deterministic bounded jitter. Labels and CSV
 call these **piecewise-linear sampled-sine measurements** and state input model,
 samples per cycle, maximum interval, jitter pattern, warm-up, precision, and
@@ -104,6 +121,12 @@ fit residual. Under jitter the sine/cosine least-squares result is a fundamental
 projection at the actual timestamps, not a periodic-sample shortcut. These
 points demonstrate the implementation's achievable result; they do not replace
 the ideal continuous-time oracle.
+
+The fitted phase is intrinsically wrapped. The CSV preserves that wrapped
+value; for the phase panel and analytic error column, the tool selects the
+equivalent `2π` branch nearest the independent analytic phase. This branch
+selection makes the comparison readable but does not alter the least-squares
+fit or participate in settling detection.
 
 Group-delay markers may be derived from symmetric nearby measured phase points,
 but analytic group delay remains the primary reference because differentiating
@@ -117,6 +140,29 @@ Frequency selection includes:
 - the exact -3 dB cutoff or both band-pass edges;
 - calculated Chebyshev ripple extrema and ripple edge;
 - any equalizer pole frequency near the displayed range.
+
+The incremental response tool currently covers low-pass `f64` measurements at
+`0.05`, `0.1`, `0.25`, `0.5`, `0.7`, `0.8`, `0.9`, `0.95`, `1.0`, `1.05`, and
+`1.1` times cutoff. Filled dots denote uniform timestamps and open rings denote
+deterministic bounded jitter. Its positional interface remains compatible with
+the original development example while accepting an explicit CSV path:
+
+```text
+cargo run --release --example plot_responses -- 8 target/order-8.svg \
+  --csv target/order-8.csv
+```
+
+If `--csv` is omitted, the report is written beside the SVG with a `.csv`
+extension. The analytic curves and both marker schedules use the same stored
+measurement records as that report. Markers below the magnitude plot's visible
+floor are retained in CSV but omitted from the chart; unresolved phase markers
+below −80 dB are likewise CSV-only.
+
+The nominal 256 samples per cycle is a minimum density derived from the maximum
+allowed interval, not the jitter schedule's mean density. The deterministic
+jitter multipliers are `0.625|0.875|1.0|0.75|0.9375|0.6875`, whose mean is
+`0.8125`; the report exports both the exact pattern and its mean alongside the
+`f64` precision and linear input model.
 
 ## Views
 
