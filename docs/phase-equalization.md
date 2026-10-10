@@ -5,8 +5,9 @@
 Initial independent proposal, recorded before inspecting the discarded
 equalizer implementation, followed by an analytic feasibility implementation.
 The bounded one-section search now passes the mandatory Butterworth order 4
-and 8 core-band gates and rejects cutoff-wide claims for both orders. Streaming
-waveform and coupled-integrator gates remain unmet, so there is still no public
+and 8 core-band gates and rejects cutoff-wide claims for both orders. The
+coupled-integrator realization and first multi-tone streaming tier pass, but
+the full waveform gate remains unmet, so there is still no public
 phase-equalizer feature.
 
 The analytic tool also emits one inspectable SVG per case. These plots use the
@@ -24,6 +25,22 @@ magnitude/phase checks for both `f32` and `f64`; stage coupling, step bounds,
 linear-ramp partition, physical scaling, and transactional failure currently
 have structural `f64` coverage. This is realization evidence, not the required
 waveform matrix, and does not authorize a public phase API.
+
+The first waveform tier now passes a frozen unequal-amplitude, unequal-phase
+five-tone signal. The test uses an independent closed-form Butterworth
+magnitude plus the predeclared constant-delay target; it does not fit delay or
+phase from streamed output. All 24 order/scalar/schedule/cutoff cells pass.
+The current observed worst results are shown below; automated tests enforce the
+predeclared gates rather than snapshotting these exact informational values.
+
+| Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
+| --- | ---: | ---: | ---: |
+| 4 | 0.0863% | 0.0863% | 0.109% |
+| 8 | 0.438% | 0.438% | 0.494% |
+
+The cells cover uniform, deterministic-jitter, and bounded-gap schedules at
+1 Hz and 37 Hz cutoff. Gaussian pulse and tapered-chirp tiers remain mandatory
+before a public API.
 
 ## Decision summary
 

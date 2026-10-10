@@ -437,3 +437,6 @@ mod tests {
         assert!(model.output(&result.state, 1.0).is_finite());
     }
 }
+
+#[cfg(test)]
+mod waveform;
