@@ -39,8 +39,25 @@ predeclared gates rather than snapshotting these exact informational values.
 | 8 | 0.438% | 0.438% | 0.494% |
 
 The cells cover uniform, deterministic-jitter, and bounded-gap schedules at
-1 Hz and 37 Hz cutoff. Gaussian pulse and tapered-chirp tiers remain mandatory
-before a public API.
+1 Hz and 37 Hz cutoff.
+
+The Gaussian-modulated-carrier tier now also passes all 24 cells. It uses a
+20-cutoff-cycle periodized fixture, verifies the raw spectrum before projecting
+it to the scored band, warms for one complete frame, and scores the complete
+second frame against the independent magnitude-plus-delay oracle. The frame
+provides 24.5 decay constants for the slowest order-8 Butterworth pole. These
+observed worst results are informational; the tests enforce the same
+predeclared absolute and relative gates as the multi-tone tier.
+
+| Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
+| --- | ---: | ---: | ---: |
+| 4 | 0.0799% | 0.0799% | 0.0593% |
+| 8 | 0.330% | 0.330% | 0.218% |
+
+The raw Gaussian fixture has 99.999897% of its two-sided discrete-spectrum
+energy inside the scored band. The remaining 0.000103% is reported and
+excluded by driving both the streamers and reference from the same in-band
+projection. The tapered-chirp tier remains mandatory before a public API.
 
 ## Decision summary
 
@@ -394,7 +411,9 @@ optimizer tolerances, and fitting weights remain private.
 3. Refactor the private solver to support fixed composite state, with no public
    behavior change. ✓
 4. Implement the coupled all-pass model and analytic/model tests privately. ✓
-5. Add public streaming waveform tests, then the smallest self-contained API.
+5. Complete the private streaming waveform matrix, then add the smallest
+   self-contained public API. Multi-tone and Gaussian tiers pass; tapered
+   chirp remains pending.
 6. Run an independent numerical and API review before declaring the feature.
 7. Treat offline forward-backward filtering as a later, separate batch
    milestone; it does not share the streaming equalizer's contract.

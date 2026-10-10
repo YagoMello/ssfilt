@@ -82,6 +82,27 @@ impl Spectrum {
         }
     }
 
+    /// Evaluate the real periodic signal represented by this full spectrum.
+    ///
+    /// `normalized_time` is measured in cutoff cycles. Exact zero bins are
+    /// skipped, which makes this inexpensive for spectra projected to a band.
+    pub(super) fn evaluate_real_periodic(&self, normalized_time: f64) -> f64 {
+        assert!(normalized_time.is_finite());
+
+        let mut sum = 0.0;
+        for (index, bin) in self.bins.iter().enumerate() {
+            if bin.re == 0.0 && bin.im == 0.0 {
+                continue;
+            }
+
+            let phase =
+                core::f64::consts::TAU * self.signed_normalized_frequency(index) * normalized_time;
+            sum += bin.re.mul_add(phase.cos(), -bin.im * phase.sin());
+        }
+
+        sum / self.bins.len() as f64
+    }
+
     /// Apply the independent Butterworth-magnitude, constant-delay oracle.
     pub(super) fn butterworth_constant_delay(&self, order: usize, delay: f64) -> Self {
         assert!(order > 0, "Butterworth order must be positive");
@@ -219,6 +240,35 @@ mod tests {
         assert_eq!(spectrum.bins()[20], Complex::new(0.0, 0.0));
         assert_eq!(spectrum.bins()[length - 20], Complex::new(0.0, 0.0));
         assert_samples_close(&spectrum.inverse_real(), &expected, 2.0e-14);
+    }
+
+    #[test]
+    fn periodic_evaluation_matches_fft_samples_and_repeats() {
+        const SAMPLE_COUNT: usize = 96;
+        let cutoff_cycles = 7.5;
+        let samples: Vec<_> = (0..SAMPLE_COUNT)
+            .map(|index| {
+                let time = index as f64 * cutoff_cycles / SAMPLE_COUNT as f64;
+                (TAU * 0.31 * time + 0.2).cos() + 0.4 * (TAU * 0.8 * time - 0.7).sin()
+            })
+            .collect();
+        let spectrum = Spectrum::forward_real(&samples, cutoff_cycles);
+        let restored = spectrum.inverse_real();
+
+        for (index, expected) in restored.iter().copied().enumerate() {
+            let time = index as f64 * cutoff_cycles / samples.len() as f64;
+            let actual = spectrum.evaluate_real_periodic(time);
+            assert!(
+                (actual - expected).abs() < 2.0e-13,
+                "sample {index}: got {actual}, expected {expected}"
+            );
+        }
+
+        for time in [-1.375, 0.0, 0.125, 3.75, 7.499, 19.25] {
+            let actual = spectrum.evaluate_real_periodic(time);
+            let repeated = spectrum.evaluate_real_periodic(time + cutoff_cycles);
+            assert!((actual - repeated).abs() < 2.0e-12);
+        }
     }
 
     #[test]

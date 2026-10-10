@@ -1,6 +1,8 @@
 //! Deterministic streaming waveform gate for the private phase prototype.
 
+mod gaussian;
 mod spectral;
+mod transient;
 
 use rstest::rstest;
 
