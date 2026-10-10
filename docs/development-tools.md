@@ -164,6 +164,28 @@ jitter multipliers are `0.625|0.875|1.0|0.75|0.9375|0.6875`, whose mean is
 `0.8125`; the report exports both the exact pattern and its mean alongside the
 `f64` precision and linear input model.
 
+## Current phase-design tool
+
+The first analytic feasibility increment is available separately from the
+response dashboard:
+
+```text
+cargo run --release --example phase_design -- \
+  --output-dir target/phase-design
+```
+
+It evaluates the mandatory Butterworth order 4 and 8 cases over both the core
+and cutoff bands. `summary.csv` contains coefficients, metrics, search and grid
+metadata, and every gate; `sweep.csv` contains the exact stored holdout points;
+`summary.md` is a readable view of the same case records. Named `--order` and
+`--band` options narrow the default four-case matrix.
+
+The current deterministic search passes both core-band cases and explicitly
+reports no useful cutoff-wide design. These analytic results authorize the
+next coupled-streaming experiment only. They do not satisfy the waveform,
+jitter, bounded-gap, physical-scaling, or runtime-cost gates and therefore do
+not expose a library API.
+
 ## Views
 
 ### Response dashboard

@@ -277,6 +277,20 @@ written as shape-preserving cubic SVG paths from an oversampled internal
 canvas, so subpixel detail remains smooth when zoomed without introducing
 spline overshoot.
 
+The development-only phase study searches the bounded one-section all-pass
+candidate and writes reproducible summary and holdout-sweep reports:
+
+```text
+cargo run --release --example phase_design -- \
+  --output-dir target/phase-design
+```
+
+By default it evaluates Butterworth orders 4 and 8 over both the core
+`0..0.7 * cutoff` band and the full `0..cutoff` band. The current analytic
+screen passes both core cases and rejects both cutoff-wide claims. This is a
+go-ahead for coupled streaming and waveform validation, not a public feature
+claim. Use `--order 4|8` and `--band core|cutoff` to narrow a run.
+
 The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires
 SciPy, while the crate itself does not.

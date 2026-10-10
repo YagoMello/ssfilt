@@ -3,8 +3,11 @@
 ## Status
 
 Initial independent proposal, recorded before inspecting the discarded
-equalizer implementation. The proposed topology and thresholds below are
-design gates, not claims that the feature already meets them.
+equalizer implementation, followed by an analytic feasibility implementation.
+The bounded one-section search now passes the mandatory Butterworth order 4
+and 8 core-band gates and rejects cutoff-wide claims for both orders. Streaming
+waveform and coupled-integrator gates remain unmet, so there is still no public
+phase-equalizer feature.
 
 ## Decision summary
 
@@ -75,9 +78,11 @@ guaranteed by construction when `sigma > 0`.
 
 All-pass delay is nonnegative, and cascaded delays add. If the desired total
 delay is `D`, the equalizer must approximate `D - tau_source(w)`; consequently
-`D` cannot be smaller than the source's greatest delay in the useful band.
-The added delay must be reported as a cost, not hidden inside a relative
-percentage.
+an exact zero-residual target cannot use a `D` smaller than the source's
+greatest delay in the useful band. With the allowed minimax residual
+`R_peak`, the selected midpoint target is bounded below by the source's
+greatest delay minus `R_peak`. The added delay must be reported as a cost, not
+hidden inside a relative percentage.
 
 The initial experiment is limited to one section. A second section may be
 investigated later, but only after the first section's failures are classified
@@ -159,10 +164,19 @@ R_peak = max(abs(t(W) - D))
 ```
 
 Also report uniform-frequency RMS delay residual about its best constant,
-maximum residual phase after removing the best linear phase, mean and maximum
-equalizer delay, and the corresponding physical delay in seconds. These are
-absolute normalized quantities; dividing residual error by the newly enlarged
-total delay is forbidden as a success metric.
+mean and maximum equalizer delay, and the corresponding physical delay in
+seconds. RMS delay uses the uniform-frequency mean as its independently best
+constant. Phase uses the same `D` as the primary minimax delay score, is
+anchored at zero phase at DC, and reports:
+
+```text
+phase_residual(W) = phase_source(W) + phase_equalizer(W) + D*W
+```
+
+The waveform oracle uses this same `D`; it does not fit a separate phase slope
+or constant phase rotation. These are absolute normalized quantities;
+dividing residual error by the newly enlarged total delay is forbidden as a
+success metric.
 
 The analytic holdout tier must meet all of these gates:
 
@@ -174,6 +188,18 @@ mean added normalized delay <= 5.0
 maximum relative magnitude change <= 1e-12 for f64
 maximum relative magnitude change <= 1e-5  for f32
 ```
+
+The initial deterministic search uses 4,096 uniformly spaced cell midpoints
+as its fit grid. The holdout uses 8,193 uniform intervals (8,194 points), so
+the two rational grids are disjoint while exceeding the required validation
+density. It searches a 65-by-65 bounded grid in section `Q` and
+logarithmic `sigma`, resolves the best coarse cell on a 33-by-33 local grid,
+then refines eight finalists for 18 fixed levels. Candidate refinement permits
+at most 16 improving moves per level. Candidate selection never reads the
+holdout scores. The holdout has 8,194 uniform points including both endpoints
+plus in-band section-neighborhood frequencies; selected cases are
+cross-checked on 16,387 uniform points. Search constants and the resulting
+evaluation count are exported with the report.
 
 The core band remains the minimum release gate for Butterworth orders 4 and 8.
 A whole-passband claim additionally requires the cutoff study to pass. Results
@@ -201,8 +227,11 @@ API communicates that edge remains a later decision.
 Analytic group delay comes from pole contributions or the complex logarithmic
 derivative, not finite differences of wrapped phase. Validate on a dense
 holdout grid of at least 8,193 points and cross-check selected cases at twice
-that density. Round accepted coefficients to both `f32` and `f64`, then repeat
-stability and response checks.
+that density. Round accepted coefficients to `f32`, then repeat the stability,
+delay, phase, and latency checks. Evaluate the rounded coefficients with the
+same `f64` analytic oracle so this check isolates coefficient quantization; an
+eventual streaming implementation must separately validate its actual `f32`
+state realization.
 
 Use three time-domain signals whose energy lies predominantly in the band being
 evaluated:

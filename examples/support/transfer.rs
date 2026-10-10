@@ -118,6 +118,7 @@ pub(crate) fn low_pass(
     Ok(point)
 }
 
+#[allow(dead_code)] // Shared consumers do not all need settling-time data.
 pub(crate) fn slowest_normalized_decay(
     response: Response,
     order: usize,
