@@ -80,7 +80,7 @@ pub(crate) fn low_pass(
             let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
             let epsilon = epsilon_squared.sqrt();
             let mu = (1.0 / epsilon).asinh() / order_float;
-            let cutoff_target = if order % 2 == 0 {
+            let cutoff_target = if order.is_multiple_of(2) {
                 (1.0 / epsilon_squared + 2.0).sqrt()
             } else {
                 1.0 / epsilon
@@ -162,7 +162,7 @@ pub(crate) fn slowest_normalized_decay(
             let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
             let epsilon = epsilon_squared.sqrt();
             let mu = (1.0 / epsilon).asinh() / order_float;
-            let cutoff_target = if order % 2 == 0 {
+            let cutoff_target = if order.is_multiple_of(2) {
                 (1.0 / epsilon_squared + 2.0).sqrt()
             } else {
                 1.0 / epsilon

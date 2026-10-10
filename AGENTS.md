@@ -140,8 +140,11 @@ cargo test --all-features
 cargo check --no-default-features --features libm
 cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --all-features --no-deps
-cargo +1.85.0 check --all-targets --all-features
 ```
+
+The pre-1.0 crate follows stable Rust and intentionally has no declared MSRV.
+Do not add a fixed-version gate or `rust-version` field without an explicit
+compatibility decision; establishing the 1.0 MSRV is a public-policy change.
 
 Development plots and benchmarks are evidence for numerical and performance
 claims. They do not replace analytic, reference, property, or public API tests.

@@ -237,9 +237,12 @@ cargo test --all-features
 cargo check --no-default-features --features libm
 cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --all-features --no-deps
-cargo +1.85.0 check --all-targets --all-features
 cargo bench --bench streaming
 ```
+
+During pre-1.0 development the crate follows stable Rust and does not declare
+an MSRV. A supported minimum version will be selected and tested before the
+1.0 compatibility promise is made.
 
 The suite uses named, table-driven cases for boundary and response matrices,
 and shrinking property tests for numerical invariants such as partition and

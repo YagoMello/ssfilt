@@ -106,7 +106,7 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
         let mu = (T::one() / epsilon).asinh() / order_scalar;
         let sinh_mu = mu.sinh();
         let cosh_mu = mu.cosh();
-        let chebyshev_at_cutoff = if order % 2 == 0 {
+        let chebyshev_at_cutoff = if order.is_multiple_of(2) {
             (T::one() / epsilon_squared + from_f64(2.0)).sqrt()
         } else {
             T::one() / epsilon

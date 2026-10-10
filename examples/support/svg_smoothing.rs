@@ -66,12 +66,12 @@ fn parse_svg_points(values: &str) -> Option<Vec<(i32, i32)>> {
 fn collapse_vertical_pixels(points: Vec<(i32, i32)>) -> Vec<(f64, f64)> {
     let mut collapsed: Vec<(i32, f64, u32)> = Vec::with_capacity(points.len());
     for (x, y) in points {
-        if let Some((last_x, y_sum, count)) = collapsed.last_mut() {
-            if *last_x == x {
-                *y_sum += f64::from(y);
-                *count += 1;
-                continue;
-            }
+        if let Some((last_x, y_sum, count)) = collapsed.last_mut()
+            && *last_x == x
+        {
+            *y_sum += f64::from(y);
+            *count += 1;
+            continue;
         }
         collapsed.push((x, f64::from(y), 1));
     }
