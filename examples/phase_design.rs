@@ -3,10 +3,14 @@
 //! Usage: `cargo run --release --example phase_design -- [--output-dir PATH]
 //! [--order 4|8] [--band core|cutoff]`
 
+#[path = "phase_design/render.rs"]
+mod render;
 #[path = "phase_design/report.rs"]
 mod report;
 #[path = "phase_design/search.rs"]
 mod search;
+#[path = "support/svg_smoothing.rs"]
+mod svg_smoothing;
 #[path = "support/transfer.rs"]
 mod transfer;
 
@@ -42,6 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     report::write_reports(&arguments.output_dir, &results)?;
+    let dashboards = render::write_dashboards(&arguments.output_dir, &results)?;
     println!(
         "wrote {}",
         arguments.output_dir.join("summary.csv").display()
@@ -51,6 +56,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "wrote {}",
         arguments.output_dir.join("summary.md").display()
     );
+    for dashboard in dashboards {
+        println!("wrote {}", dashboard.display());
+    }
     Ok(())
 }
 
@@ -146,7 +154,7 @@ fn print_case_result(result: &CaseResult) {
     let case = result.case;
     if result.gates.passes() {
         println!(
-            "{} order {} {}: PASS (peak delay residual {})",
+            "{} order {} {}: ANALYTIC GATES PASS, NOT STREAMING (peak delay residual {})",
             case.response_label,
             case.order,
             case.band.label(),
@@ -155,7 +163,7 @@ fn print_case_result(result: &CaseResult) {
     } else {
         let failed = report::failed_gate_names(result.gates).join(", ");
         println!(
-            "{} order {} {}: no useful design (failed: {failed})",
+            "{} order {} {}: ANALYTIC GATES REJECT, NOT STREAMING (failed: {failed})",
             case.response_label,
             case.order,
             case.band.label(),
@@ -171,7 +179,9 @@ fn usage() -> &'static str {
     "usage: phase_design [--output-dir PATH] [--order 4|8] [--band core|cutoff] [-h|--help]\n\
      response: Butterworth low-pass\n\
      defaults: order 4 and 8; bands core and cutoff; output target/phase-design\n\
-     writes summary.csv, sweep.csv, and summary.md\n"
+     bands: core = 0..0.7 * cutoff; cutoff = 0..1.0 * cutoff\n\
+     evidence: analytic feasibility only; no streaming equalizer is implemented\n\
+     writes summary.csv, sweep.csv, summary.md, and one SVG dashboard per case\n"
 }
 
 #[cfg(test)]
@@ -232,7 +242,9 @@ mod tests {
     fn help_aliases_are_recognized() {
         assert!(args(&["-h"]).unwrap().help);
         assert!(args(&["--help"]).unwrap().help);
-        assert!(usage().contains("summary.csv, sweep.csv, and summary.md"));
+        assert!(usage().contains("core = 0..0.7 * cutoff"));
+        assert!(usage().contains("analytic feasibility only"));
+        assert!(usage().contains("one SVG dashboard per case"));
     }
 
     #[test]

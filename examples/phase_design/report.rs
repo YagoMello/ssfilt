@@ -258,7 +258,7 @@ fn sweep_csv(results: &[CaseResult]) -> String {
 fn summary_markdown(results: &[CaseResult]) -> String {
     let mut output = String::new();
     output.push_str(
-        "# Phase design search report\n\nThis report uses the stored search results. `sweep.csv` contains every holdout point from each result, including its actual frequency, delay, and phase values. Delays and frequencies are normalized by the source low-pass cutoff.\n\n",
+        "# Phase design search report\n\nThis is an analytic feasibility report, not evidence from a streaming equalizer implementation. It uses the stored search results. `sweep.csv` contains every holdout point from each result, including its actual frequency, delay, and phase values. Delays and frequencies are normalized by the source low-pass cutoff.\n\n",
     );
     output.push_str("## Gate definitions\n\n| Gate | Criterion |\n| --- | --- |\n");
     for (name, criterion) in GATE_DEFINITIONS {
@@ -266,7 +266,7 @@ fn summary_markdown(results: &[CaseResult]) -> String {
     }
 
     output.push_str(
-        "\n## Results\n\n| Order | Band | Status | Source peak | Corrected peak | Corrected RMS | Corrected max phase (rad) | Mean added delay | Maximum added delay |\n| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+        "\n## Results\n\n| Order | Band | Analytic status | Source peak | Corrected peak | Corrected RMS | Corrected max phase (rad) | Mean added delay | Maximum added delay |\n| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
     for result in results {
         let _ = writeln!(
@@ -275,9 +275,9 @@ fn summary_markdown(results: &[CaseResult]) -> String {
             result.case.order,
             result.case.band.label(),
             if result.gates.passes() {
-                "PASS"
+                "GATES PASS — NOT STREAMING"
             } else {
-                "NO USEFUL DESIGN"
+                "GATES REJECT — NOT STREAMING"
             },
             float(result.source_metrics.peak_residual),
             float(result.corrected_metrics.peak_residual),

@@ -13,7 +13,7 @@ mod render;
 mod report;
 #[path = "plot_responses/simulation.rs"]
 mod simulation;
-#[path = "plot_responses/svg_smoothing.rs"]
+#[path = "support/svg_smoothing.rs"]
 mod svg_smoothing;
 
 use std::env;
@@ -191,7 +191,7 @@ fn plot<const N: usize>(output_path: &Path, csv_path: &Path) -> Result<(), Box<d
     }
 
     render::draw::<N>(output_path, &responses)?;
-    svg_smoothing::smooth_svg_response_curves(output_path)?;
+    svg_smoothing::smooth_svg_curves(output_path)?;
     report::write_csv(csv_path, &responses)?;
     Ok(())
 }

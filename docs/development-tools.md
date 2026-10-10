@@ -177,8 +177,13 @@ cargo run --release --example phase_design -- \
 It evaluates the mandatory Butterworth order 4 and 8 cases over both the core
 and cutoff bands. `summary.csv` contains coefficients, metrics, search and grid
 metadata, and every gate; `sweep.csv` contains the exact stored holdout points;
-`summary.md` is a readable view of the same case records. Named `--order` and
-`--band` options narrow the default four-case matrix.
+`summary.md` is a readable view of the same case records. One SVG per case
+plots source and source-plus-candidate group delay, absolute delay residual and
+its gate, phase residual and its gate, and the candidate equalizer's added
+delay. Open rings are a sparse view of the exact analytic holdout records
+behind each curve; they must not be confused with public-API streaming
+measurements. Every SVG repeats that limitation in its title. Named `--order`
+and `--band` options narrow the default four-case matrix.
 
 The current deterministic search passes both core-band cases and explicitly
 reports no useful cutoff-wide design. These analytic results authorize the
@@ -196,7 +201,11 @@ not expose a library API.
   unexplained smooth curve;
 - explicit topology, response, order, precision, and timestamp schedule.
 
-### Phase-equalization dashboard
+### Planned streaming phase-equalization dashboard
+
+This broader view follows the current analytic per-case dashboards. It is not
+implemented until a coupled streaming candidate supplies the waveform and
+runtime records below.
 
 - source delay, equalized delay, and best constant-delay target;
 - absolute delay residual with the acceptance threshold drawn;

@@ -9,6 +9,10 @@ and 8 core-band gates and rejects cutoff-wide claims for both orders. Streaming
 waveform and coupled-integrator gates remain unmet, so there is still no public
 phase-equalizer feature.
 
+The analytic tool also emits one inspectable SVG per case. These plots use the
+stored holdout records and display their actual points as rings; they do not
+claim that a streaming realization has reproduced the analytic curves.
+
 ## Decision summary
 
 The first streaming candidate is deliberately narrow:

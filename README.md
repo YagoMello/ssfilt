@@ -289,7 +289,11 @@ By default it evaluates Butterworth orders 4 and 8 over both the core
 `0..0.7 * cutoff` band and the full `0..cutoff` band. The current analytic
 screen passes both core cases and rejects both cutoff-wide claims. This is a
 go-ahead for coupled streaming and waveform validation, not a public feature
-claim. Use `--order 4|8` and `--band core|cutoff` to narrow a run.
+claim. Each selected case also writes an SVG dashboard showing source and
+source-plus-candidate delay, absolute delay residual, residual phase, and the
+added causal delay cost. Its rings are stored analytic holdout points—not
+streamed samples—and every SVG repeats that limitation in its title.
+Use `--order 4|8` and `--band core|cutoff` to narrow a run.
 
 The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires
