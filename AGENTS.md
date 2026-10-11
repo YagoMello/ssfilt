@@ -31,13 +31,37 @@ package boundaries, final integration review, and Git history.
 
 Preferred delegation:
 
-- GPT-6 Luna Max: test matrices, reference cases, documentation, repetitive
-  implementation, plotting support, and test-failure triage.
-- GPT-5.6 Terra Med/High: well-specified functions and focused module work.
-- GPT-5.6 Terra High: independent reviews of medium-complexity changes.
-- Primary frontier model: filter architecture, numerical analysis, ambiguous
-  or cross-cutting work, difficult stability bugs, API decisions, and final
+- GPT-6 Luna Max: bounded, locally specified work such as test matrices,
+  reference cases, documentation consistency, repetitive implementation,
+  plotting support, and test-failure triage. Do not give Luna architectural
+  ownership or decisions whose long-term effects span public contracts or
+  several modules.
+- GPT-5.6 Terra Med/High: well-specified functions and focused module
+  implementation. Terra High is also appropriate for independent reviews of
+  medium-complexity changes.
+- GPT-5.6 Sol Light: bounded research, option surveys, and localized planning
+  whose surrounding contracts are already clear.
+- GPT-5.6 Sol Medium: wide-ranging architecture, public API alternatives,
+  cross-cutting design, roadmap decomposition, and reviews that must account
+  for long-term interactions between subsystems.
+- GPT-5.6 Sol High: difficult numerical design, stability analysis, ambiguous
+  cross-cutting problems, and independent review of high-risk changes. Use it
+  selectively because of its higher resource cost.
+- Primary frontier model: final architectural and API decisions, numerical
+  synthesis, work-package boundaries, difficult integration bugs, and final
   review.
+
+GPT-6 Astra is intentionally outside the normal delegation ladder because one
+task can consume a substantial share of the available usage budget. Consider
+it only for a tightly bounded frontier-level impasse, with explicit approval
+from the primary agent after less expensive models have proved insufficient.
+Do not use it for routine implementation, planning, or review.
+
+Choose the least expensive model that can reliably own the assigned scope.
+Exploration from a smaller model is evidence for the primary agent, not an
+architectural decision by itself. Cross-cutting conclusions must be synthesized
+by the primary agent or independently checked by an appropriately capable Sol
+reviewer.
 
 These are defaults. Every delegated task must state its owned files, relevant
 contracts, expected verification, and completion criteria.
