@@ -1,4 +1,6 @@
-use crate::model::LowPassModel;
+use crate::model::{
+    CoupledState, EqualizedButterworth, LowPassModel, PhaseEqualizerDesign, VALIDATED_BAND_RATIO,
+};
 use crate::streaming::StreamingCore;
 use crate::{
     BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
@@ -57,13 +59,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
         self
     }
 
-    /// Validates the configuration and constructs the filter.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError`] if the order is zero or any numeric
-    /// configuration value is invalid.
-    pub fn build(self) -> Result<LowPass<N, T>, BuildError> {
+    fn validated_angular_cutoff(&self) -> Result<T, BuildError> {
         if N == 0 {
             return Err(BuildError::ZeroOrder);
         }
@@ -81,6 +77,17 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
         if !angular_cutoff.is_finite() {
             return Err(BuildError::InvalidCutoff);
         }
+        Ok(angular_cutoff)
+    }
+
+    /// Validates the configuration and constructs the filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError`] if the order is zero or any numeric
+    /// configuration value is invalid.
+    pub fn build(self) -> Result<LowPass<N, T>, BuildError> {
+        let angular_cutoff = self.validated_angular_cutoff()?;
 
         let model = LowPassModel::new(self.response)?;
         let runtime = StreamingCore::new(
@@ -94,6 +101,58 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             runtime,
             cutoff_hz: self.cutoff_hz,
             response: self.response,
+        })
+    }
+
+    /// Constructs a Butterworth low-pass with delayed passband phase
+    /// equalization.
+    ///
+    /// This causal filter preserves the Butterworth magnitude response while
+    /// making its delay flatter from DC through 70% of the cutoff frequency.
+    /// It adds latency; it is not a zero-phase filter. Only Butterworth orders
+    /// 4 and 8 have completed the validation matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::UnsupportedPhaseEqualization`] unless
+    /// [`Response::Butterworth`] is explicitly selected and `N` is 4 or 8.
+    /// Common checks for order, cutoff, initial input, and integration
+    /// configuration take precedence. Settings specific to unsupported
+    /// response families are not otherwise validated by this constructor.
+    pub fn build_phase_equalized(self) -> Result<PhaseEqualizedLowPass<N, T>, BuildError> {
+        let angular_cutoff = self.validated_angular_cutoff()?;
+        if !matches!(self.response, Response::Butterworth) {
+            return Err(BuildError::UnsupportedPhaseEqualization);
+        }
+        let design: PhaseEqualizerDesign<T, N> =
+            PhaseEqualizerDesign::validated().ok_or(BuildError::UnsupportedPhaseEqualization)?;
+        let validated_band_edge_hz =
+            crate::scalar::from_f64::<T>(VALIDATED_BAND_RATIO) * self.cutoff_hz;
+        let target_constant_delay_seconds = design.target_normalized_delay / angular_cutoff;
+        let mean_added_delay_seconds = design.mean_added_normalized_delay / angular_cutoff;
+        if !validated_band_edge_hz.is_finite()
+            || validated_band_edge_hz <= T::zero()
+            || !target_constant_delay_seconds.is_finite()
+            || target_constant_delay_seconds <= T::zero()
+            || !mean_added_delay_seconds.is_finite()
+            || mean_added_delay_seconds <= T::zero()
+        {
+            return Err(BuildError::InvalidCutoff);
+        }
+
+        let runtime = StreamingCore::new(
+            design.model,
+            self.initial_input,
+            angular_cutoff,
+            self.input_model,
+            self.integration,
+        )?;
+        Ok(PhaseEqualizedLowPass {
+            runtime,
+            cutoff_hz: self.cutoff_hz,
+            validated_band_edge_hz,
+            target_constant_delay_seconds,
+            mean_added_delay_seconds,
         })
     }
 }
@@ -175,6 +234,116 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
 }
 
 impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
+    type Scalar = T;
+
+    fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
+        self.runtime.update(input, dt_seconds)
+    }
+
+    fn output(&self) -> T {
+        self.runtime.output
+    }
+
+    fn reset(&mut self) {
+        self.runtime.reset();
+    }
+
+    fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
+        self.runtime.reset_to_steady(input)
+    }
+}
+
+/// A causal Butterworth low-pass with delayed passband phase equalization.
+///
+/// The complete magnitude response retains the requested −3 dB cutoff. The
+/// equalizer makes the combined response approximate a constant delay only
+/// through [`Self::validated_band_edge_hz`], and necessarily adds latency.
+/// Orders 4 and 8 are the only validated configurations.
+#[derive(Clone, Copy, Debug)]
+pub struct PhaseEqualizedLowPass<const N: usize, T: Scalar = f64> {
+    runtime: StreamingCore<T, EqualizedButterworth<T, N>, CoupledState<T, N>>,
+    cutoff_hz: T,
+    validated_band_edge_hz: T,
+    target_constant_delay_seconds: T,
+    mean_added_delay_seconds: T,
+}
+
+impl<const N: usize, T: Scalar> PhaseEqualizedLowPass<N, T> {
+    /// Returns the Butterworth magnitude response's −3 dB cutoff in hertz.
+    #[must_use]
+    pub const fn cutoff_hz(&self) -> T {
+        self.cutoff_hz
+    }
+
+    /// Returns the upper edge of the validated phase-equalization band.
+    ///
+    /// The equalization claim covers frequencies from DC through this edge.
+    #[must_use]
+    pub const fn validated_band_edge_hz(&self) -> T {
+        self.validated_band_edge_hz
+    }
+
+    /// Returns the combined filter's target constant delay in seconds.
+    ///
+    /// This is the best minimax constant-delay target used to validate the
+    /// complete Butterworth-plus-equalizer response. Actual group delay varies
+    /// slightly with frequency inside the validated band.
+    #[must_use]
+    pub const fn target_constant_delay_seconds(&self) -> T {
+        self.target_constant_delay_seconds
+    }
+
+    /// Returns the equalizer's mean added delay in seconds.
+    ///
+    /// The mean is uniform in frequency from DC through the validated band
+    /// edge. It describes the causal latency cost, not the complete filter's
+    /// total delay at every frequency.
+    #[must_use]
+    pub const fn mean_added_delay_seconds(&self) -> T {
+        self.mean_added_delay_seconds
+    }
+
+    /// Advances the filter and returns its new output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpdateError`] for invalid input or elapsed time, or if the
+    /// adaptive integration cannot finish safely. The filter is unchanged on
+    /// error.
+    pub fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
+        <Self as StreamingFilter>::update(self, input, dt_seconds)
+    }
+
+    /// Returns the most recently accepted output.
+    #[must_use]
+    pub fn output(&self) -> T {
+        self.runtime.output
+    }
+
+    /// Returns work performed by the most recent successful update.
+    #[must_use]
+    pub const fn last_diagnostics(&self) -> IntegrationDiagnostics<T> {
+        self.runtime.last_diagnostics
+    }
+
+    /// Returns the filter to zero-input steady state.
+    pub fn reset(&mut self) {
+        <Self as StreamingFilter>::reset(self);
+    }
+
+    /// Sets the state to equilibrium with a constant input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResetError::NonFiniteInput`] if `input` is NaN or infinite,
+    /// or [`ResetError::UnrepresentableSteadyState`] if its equilibrium cannot
+    /// be represented.
+    pub fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
+        <Self as StreamingFilter>::reset_to_steady(self, input)
+    }
+}
+
+impl<const N: usize, T: Scalar> StreamingFilter for PhaseEqualizedLowPass<N, T> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {

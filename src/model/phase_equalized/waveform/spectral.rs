@@ -106,6 +106,17 @@ impl Spectrum {
     /// Apply the independent Butterworth-magnitude, constant-delay oracle.
     pub(super) fn butterworth_constant_delay(&self, order: usize, delay: f64) -> Self {
         assert!(order > 0, "Butterworth order must be positive");
+        self.magnitude_plus_constant_delay(delay, |frequency| {
+            1.0 / (1.0 + frequency.powf(2.0 * order as f64)).sqrt()
+        })
+    }
+
+    /// Apply an analytic low-pass magnitude and constant-delay phase oracle.
+    pub(super) fn magnitude_plus_constant_delay(
+        &self,
+        delay: f64,
+        magnitude_at: impl Fn(f64) -> f64,
+    ) -> Self {
         assert!(delay.is_finite(), "delay must be finite");
 
         let nyquist = self
@@ -119,7 +130,8 @@ impl Spectrum {
             .enumerate()
             .map(|(index, input)| {
                 let frequency = self.signed_normalized_frequency(index);
-                let magnitude = 1.0 / (1.0 + frequency.abs().powf(2.0 * order as f64)).sqrt();
+                let magnitude = magnitude_at(frequency.abs());
+                assert!(magnitude.is_finite() && magnitude >= 0.0);
                 let phase = -delay * frequency;
 
                 // An even-length Nyquist bin is self-conjugate. Project the

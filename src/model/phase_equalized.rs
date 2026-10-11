@@ -1,15 +1,26 @@
-//! Private streaming prototype for delayed Butterworth phase equalization.
+//! Private coupled realization for delayed Butterworth phase equalization.
 //!
-//! This module is test-only until the coupled realization passes the complete
-//! waveform matrix. It deliberately contains no public coefficient table or
-//! builder surface.
+//! Only designs that passed the analytic and streaming waveform gates are
+//! available here. Coefficients and fitting controls deliberately remain
+//! private implementation details.
 
 use crate::model::{Butterworth, ContinuousModel};
 use crate::state::StateVector;
 use crate::{Scalar, scalar::from_f64};
 
+pub(crate) const VALIDATED_BAND_RATIO: f64 = 0.7;
+
+pub(super) const ORDER_4_SIGMA: f64 = 0.774_282_178_267_629_5;
+pub(super) const ORDER_4_ETA: f64 = 0.420_158_711_359_650_1;
+pub(super) const ORDER_4_TARGET_DELAY: f64 = 6.615_894_124_512_561;
+const ORDER_4_MEAN_ADDED_DELAY: f64 = 3.750_845_706_889_359;
+pub(super) const ORDER_8_SIGMA: f64 = 0.631_643_162_371_801_7;
+pub(super) const ORDER_8_ETA: f64 = 0.381_855_079_433_413_2;
+pub(super) const ORDER_8_TARGET_DELAY: f64 = 9.820_666_383_292_307;
+const ORDER_8_MEAN_ADDED_DELAY: f64 = 4.311_202_622_209_717;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct CoupledState<T, const N: usize> {
+pub(crate) struct CoupledState<T, const N: usize> {
     source: [T; N],
     all_pass: [T; 2],
 }
@@ -47,14 +58,14 @@ impl<T: Scalar, const N: usize> StateVector<T> for CoupledState<T, N> {
 /// frequency. This makes its constant-input equilibrium exactly equal to the
 /// source output and avoids a division in equilibrium construction.
 #[derive(Clone, Copy, Debug)]
-struct EqualizedButterworth<T, const N: usize> {
+pub(crate) struct EqualizedButterworth<T, const N: usize> {
     source: Butterworth<T, N>,
     sigma: T,
     natural_frequency_squared: T,
 }
 
 impl<T: Scalar, const N: usize> EqualizedButterworth<T, N> {
-    fn new(sigma: T, eta: T) -> Self {
+    pub(crate) fn new(sigma: T, eta: T) -> Self {
         debug_assert!(sigma.is_finite() && sigma > T::zero());
         debug_assert!(eta.is_finite() && eta >= T::zero());
         Self {
@@ -62,6 +73,38 @@ impl<T: Scalar, const N: usize> EqualizedButterworth<T, N> {
             sigma,
             natural_frequency_squared: sigma.mul_add(sigma, eta * eta),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PhaseEqualizerDesign<T, const N: usize> {
+    pub(crate) model: EqualizedButterworth<T, N>,
+    pub(crate) target_normalized_delay: T,
+    pub(crate) mean_added_normalized_delay: T,
+}
+
+impl<T: Scalar, const N: usize> PhaseEqualizerDesign<T, N> {
+    pub(crate) fn validated() -> Option<Self> {
+        let (sigma, eta, target_delay, mean_added_delay) = match N {
+            4 => (
+                ORDER_4_SIGMA,
+                ORDER_4_ETA,
+                ORDER_4_TARGET_DELAY,
+                ORDER_4_MEAN_ADDED_DELAY,
+            ),
+            8 => (
+                ORDER_8_SIGMA,
+                ORDER_8_ETA,
+                ORDER_8_TARGET_DELAY,
+                ORDER_8_MEAN_ADDED_DELAY,
+            ),
+            _ => return None,
+        };
+        Some(Self {
+            model: EqualizedButterworth::new(from_f64(sigma), from_f64(eta)),
+            target_normalized_delay: from_f64(target_delay),
+            mean_added_normalized_delay: from_f64(mean_added_delay),
+        })
     }
 }
 
@@ -115,13 +158,34 @@ mod tests {
     use crate::streaming::StreamingCore;
     use crate::{InputModel, IntegrationConfig, Tolerances, UpdateError};
 
-    const ORDER_4_SIGMA: f64 = 0.774_282_178_267_629_5;
-    const ORDER_4_ETA: f64 = 0.420_158_711_359_650_1;
-    const ORDER_8_SIGMA: f64 = 0.631_643_162_371_801_7;
-    const ORDER_8_ETA: f64 = 0.381_855_079_433_413_2;
-
     type Prototype<T, const N: usize> =
         StreamingCore<T, EqualizedButterworth<T, N>, CoupledState<T, N>>;
+
+    #[test]
+    fn validated_design_table_contains_only_the_released_orders() {
+        assert!(PhaseEqualizerDesign::<f64, 4>::validated().is_some());
+        assert!(PhaseEqualizerDesign::<f64, 8>::validated().is_some());
+        assert!(PhaseEqualizerDesign::<f32, 4>::validated().is_some());
+        assert!(PhaseEqualizerDesign::<f32, 8>::validated().is_some());
+        assert!(PhaseEqualizerDesign::<f64, 1>::validated().is_none());
+        assert!(PhaseEqualizerDesign::<f64, 16>::validated().is_none());
+    }
+
+    #[rstest]
+    #[case::order_4(ORDER_4_SIGMA, ORDER_4_ETA, ORDER_4_MEAN_ADDED_DELAY)]
+    #[case::order_8(ORDER_8_SIGMA, ORDER_8_ETA, ORDER_8_MEAN_ADDED_DELAY)]
+    fn stored_mean_added_delay_matches_the_all_pass_phase_integral(
+        #[case] sigma: f64,
+        #[case] eta: f64,
+        #[case] stored_mean: f64,
+    ) {
+        let upper = VALIDATED_BAND_RATIO;
+        let natural_frequency_squared = sigma.mul_add(sigma, eta * eta);
+        let phase_at_upper =
+            -2.0 * (2.0 * sigma * upper).atan2(natural_frequency_squared - upper * upper);
+        let analytic_mean = -phase_at_upper / upper;
+        assert_relative_eq!(stored_mean, analytic_mean, epsilon = 2.0e-15);
+    }
 
     fn prototype<T: Scalar, const N: usize>(
         cutoff_hz: T,

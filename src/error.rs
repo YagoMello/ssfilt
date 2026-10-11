@@ -23,6 +23,8 @@ pub enum BuildError {
     InvalidBandPassOrder,
     /// Band-pass edge frequencies were invalid or numerically unsupported.
     InvalidBandPassEdges,
+    /// The requested response or order has no validated phase equalizer.
+    UnsupportedPhaseEqualization,
 }
 
 impl fmt::Display for BuildError {
@@ -42,6 +44,9 @@ impl fmt::Display for BuildError {
             Self::InvalidBandPassOrder => "band-pass filter order must be positive and even",
             Self::InvalidBandPassEdges => {
                 "band-pass edges must be finite, positive, ordered, and numerically supported"
+            }
+            Self::UnsupportedPhaseEqualization => {
+                "phase equalization is supported only for Butterworth low-pass orders 4 and 8"
             }
         };
         formatter.write_str(message)

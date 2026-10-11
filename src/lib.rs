@@ -27,7 +27,7 @@ pub use config::{InputModel, IntegrationConfig, Tolerances};
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use high_pass::{HighPass, HighPassBuilder};
-pub use low_pass::{LowPass, LowPassBuilder};
+pub use low_pass::{LowPass, LowPassBuilder, PhaseEqualizedLowPass};
 pub use response::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
 pub use scalar::Scalar;
 

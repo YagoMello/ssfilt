@@ -7,9 +7,9 @@ equalizer implementation, followed by an analytic feasibility implementation.
 The bounded one-section search now passes the mandatory Butterworth order 4
 and 8 core-band gates and rejects cutoff-wide claims for both orders. The
 coupled-integrator realization, steady-tone checks, and complete three-signal
-streaming waveform matrix now pass for both orders and scalar types. There is
-still no public phase-equalizer feature: the narrow public contract and its
-independent API review remain to be completed.
+streaming waveform matrix now pass for both orders and scalar types. A narrow
+public API has been implemented for these two Butterworth cases and the core
+band; its independent numerical and API review is complete.
 
 The analytic tool also emits one inspectable SVG per case. These plots use the
 stored holdout records and display their actual points as rings; they do not
@@ -30,15 +30,17 @@ not by itself define or review a public phase API.
 
 The first waveform tier now passes a frozen unequal-amplitude, unequal-phase
 five-tone signal. The test uses an independent closed-form Butterworth
-magnitude plus the predeclared constant-delay target; it does not fit delay or
-phase from streamed output. All 24 order/scalar/schedule/cutoff cells pass.
+magnitude plus predeclared source and corrected constant-delay targets; it does
+not fit delay or phase from streamed output. Each stream is scored against its
+own target and reference energy, so the relative improvement cannot be earned
+merely by adding latency. All 24 order/scalar/schedule/cutoff cells pass.
 The current observed worst results are shown below; automated tests enforce the
 predeclared gates rather than snapshotting these exact informational values.
 
 | Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
 | --- | ---: | ---: | ---: |
-| 4 | 0.0863% | 0.0863% | 0.109% |
-| 8 | 0.438% | 0.438% | 0.494% |
+| 4 | 0.0863% | 0.0863% | 1.06% |
+| 8 | 0.438% | 0.438% | 3.35% |
 
 The cells cover uniform, deterministic-jitter, and bounded-gap schedules at
 1 Hz and 37 Hz cutoff.
@@ -53,8 +55,8 @@ predeclared absolute and relative gates as the multi-tone tier.
 
 | Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
 | --- | ---: | ---: | ---: |
-| 4 | 0.0799% | 0.0799% | 0.0593% |
-| 8 | 0.330% | 0.330% | 0.218% |
+| 4 | 0.0799% | 0.0799% | 0.552% |
+| 8 | 0.330% | 0.330% | 1.44% |
 
 The raw Gaussian fixture has 99.999897% of its two-sided discrete-spectrum
 energy inside the scored band. The remaining 0.000103% is reported and
@@ -70,22 +72,42 @@ input/reference projection policy.
 
 | Order | Worst `f64` shape error | Worst `f32` shape error | Worst corrected/source error ratio |
 | --- | ---: | ---: | ---: |
-| 4 | 0.0769% | 0.0769% | 0.0601% |
-| 8 | 0.352% | 0.352% | 0.244% |
+| 4 | 0.0769% | 0.0769% | 0.558% |
+| 8 | 0.352% | 0.352% | 1.61% |
+
+The same fixtures also provide the promised matched-order Bessel comparison.
+Every Bessel stream is scored against its own analytic magnitude and minimax
+constant-delay oracle over the core band. All 72
+order/signal/schedule/scalar/cutoff cells produce finite errors with
+nontrivial reference energy and cutoff-invariant normalized results:
+
+| Signal | Order | Worst `f64` Bessel error | Worst `f32` Bessel error |
+| --- | ---: | ---: | ---: |
+| Multi-tone | 4 | 0.0345% | 0.0346% |
+| Multi-tone | 8 | 0.00686% | 0.00686% |
+| Gaussian carrier | 4 | 0.0614% | 0.0614% |
+| Gaussian carrier | 8 | 0.0124% | 0.0124% |
+| Tapered chirp | 4 | 0.0577% | 0.0577% |
+| Tapered chirp | 8 | 0.0114% | 0.0114% |
+
+This is a reporting comparison, not a superiority gate. Bessel and
+Butterworth have different magnitude responses: at `0.7 * cutoff`, Bessel is
+about 1.17 dB below order-4 Butterworth and 1.44 dB below order-8 Butterworth;
+both share the same −3 dB magnitude at cutoff. The all-pass equalizer instead
+retains the Butterworth magnitude curve while paying added causal delay.
 
 All three waveform tiers now pass their predeclared absolute and relative
 limits across both precisions, all schedules, and both physical cutoffs. These
-results authorize designing the smallest order-4/8 Butterworth core-band API;
-they do not imply cutoff-wide, higher-order, or other-response support.
+results justified the smallest order-4/8 Butterworth core-band API; they do
+not imply cutoff-wide, higher-order, or other-response support.
 
 ## Decision summary
 
-The first streaming candidate is deliberately narrow:
+The initial public streaming feature is deliberately narrow:
 
-- low-pass filters only;
-- predeclared study bands rather than an implicit whole-passband claim;
-- repeated-pole and Butterworth responses as release candidates;
-- Bessel as the no-equalizer waveform-fidelity baseline;
+- Butterworth low-pass orders 4 and 8 only;
+- equalization validated from DC through `0.7 * cutoff_hz`;
+- Bessel remains the no-equalizer waveform-fidelity baseline;
 - one real second-order continuous-time all-pass section;
 - coefficients selected offline and stored as validated normalized data;
 - source and equalizer integrated as one coupled continuous-time model.
@@ -96,8 +118,9 @@ their useful-band and latency semantics need separate designs. A Bessel
 equalizer is out of scope: if Bessel already meets the requirement, adding
 states and delay is the wrong tradeoff.
 
-No public API or coefficient table should be added until the candidate passes
-the numerical and waveform gates in this record.
+The numerical and waveform gates for these two cases passed before the narrow
+builder API and coefficient table were added. No other response/order/band
+combination is implied by those results.
 
 ## Problem statement
 
@@ -228,9 +251,8 @@ absolute gates before Chebyshev can be called supported.
 The diagnostic sweep maps the error/latency frontier and helps choose a small
 set of useful designs. Sweep points are report columns, not supported library
 values, and do not authorize interpolation between coefficient tables. The
-first public API decision is deferred until this evidence shows whether one
-fixed band, named bands, or a single upper-band argument offers the clearest
-contract.
+initial API selects the fixed core band and reports its upper edge through
+`validated_band_edge_hz()`; it does not expose a caller-selected band.
 
 ## Metrics
 
@@ -290,22 +312,22 @@ zero and phase ceases to describe a useful transmitted waveform.
 
 ## Validation matrix
 
-The eventual offline study matrix covers; entries above order 8 remain deferred
-until the initial streaming gate passes:
+The exploratory offline study matrix is a roadmap, not a declaration of public
+support. Entries above order 8 remain deferred until the initial streaming
+gate passes:
 
 | Response | Source orders | Role |
 | --- | --- | --- |
-| Repeated pole | 2, 4, 8, 16 | release candidate |
-| Butterworth | 2, 4, 8, 16 | primary release candidate |
+| Repeated pole | 2, 4, 8, 16 | later investigation; not in the initial API |
+| Butterworth | 2, 4, 8, 16 | orders 4 and 8 are initially supported |
 | Chebyshev I, 0.5 dB ripple | 4, 8, 16 | investigation only |
 | Bessel | 2, 4, 8, 16, 25 | unequalized baseline |
 
-Only individual response/order pairs that pass may be exposed. The first
-feature is worthwhile only if at least Butterworth orders 4 and 8 pass; this
-ensures it addresses a response with a real selectivity-versus-phase tradeoff
-rather than only a hand-crafted easy case. That minimum refers to the core
-study. Every candidate report records its validated band edge; how the eventual
-API communicates that edge remains a later decision.
+Only response/order/band pairs that pass their own gates may be exposed. The
+initial API covers Butterworth orders 4 and 8 over the core band only. Passing
+an exploratory matrix entry does not automatically expand that support. Every
+candidate report records its validated band edge, while the public type
+currently reports the fixed supported edge in hertz.
 
 Orders 4 and 8 are the streaming-design gate, not the intended permanent
 matrix limit. After both pass the coupled streaming and waveform criteria,
@@ -338,9 +360,11 @@ lie inside the scored band after windowing. Report the remaining leakage and do
 not count it toward the in-band waveform score. Multi-tone frequencies are all
 placed strictly inside the scored band.
 
-The oracle retains the source's analytic magnitude and replaces its phase with
-the best constant delay. After fitting only that constant time shift, the
-streaming result must satisfy:
+Each oracle retains its response's analytic magnitude and replaces its phase
+with that response's independently determined best constant delay. The
+uncorrected Butterworth source and corrected response are scored against their
+own targets and reference energies. No delay or phase is fitted from streamed
+output. The streaming result must satisfy:
 
 ```text
 waveform-shape RMS error <= 2% for f64 and <= 4% for f32
@@ -398,13 +422,26 @@ let filter = LowPass::<4>::builder(20.0)
 
 It returns one dedicated streaming-filter value containing the coupled model.
 The user does not construct an all-pass section, solver, or composite object.
-The returned type should expose the promised band and nominal/added delay in
-physical units, with wording that does not claim exact latency at every
-frequency. Unsupported responses and orders fail explicitly during build.
+The builder preserves its input model, initial input, and integration settings.
+The default repeated-pole response is unsupported here, so callers must select
+Butterworth explicitly. Other responses and orders fail with
+`BuildError::UnsupportedPhaseEqualization`.
 
-The exact public names and error variant are intentionally deferred until the
-prototype meets the gates. Arbitrary poles, target delays, equalizer orders,
-optimizer tolerances, and fitting weights remain private.
+The returned type exposes these metadata in physical units:
+
+- `validated_band_edge_hz()`: the upper edge of the supported band, exactly
+  `0.7 * cutoff_hz`; the claim covers DC through this edge.
+- `target_constant_delay_seconds()`: the minimax constant-delay target for the
+  combined source-plus-equalizer response. Actual group delay varies slightly
+  with frequency.
+- `mean_added_delay_seconds()`: the equalizer's mean group delay, averaged
+  uniformly in frequency over the validated band; this describes added
+  latency, not total delay at every frequency.
+
+Arbitrary poles, caller-selected target delays, equalizer orders, optimizer
+tolerances, and fitting weights remain private. The public type stays fixed
+size and allocation-free, with two extra scalar states for the all-pass
+section.
 
 ## References
 
@@ -425,16 +462,16 @@ optimizer tolerances, and fitting weights remain private.
    `development-tools.md`: build an analytic evaluator, measured streaming
    overlays, bounded coefficient search, and machine-readable reports for the
    complete band sweep and response matrix.
-2. Decide supported response/order pairs from the predeclared gates. Stop the
-   streaming feature if Butterworth orders 4 and 8 do not pass.
+2. Decide supported response/order pairs from the predeclared gates. The
+   initial supported pair is Butterworth orders 4 and 8 over the core band. ✓
 3. Refactor the private solver to support fixed composite state, with no public
    behavior change. ✓
 4. Implement the coupled all-pass model and analytic/model tests privately. ✓
-5. Complete the private streaming waveform matrix. Multi-tone, Gaussian, and
-   tapered-chirp tiers pass. ✓
+5. Complete the private streaming waveform matrix. Multi-tone, Gaussian,
+   tapered-chirp, and matched-order Bessel comparison tiers pass. ✓
 6. Add the smallest self-contained public API for only the validated cases,
    then run an independent numerical and API review before declaring the
-   feature.
+   feature. The API is implemented and independently reviewed.
 7. Treat offline forward-backward filtering as a later, separate batch
    milestone; it does not share the streaming equalizer's contract.
 

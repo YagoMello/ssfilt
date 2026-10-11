@@ -14,16 +14,19 @@ band-pass filters with four response families:
 - linear, previous-value hold, and current-value hold input models;
 - `f32`, `f64`, `no_std`, and allocation-free operation;
 - transactional errors and explicit steady-state reset;
-- per-update integration diagnostics for observing adaptive work.
+- per-update integration diagnostics for observing adaptive work;
+- delayed phase equalization for Butterworth low-pass orders 4 and 8, validated
+  from DC through 70% of cutoff.
 
-Phase handling is planned, but is not yet part of the API.
+The phase equalizer is causal and adds latency; its supported band and delay
+cost are available from the constructed filter.
 
 ## Project documents
 
 - [Design notes](DESIGN.md) define the numerical models, invariants, and
   milestone sequence.
 - [Phase equalization record](docs/phase-equalization.md) defines the active
-  problem, evidence requirements, and decision gates before implementation.
+  problem, evidence requirements, and current support boundary.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps
   found before the phase work began.
 - [Development tools roadmap](docs/development-tools.md) defines analytic
@@ -56,6 +59,43 @@ defines what is assumed between that sample and the preceding one:
 - `CurrentHold` applies the new input throughout the interval.
 
 The first interval begins at `initial_input`, which defaults to zero.
+
+### Delayed phase equalization
+
+The phase-equalized Butterworth low-pass retains the source filter's magnitude
+response and complete-filter −3 dB cutoff, while reducing group-delay
+variation to better preserve passband waveform shape. It is validated from DC
+through `0.7 * cutoff_hz`; the equalization adds causal latency and does not
+make the filter zero-phase. Only Butterworth orders 4 and 8 are supported.
+Select Butterworth explicitly because the ordinary low-pass builder defaults
+to the repeated-pole response:
+
+```rust
+use ssfilt::{LowPass, Response};
+
+let mut filter = LowPass::<4>::builder(20.0)
+    .response(Response::Butterworth)
+    .build_phase_equalized()?;
+
+let edge_hz = filter.validated_band_edge_hz();
+let target_total_delay = filter.target_constant_delay_seconds();
+let mean_added_delay = filter.mean_added_delay_seconds();
+let value = filter.update(1.0, 0.01)?;
+# assert!(edge_hz > 0.0 && target_total_delay > 0.0 && mean_added_delay > 0.0);
+# assert!(value.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`validated_band_edge_hz()` reports the upper edge of the tested DC-to-edge
+band. `target_constant_delay_seconds()` is the minimax constant-delay target
+for the combined Butterworth-plus-equalizer response; the actual group delay
+still varies slightly with frequency. `mean_added_delay_seconds()` reports the
+equalizer's added group delay averaged uniformly in frequency over that
+validated band. Other response families and orders return
+`BuildError::UnsupportedPhaseEqualization` after common checks for order,
+cutoff, initial input, and integration configuration. Settings specific to an
+unsupported response family, such as Chebyshev ripple, are not separately
+validated by this constructor.
 
 ### High-pass
 
@@ -196,10 +236,10 @@ validated. Precision-specific integration defaults live in
 
 Construction rejects zero order, non-positive or non-finite cutoff, odd
 band-pass order, invalid or reversed band-pass edges, invalid Chebyshev ripple,
-unsupported Bessel order, non-finite initial input, and invalid integration
-controls. It also rejects a finite initial input when its equilibrium state or
-output cannot be represented. Updates reject non-finite input and non-positive
-or non-finite elapsed time.
+unsupported Bessel order or phase-equalization response/order, non-finite
+initial input, and invalid integration controls. It also rejects a finite
+initial input when its equilibrium state or output cannot be represented.
+Updates reject non-finite input and non-positive or non-finite elapsed time.
 
 An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
@@ -289,13 +329,15 @@ cargo run --release --example phase_design -- \
 ```
 
 By default it evaluates Butterworth orders 4 and 8 over both the core
-`0..0.7 * cutoff` band and the full `0..cutoff` band. The current analytic
-screen passes both core cases and rejects both cutoff-wide claims. This is a
-go-ahead for coupled streaming and waveform validation, not a public feature
-claim. Each selected case also writes an SVG dashboard showing source and
-source-plus-candidate delay, absolute delay residual, residual phase, and the
-added causal delay cost. Its rings are stored analytic holdout points—not
-streamed samples—and every SVG repeats that limitation in its title.
+`0..0.7 * cutoff` band and the full `0..cutoff` band. The analytic screen and
+streaming waveform matrix pass both core cases and reject both cutoff-wide
+claims. The public builder therefore supports only Butterworth orders 4 and 8
+over DC through `0.7 * cutoff`; other orders, responses, and the full cutoff
+band are not supported. Each selected analytic case also writes an SVG
+dashboard showing source and source-plus-candidate delay, absolute delay
+residual, residual phase, and the added causal delay cost. Its rings are stored
+analytic holdout points—not streamed samples—and every SVG repeats that
+limitation in its title.
 Use `--order 4|8` and `--band core|cutoff` to narrow a run.
 
 The Bessel prototype table can be regenerated separately from the Rust build

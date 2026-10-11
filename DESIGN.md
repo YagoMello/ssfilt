@@ -56,6 +56,41 @@ with unit magnitude. Its closed-form magnitude is:
 |H(j*Omega)| = 1 / sqrt(1 + Omega^(2*N))
 ```
 
+### Delayed phase equalization
+
+The first phase-equalized model couples a Butterworth low-pass to one stable
+second-order all-pass section. For equalizer state `(q, v)`, normalized
+coefficients `sigma > 0` and `eta`, and source output `y_s`, the private model
+uses:
+
+```text
+q' = (sigma^2 + eta^2) * v
+v' = y_s - 2*sigma*v - q
+y  = y_s - 4*sigma*v
+```
+
+The section has unit magnitude, so the continuous-time combined response keeps
+the Butterworth magnitude curve and its total-filter −3 dB cutoff. It changes
+phase by adding nonnegative group delay, with the selected coefficients
+reducing total group-delay variation over the validated band. The source and
+equalizer derivatives are evaluated together at every adaptive Runge-Kutta
+stage; filtering only the source's endpoint outputs would make the cascade
+depend on sample partitioning.
+
+The public entry point is `LowPassBuilder::build_phase_equalized`. The initial
+validated cases are explicitly limited to Butterworth orders 4 and 8, with a
+useful band from DC through `0.7 * cutoff_hz`. Repeated-pole, Bessel,
+Chebyshev, other Butterworth orders, and cutoff-wide claims are unsupported.
+Construction uses offline-validated normalized coefficients and does not fit
+or optimize at runtime. The dedicated returned type exposes the tested band
+edge, the combined response's minimax constant-delay target, and the mean
+added all-pass delay. The target is not an exact delay at every frequency; the
+mean added delay is averaged uniformly over the validated frequency band.
+
+The composite state stores the ordinary `N` Butterworth source states plus
+exactly two scalar all-pass states. It remains fixed-size, allocation-free,
+and usable with the existing `f32`, `f64`, and `no_std` runtime.
+
 ### Chebyshev Type I
 
 For passband ripple `r_p` in decibels, define:
@@ -226,6 +261,9 @@ updates preserve the preceding snapshot transactionally.
 - Absolute cutoff scaling changes only the mapping between physical and
   normalized time.
 - Runtime storage has fixed size and requires no allocator.
+- Phase equalization is available only for validated Butterworth orders 4 and
+  8 through `0.7 * cutoff_hz`; its metadata reports the validated band and
+  causal added-delay cost.
 
 ## Planned milestones
 
@@ -237,9 +275,10 @@ updates preserve the preceding snapshot transactionally.
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
 7. Refactored development measurement tools with analytic curves, public-API
    sample markers, machine-readable phase reports, and explicit band sweeps.
-8. Optional delayed group-delay equalization and offline forward-backward
-   filtering as separate phase-handling approaches. Prove Butterworth orders
-   4 and 8 first, then expand the validated order matrix and add analytic plus
-   measured equalized-response overlays before broadening public support.
+8. Delayed group-delay equalization and offline forward-backward filtering as
+   separate phase-handling approaches. The initial Butterworth order-4/8
+   streaming API is implemented and independently reviewed. Higher-order
+   support and analytic plus measured equalized-response overlays require
+   further validation before public support broadens.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

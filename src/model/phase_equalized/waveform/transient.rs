@@ -4,7 +4,7 @@
 
 use super::spectral::Spectrum;
 use super::{CoupledState, EqualizedButterworth, SampleErrors, ShapeMetrics, WeightedErrors};
-use crate::model::Butterworth;
+use crate::model::{Bessel, Butterworth};
 use crate::scalar::from_f64;
 use crate::streaming::StreamingCore;
 use crate::{InputModel, IntegrationConfig, Scalar};
@@ -21,10 +21,14 @@ const TOTAL_TICKS: usize = 2 * FRAME_TICKS;
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct WorstMetrics {
     pub(super) raw_in_band_fraction: f64,
+    pub(super) f64_source_error: f64,
     pub(super) f64_error: f64,
     pub(super) f64_ratio: f64,
+    pub(super) f32_source_error: f64,
     pub(super) f32_error: f64,
     pub(super) f32_ratio: f64,
+    pub(super) f64_bessel_error: f64,
+    pub(super) f32_bessel_error: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +69,9 @@ impl Schedule {
 struct Sample {
     tick: usize,
     input: f64,
-    reference: f64,
+    source_reference: f64,
+    equalized_reference: f64,
+    bessel_reference: f64,
 }
 
 /// Timestamped normalized input and independent reference records for two
@@ -78,7 +84,13 @@ pub(super) struct TransientRecords {
 }
 
 impl TransientRecords {
-    pub(super) fn new(input: &Spectrum, reference: &Spectrum, schedule: Schedule) -> Self {
+    pub(super) fn new(
+        input: &Spectrum,
+        source_reference: &Spectrum,
+        equalized_reference: &Spectrum,
+        bessel_reference: &Spectrum,
+        schedule: Schedule,
+    ) -> Self {
         let samples = schedule
             .boundaries(TOTAL_TICKS)
             .into_iter()
@@ -87,7 +99,10 @@ impl TransientRecords {
                 Sample {
                     tick,
                     input: input.evaluate_real_periodic(normalized_time),
-                    reference: reference.evaluate_real_periodic(normalized_time),
+                    source_reference: source_reference.evaluate_real_periodic(normalized_time),
+                    equalized_reference: equalized_reference
+                        .evaluate_real_periodic(normalized_time),
+                    bessel_reference: bessel_reference.evaluate_real_periodic(normalized_time),
                 }
             })
             .collect();
@@ -95,6 +110,7 @@ impl TransientRecords {
         Self { schedule, samples }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn score<T: Scalar, const N: usize>(
         &self,
         signal_name: &str,
@@ -132,11 +148,22 @@ impl TransientRecords {
             IntegrationConfig::default(),
         )
         .unwrap();
+        let mut bessel = StreamingCore::new(
+            Bessel::<T, N>::new().expect("matched-order Bessel model is supported"),
+            initial_input,
+            angular_cutoff,
+            InputModel::Linear,
+            IntegrationConfig::default(),
+        )
+        .unwrap();
 
         let mut previous = errors_at(
             source.output.to_f64().unwrap(),
             equalized.output.to_f64().unwrap(),
-            first.reference,
+            bessel.output.to_f64().unwrap(),
+            first.source_reference,
+            first.equalized_reference,
+            first.bessel_reference,
         );
         let mut errors = WeightedErrors::default();
 
@@ -158,7 +185,19 @@ impl TransientRecords {
                 .unwrap()
                 .to_f64()
                 .unwrap();
-            let current = errors_at(source_output, equalized_output, current_sample.reference);
+            let bessel_output = bessel
+                .update(input, from_f64(dt_seconds))
+                .unwrap()
+                .to_f64()
+                .unwrap();
+            let current = errors_at(
+                source_output,
+                equalized_output,
+                bessel_output,
+                current_sample.source_reference,
+                current_sample.equalized_reference,
+                current_sample.bessel_reference,
+            );
 
             if current_sample.tick > FRAME_TICKS {
                 errors.add_interval(dt_seconds, previous, current);
@@ -168,17 +207,27 @@ impl TransientRecords {
 
         let metrics = errors.metrics();
         assert!(
-            errors.denominator.is_finite() && errors.denominator > 0.0,
-            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: reference energy must be finite and nontrivial (denominator {})",
+            errors.source_denominator.is_finite()
+                && errors.source_denominator > 0.0
+                && errors.equalized_denominator.is_finite()
+                && errors.equalized_denominator > 0.0
+                && errors.bessel_denominator.is_finite()
+                && errors.bessel_denominator > 0.0,
+            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: source, equalized, and Bessel reference energies must be finite and nontrivial (denominators {}, {}, {})",
             self.schedule.name(),
-            errors.denominator,
+            errors.source_denominator,
+            errors.equalized_denominator,
+            errors.bessel_denominator,
         );
         assert!(
-            metrics.source_error.is_finite() && metrics.equalized_error.is_finite(),
-            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: transient errors must be finite (source {}, corrected {})",
+            metrics.source_error.is_finite()
+                && metrics.equalized_error.is_finite()
+                && metrics.bessel_error.is_finite(),
+            "{signal_name}, order {N}, {}, cutoff {cutoff_hz}: transient errors must be finite (source {}, corrected {}, Bessel {})",
             self.schedule.name(),
             metrics.source_error,
             metrics.equalized_error,
+            metrics.bessel_error,
         );
         metrics
     }
@@ -190,7 +239,9 @@ impl TransientRecords {
 pub(super) fn check_order<const N: usize>(
     signal_name: &str,
     input: &Spectrum,
-    reference: &Spectrum,
+    source_reference: &Spectrum,
+    equalized_reference: &Spectrum,
+    bessel_reference: &Spectrum,
     raw_in_band_fraction: f64,
     sigma: f64,
     eta: f64,
@@ -211,8 +262,14 @@ pub(super) fn check_order<const N: usize>(
         ..WorstMetrics::default()
     };
     for schedule in Schedule::ALL {
-        let records = TransientRecords::new(input, reference, schedule);
-        let (f64_error, f64_ratio) = check_precision::<f64, N>(
+        let records = TransientRecords::new(
+            input,
+            source_reference,
+            equalized_reference,
+            bessel_reference,
+            schedule,
+        );
+        let (f64_source_error, f64_error, f64_ratio, f64_bessel_error) = check_precision::<f64, N>(
             signal_name,
             &records,
             sigma,
@@ -220,7 +277,7 @@ pub(super) fn check_order<const N: usize>(
             maximum_f64_error,
             schedule,
         );
-        let (f32_error, f32_ratio) = check_precision::<f32, N>(
+        let (f32_source_error, f32_error, f32_ratio, f32_bessel_error) = check_precision::<f32, N>(
             signal_name,
             &records,
             sigma,
@@ -228,10 +285,14 @@ pub(super) fn check_order<const N: usize>(
             maximum_f32_error,
             schedule,
         );
+        worst.f64_source_error = worst.f64_source_error.max(f64_source_error);
         worst.f64_error = worst.f64_error.max(f64_error);
         worst.f64_ratio = worst.f64_ratio.max(f64_ratio);
+        worst.f32_source_error = worst.f32_source_error.max(f32_source_error);
         worst.f32_error = worst.f32_error.max(f32_error);
         worst.f32_ratio = worst.f32_ratio.max(f32_ratio);
+        worst.f64_bessel_error = worst.f64_bessel_error.max(f64_bessel_error);
+        worst.f32_bessel_error = worst.f32_bessel_error.max(f32_bessel_error);
     }
     worst
 }
@@ -243,7 +304,7 @@ fn check_precision<T: Scalar, const N: usize>(
     eta: f64,
     maximum_error: f64,
     schedule: Schedule,
-) -> (f64, f64)
+) -> (f64, f64, f64, f64)
 where
     IntegrationConfig<T>: Default,
 {
@@ -260,6 +321,10 @@ where
             metrics.equalized_error,
             maximum_error,
         );
+        assert!(
+            metrics.bessel_error.is_finite(),
+            "{signal_name}, order {N}, {schedule:?}, cutoff {cutoff_hz}: Bessel error must be finite"
+        );
         let ratio = metrics.equalized_error / metrics.source_error;
         assert!(
             ratio.is_finite() && ratio <= 0.25,
@@ -274,23 +339,52 @@ where
         CUTOFFS_HZ[0],
         CUTOFFS_HZ[1],
     );
+    assert!(
+        (metrics[0].bessel_error - metrics[1].bessel_error).abs() <= maximum_error * 1.0e-3,
+        "{signal_name}, order {N}, {schedule:?}: normalized Bessel errors changed across cutoffs {} Hz and {} Hz",
+        CUTOFFS_HZ[0],
+        CUTOFFS_HZ[1],
+    );
 
     let worst_error = metrics
         .iter()
         .map(|metrics| metrics.equalized_error)
         .fold(0.0, f64::max);
+    let worst_source_error = metrics
+        .iter()
+        .map(|metrics| metrics.source_error)
+        .fold(0.0, f64::max);
     let worst_ratio = metrics
         .iter()
         .map(|metrics| metrics.equalized_error / metrics.source_error)
         .fold(0.0, f64::max);
-    (worst_error, worst_ratio)
+    let worst_bessel_error = metrics
+        .iter()
+        .map(|metrics| metrics.bessel_error)
+        .fold(0.0, f64::max);
+    (
+        worst_source_error,
+        worst_error,
+        worst_ratio,
+        worst_bessel_error,
+    )
 }
 
-fn errors_at(source_output: f64, equalized_output: f64, reference: f64) -> SampleErrors {
+fn errors_at(
+    source_output: f64,
+    equalized_output: f64,
+    bessel_output: f64,
+    source_reference: f64,
+    equalized_reference: f64,
+    bessel_reference: f64,
+) -> SampleErrors {
     SampleErrors {
-        source: source_output - reference,
-        equalized: equalized_output - reference,
-        reference,
+        source: source_output - source_reference,
+        equalized: equalized_output - equalized_reference,
+        bessel: bessel_output - bessel_reference,
+        source_reference,
+        equalized_reference,
+        bessel_reference,
     }
 }
 

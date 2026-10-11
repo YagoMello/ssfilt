@@ -5,7 +5,6 @@ mod butterworth;
 mod chebyshev1;
 mod high_pass;
 mod low_pass;
-#[cfg(test)]
 mod phase_equalized;
 mod repeated_pole;
 
@@ -13,6 +12,9 @@ pub(crate) use butterworth::Butterworth;
 pub(crate) use chebyshev1::Chebyshev1;
 pub(crate) use high_pass::HighPassModel;
 pub(crate) use low_pass::LowPassModel;
+pub(crate) use phase_equalized::{
+    CoupledState, EqualizedButterworth, PhaseEqualizerDesign, VALIDATED_BAND_RATIO,
+};
 pub(crate) use repeated_pole::RepeatedPole;
 
 use crate::Scalar;

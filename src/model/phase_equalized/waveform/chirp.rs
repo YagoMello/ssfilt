@@ -8,8 +8,8 @@ use super::transient::{
     check_order,
 };
 use super::{
-    ORDER_4_ETA, ORDER_4_SIGMA, ORDER_4_TARGET_DELAY, ORDER_8_ETA, ORDER_8_SIGMA,
-    ORDER_8_TARGET_DELAY,
+    ORDER_4_ETA, ORDER_4_SIGMA, ORDER_4_SOURCE_TARGET_DELAY, ORDER_4_TARGET_DELAY, ORDER_8_ETA,
+    ORDER_8_SIGMA, ORDER_8_SOURCE_TARGET_DELAY, ORDER_8_TARGET_DELAY, bessel_reference,
 };
 
 const W0: f64 = 0.05;
@@ -19,13 +19,28 @@ const MAX_F32_ERROR: f64 = 0.04;
 
 /// Build the projected periodic input and independent magnitude-plus-delay
 /// reference from the frozen raw tapered-chirp fixture.
-fn spectra(order: usize, target_delay: f64) -> (Spectrum, Spectrum, f64) {
+fn spectra(
+    order: usize,
+    source_target_delay: f64,
+    equalized_target_delay: f64,
+) -> (Spectrum, Spectrum, Spectrum, Spectrum, f64) {
     let raw_samples = raw_samples();
     let mut input = Spectrum::forward_real(&raw_samples, FRAME_CYCLES as f64);
     let raw_in_band_fraction = input.in_band_energy_fraction(SCORED_BAND_EDGE);
     input.project_in_band(SCORED_BAND_EDGE);
-    let reference = input.butterworth_constant_delay(order, target_delay);
-    (input, reference, raw_in_band_fraction)
+    let source_reference = input.butterworth_constant_delay(order, source_target_delay);
+    let equalized_reference = input.butterworth_constant_delay(order, equalized_target_delay);
+    let bessel_reference = input.magnitude_plus_constant_delay(
+        bessel_reference::minimax_target_delay(order),
+        |frequency| bessel_reference::magnitude(order, frequency),
+    );
+    (
+        input,
+        source_reference,
+        equalized_reference,
+        bessel_reference,
+        raw_in_band_fraction,
+    )
 }
 
 fn raw_samples() -> Vec<f64> {
@@ -114,12 +129,26 @@ mod tests {
 
     #[test]
     fn tapered_chirp_transient_meets_the_complete_streaming_shape_matrix() {
-        let (input_4, reference_4, raw_fraction_4) = spectra(4, ORDER_4_TARGET_DELAY);
-        let (input_8, reference_8, raw_fraction_8) = spectra(8, ORDER_8_TARGET_DELAY);
+        let (
+            input_4,
+            source_reference_4,
+            equalized_reference_4,
+            bessel_reference_4,
+            raw_fraction_4,
+        ) = spectra(4, ORDER_4_SOURCE_TARGET_DELAY, ORDER_4_TARGET_DELAY);
+        let (
+            input_8,
+            source_reference_8,
+            equalized_reference_8,
+            bessel_reference_8,
+            raw_fraction_8,
+        ) = spectra(8, ORDER_8_SOURCE_TARGET_DELAY, ORDER_8_TARGET_DELAY);
         let order_4 = check_order::<4>(
             "tapered chirp",
             &input_4,
-            &reference_4,
+            &source_reference_4,
+            &equalized_reference_4,
+            &bessel_reference_4,
             raw_fraction_4,
             ORDER_4_SIGMA,
             ORDER_4_ETA,
@@ -129,7 +158,9 @@ mod tests {
         let order_8 = check_order::<8>(
             "tapered chirp",
             &input_8,
-            &reference_8,
+            &source_reference_8,
+            &equalized_reference_8,
+            &bessel_reference_8,
             raw_fraction_8,
             ORDER_8_SIGMA,
             ORDER_8_ETA,
@@ -142,14 +173,22 @@ mod tests {
 
     fn print_gate_metrics(order_4: WorstMetrics, order_8: WorstMetrics) {
         println!(
-            "Tapered chirp gate: raw in-band energy {:.8}%; order 4 worst f64/f32 errors {:.8}%/{:.8}%, source ratios {:.8}%/{:.8}%; order 8 {:.8}%/{:.8}%, source ratios {:.8}%/{:.8}%",
+            "Tapered chirp gate: raw in-band energy {:.8}%; order 4 source/corrected/Bessel f64 errors {:.8}%/{:.8}%/{:.8}%, f32 {:.8}%/{:.8}%/{:.8}%, corrected/source ratios {:.8}%/{:.8}%; order 8 source/corrected/Bessel f64 errors {:.8}%/{:.8}%/{:.8}%, f32 {:.8}%/{:.8}%/{:.8}%, corrected/source ratios {:.8}%/{:.8}%",
             order_4.raw_in_band_fraction * 100.0,
+            order_4.f64_source_error * 100.0,
             order_4.f64_error * 100.0,
+            order_4.f64_bessel_error * 100.0,
+            order_4.f32_source_error * 100.0,
             order_4.f32_error * 100.0,
+            order_4.f32_bessel_error * 100.0,
             order_4.f64_ratio * 100.0,
             order_4.f32_ratio * 100.0,
+            order_8.f64_source_error * 100.0,
             order_8.f64_error * 100.0,
+            order_8.f64_bessel_error * 100.0,
+            order_8.f32_source_error * 100.0,
             order_8.f32_error * 100.0,
+            order_8.f32_bessel_error * 100.0,
             order_8.f64_ratio * 100.0,
             order_8.f32_ratio * 100.0,
         );
