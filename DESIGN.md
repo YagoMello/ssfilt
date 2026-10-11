@@ -279,6 +279,8 @@ updates preserve the preceding snapshot transactionally.
    separate phase-handling approaches. The initial Butterworth order-4/8
    streaming API is implemented and independently reviewed. Higher-order
    support and analytic plus measured equalized-response overlays require
-   further validation before public support broadens.
+   further validation before public support broadens. The separate batch
+   investigation is contract-first and is defined in
+   `docs/forward-backward.md`; it has no public API yet.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

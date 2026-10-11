@@ -473,7 +473,8 @@ section.
    then run an independent numerical and API review before declaring the
    feature. The API is implemented and independently reviewed.
 7. Treat offline forward-backward filtering as a later, separate batch
-   milestone; it does not share the streaming equalizer's contract.
+   milestone; it does not share the streaming equalizer's contract. Its
+   investigation contract is recorded in `forward-backward.md`.
 
 ## Independent comparison
 
