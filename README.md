@@ -29,6 +29,8 @@ cost are available from the constructed filter.
   problem, evidence requirements, and current support boundary.
 - [Forward-backward batch design](docs/forward-backward.md) defines the
   noncausal filtering contract, public boundary, and pre-implementation gates.
+- [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
+  freezes the stage-2 analytic signals, schedules, and refinement semantics.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps
   found before the phase work began.
 - [Development tools roadmap](docs/development-tools.md) defines analytic

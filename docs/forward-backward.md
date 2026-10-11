@@ -285,8 +285,9 @@ The oracle must satisfy all of these before it scores a candidate:
   `1 / (1 + (W/alpha)^(2*N))`;
 - gain at public normalized frequency one agrees with `1/sqrt(2)` within
   `2e-14`;
-- inserting exact collinear samples changes oracle values at original
-  timestamps by at most `1e-12*Q`.
+- inserting exact high-precision collinear samples changes oracle values at
+  original timestamps by at most `1e-12*Q`. This is an oracle self-check and
+  does not involve conversion to a candidate scalar.
 
 The observable scale is:
 
@@ -378,10 +379,13 @@ not directly to an unsampled sine whose chords differ from the reconstruction.
 
 ## Partition and physical-scaling gates
 
-For every base record, insert samples at one-third and two-thirds of every
-interval with exactly collinear values, then compare only original timestamps.
-Both partitions must independently pass the oracle gates. Their mutual
-difference must meet:
+For every base record, construct samples mathematically at one-third and
+two-thirds of every interval, then convert durations and values once to the
+candidate scalar. Because those stored values cannot generally remain exactly
+collinear, score the base and scalar-refined records against their own exact
+finite-record oracles before comparing candidate outputs at original
+timestamps. Their mutual difference, including the unavoidable scalar input
+rounding, must meet:
 
 | Scalar | Time-weighted RMS | Peak |
 | --- | ---: | ---: |
@@ -474,9 +478,9 @@ permissive untested behavior.
 
 1. Commit this physical and architectural contract. ✓
 2. Commit the exact fixture formulas, durations, centers, tapers, and record
-   boundaries, then implement and independently validate the multiprecision
-   modal-kernel oracle and analytic cutoff compensation without adding runtime
-   API.
+   boundaries in [`forward-backward-fixtures.md`](forward-backward-fixtures.md),
+   then implement and independently validate the multiprecision modal-kernel
+   oracle and analytic cutoff compensation without adding runtime API.
 3. Implement a private endpoint-only negative-control baseline with validation,
    transactional failure tests, and no assumption that it will be selected.
 4. Evaluate its oracle error and partition dependence over the frozen matrix;
