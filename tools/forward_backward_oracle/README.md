@@ -6,7 +6,9 @@ forward-backward reference and fixture generation described in
 [`docs/forward-backward-fixtures.md`](../../docs/forward-backward-fixtures.md).
 The Rust sources implement the independent compensated Butterworth modes,
 stable affine-segment primitives, and the linear-time constant-continued
-modal convolution. They do not yet generate the full frozen fixture matrix.
+modal convolution. The seven shared-duration time-domain fixtures and their
+exact-tick nominal schedules are available; tone records and the represented-
+scalar matrix are not yet generated.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream
