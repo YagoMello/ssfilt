@@ -22,6 +22,7 @@ cargo fmt --manifest-path tools/forward_backward_oracle/Cargo.toml -- --check
 cargo check --manifest-path tools/forward_backward_oracle/Cargo.toml
 cargo test --manifest-path tools/forward_backward_oracle/Cargo.toml
 cargo run --manifest-path tools/forward_backward_oracle/Cargo.toml -- verify
+cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- session-smoke
 ```
 
 The `verify` command prints a compact order-1/2/4/8 report with compensated
@@ -31,6 +32,22 @@ reported value exceeds its compact self-check threshold. The test suite
 additionally checks independent pole/residue forms, signed kernel symmetry and
 reality, exact constants, record reversal, exact collinear refinement, and
 scalar-record promotion.
+
+The `session-smoke` command starts the exact ignored root-library endpoint
+client used by the future matrix harness. It sends a small nonconstant valid
+record, checks the client's structured non-finite-input validation response,
+then sends `Done` and requires a successful client exit. This exercises
+process startup, loopback handshake, framing, request dispatch, and shutdown;
+it is transport evidence, not numerical acceptance.
+
+The oracle binds an ephemeral IPv4 loopback address before starting the child.
+The per-run 16-byte nonce combines system-clock nanoseconds, the process ID,
+and a process-local atomic counter. Its lowercase 32-character hexadecimal
+encoding correlates this run's handshake; it is not an authentication secret.
+Child stdout and stderr are drained continuously and retained only as bounded
+64 KiB diagnostic tails. Error cleanup gives the direct Cargo child a brief
+grace period, then kills and reaps it if needed; `Child::kill` does not promise
+to terminate any process tree Cargo may have started.
 
 The future matrix command will build on this oracle and stream full represented
 records and outputs on demand; those large arrays are not committed as the

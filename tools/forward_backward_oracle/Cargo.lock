@@ -12,8 +12,13 @@ checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
 name = "forward-backward-oracle"
 version = "0.1.0"
 dependencies = [
+ "forward-backward-protocol",
  "rug",
 ]
+
+[[package]]
+name = "forward-backward-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "gmp-mpfr-sys"

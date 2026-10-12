@@ -7,12 +7,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     match arguments.next().as_deref() {
         None | Some("verify") => verify(),
+        Some("session-smoke") => session_smoke(),
         Some("-h" | "--help" | "help") => {
             print_help();
             Ok(())
         }
         Some(argument) => Err(format!("unknown command `{argument}`; use --help").into()),
     }
+}
+
+fn session_smoke() -> Result<(), Box<dyn std::error::Error>> {
+    let summary = forward_backward_oracle::run_session_smoke().map_err(std::io::Error::other)?;
+    println!("{summary}");
+    Ok(())
 }
 
 fn verify() -> Result<(), Box<dyn std::error::Error>> {
@@ -90,7 +97,9 @@ fn verify() -> Result<(), Box<dyn std::error::Error>> {
 fn print_help() {
     println!(
         "forward-backward-oracle\n\n\
-         USAGE:\n  forward-backward-oracle [verify]\n\n\
-         COMMANDS:\n  verify  run compact 192/256-bit modal and convolution checks (default)"
+         USAGE:\n  forward-backward-oracle [verify | session-smoke]\n\n\
+         COMMANDS:\n\
+           verify         run compact 192/256-bit modal and convolution checks (default)\n\
+           session-smoke  exercise the root protocol client and its clean shutdown"
     );
 }
