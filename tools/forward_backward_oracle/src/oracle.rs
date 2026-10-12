@@ -90,9 +90,7 @@ fn evaluate_normalized(modes: &ButterworthModes, record: &NormalizedRecord) -> O
         .into_iter()
         .map(|value| {
             let imaginary = Float::with_val(precision, value.imag().clone().abs());
-            if imaginary > maximum_imaginary_residual {
-                maximum_imaginary_residual = imaginary;
-            }
+            update_maximum_imaginary_residual(&mut maximum_imaginary_residual, imaginary);
             value.real().clone()
         })
         .collect();
@@ -101,6 +99,12 @@ fn evaluate_normalized(modes: &ButterworthModes, record: &NormalizedRecord) -> O
         precision,
         values,
         maximum_imaginary_residual,
+    }
+}
+
+fn update_maximum_imaginary_residual(maximum: &mut Float, candidate: Float) {
+    if maximum.is_finite() && (!candidate.is_finite() || candidate > *maximum) {
+        *maximum = candidate;
     }
 }
 
@@ -142,6 +146,26 @@ mod tests {
                     maximum
                 }
             })
+    }
+
+    #[test]
+    fn non_finite_imaginary_residuals_remain_observable() {
+        let precision = 192;
+        let mut maximum = Float::new(precision);
+
+        update_maximum_imaginary_residual(&mut maximum, Float::with_val(precision, 2));
+        update_maximum_imaginary_residual(&mut maximum, Float::with_val(precision, 1));
+        assert_eq!(maximum, Float::with_val(precision, 2));
+
+        update_maximum_imaginary_residual(&mut maximum, Float::with_val(precision, f64::NAN));
+        assert!(maximum.is_nan());
+
+        update_maximum_imaginary_residual(&mut maximum, Float::with_val(precision, 3));
+        assert!(maximum.is_nan());
+
+        let mut infinite = Float::new(precision);
+        update_maximum_imaginary_residual(&mut infinite, Float::with_val(precision, f64::INFINITY));
+        assert!(infinite.is_infinite());
     }
 
     #[test]

@@ -10,7 +10,30 @@ modal convolution. The seven shared-duration time-domain fixtures and 360
 nominal tone records have frozen schedules and samples. Both case families use
 the same represented-scalar conversion and one-third/two-thirds refinement
 paths, while tone cases retain their copied fit metadata. The full 2,448-cell
-acceptance scoring matrix and its reports are not yet implemented.
+acceptance scoring matrix and its reports are not yet implemented. The
+standalone library includes bounded per-record oracle assessment helpers;
+they do not implement candidate scoring or the full acceptance matrix.
+
+`weighted_error` compares two promoted value slices at the exact represented
+physical interval weights, using endpoint-inclusive peak error and trapezoidal
+time-weighted RMS. Its normalized metrics use the frozen scalar-specific scale
+floor (`1e-3` for `f64`, `1e-2` for `f32`). The helper requires at least 192-bit
+arithmetic and uses constant scratch space. Singleton records define RMS as
+their one-sample peak error.
+
+`assess_oracle(order, record)` performs fresh 192-bit and 256-bit oracle runs
+for orders 1, 2, 4, or 8. It returns both raw outputs, normalized convergence
+metrics, and each output's maximum imaginary residual divided by the record
+scale. `certify_oracle` applies the frozen oracle-integrity limits: normalized
+RMS at most `2e-13`, normalized peak at most `1e-12`, and both normalized
+imaginary residuals at most `1e-30`. A certified result exposes its 256-bit
+output as the canonical reference.
+
+The same library provides `reverse_record`, which reverses represented
+intervals and samples without changing their scalar bits, and
+`extract_original_knots`, which copies indices `0, 3, 6, ...` from a scalar
+refinement using its checked mapping. Both helpers return contextual errors
+and reserve output buffers fallibly.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream

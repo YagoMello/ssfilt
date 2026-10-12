@@ -2,6 +2,7 @@
 
 //! Standalone development support for the forward-backward reference oracle.
 
+mod assessment;
 mod case;
 mod fixtures;
 mod model;
@@ -13,6 +14,12 @@ mod segment;
 mod session;
 mod tones;
 
+pub use assessment::{
+    ArithmeticOperation, AssessmentBuffer, AssessmentError, AssessmentErrorKind, CertificationGate,
+    CertifiedOracle, DurationIssue, ErrorMetrics, HIGH_ORACLE_PRECISION, LOW_ORACLE_PRECISION,
+    MINIMUM_ASSESSMENT_PRECISION, OracleAssessment, OracleSide, ReversedRecord, SeriesSide,
+    assess_oracle, certify_oracle, extract_original_knots, reverse_record, weighted_error,
+};
 pub use case::CaseCoordinate;
 pub use fixtures::{
     FixtureBuildError, FixtureCoordinate, NominalRecord, Q_MAXES, QMax, SCHEDULES, ScheduleKind,
