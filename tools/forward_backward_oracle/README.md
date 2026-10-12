@@ -6,11 +6,11 @@ forward-backward reference and fixture generation described in
 [`docs/forward-backward-fixtures.md`](../../docs/forward-backward-fixtures.md).
 The Rust sources implement the independent compensated Butterworth modes,
 stable affine-segment primitives, and the linear-time constant-continued
-modal convolution. The seven shared-duration time-domain fixtures, their
-exact-tick nominal schedules, candidate-scalar conversions, and scalar
-one-third/two-thirds refinements are available. The 360 nominal tone records
-and their steady-state fit metadata are also available; the complete
-represented-scalar matrix is not yet generated.
+modal convolution. The seven shared-duration time-domain fixtures and 360
+nominal tone records have frozen schedules and samples. Both case families use
+the same represented-scalar conversion and one-third/two-thirds refinement
+paths, while tone cases retain their copied fit metadata. The full 2,448-cell
+acceptance scoring matrix and its reports are not yet implemented.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream

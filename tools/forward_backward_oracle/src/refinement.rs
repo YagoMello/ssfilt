@@ -1,4 +1,4 @@
-//! Candidate-scalar one-third/two-thirds refinement of represented records.
+//! Candidate-scalar one-third/two-thirds refinement of represented cases.
 //!
 //! The elapsed split is performed in the represented scalar itself. Inserted
 //! samples are then evaluated from the represented segment at 256-bit
@@ -9,8 +9,8 @@ use core::fmt;
 use rug::{Float, float::Round};
 
 use crate::{
-    FixtureCoordinate, PhysicalCutoff, RecordError, RecordScalar, RepresentedCase,
-    RepresentedRecord, ScalarBits,
+    CaseCoordinate, PhysicalCutoff, RecordError, RecordScalar, RepresentedCase, RepresentedRecord,
+    ScalarBits, ToneFitMetadata,
 };
 
 const REFINEMENT_PRECISION: u32 = 256;
@@ -51,17 +51,18 @@ impl fmt::Display for SplitPart {
 /// The refined scalar record and the metadata of its unrefined source.
 #[derive(Clone, Debug)]
 pub struct ScalarRefinement {
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     physical_cutoff: PhysicalCutoff,
     candidate_cutoff_bits: ScalarBits,
     candidate_angular_cutoff_bits: ScalarBits,
     record: RepresentedRecord,
     original_sample_count: usize,
+    tone_fit_metadata: Option<ToneFitMetadata>,
 }
 
 impl ScalarRefinement {
     #[must_use]
-    pub const fn coordinate(&self) -> FixtureCoordinate {
+    pub const fn coordinate(&self) -> CaseCoordinate {
         self.coordinate
     }
 
@@ -92,6 +93,12 @@ impl ScalarRefinement {
         self.original_sample_count
     }
 
+    /// The copied nominal fit metadata for tone refinements; time cases have none.
+    #[must_use]
+    pub const fn tone_fit_metadata(&self) -> Option<&ToneFitMetadata> {
+        self.tone_fit_metadata.as_ref()
+    }
+
     /// Return the refined sample index for one original sample index.
     #[must_use]
     pub fn refined_index_for_original(&self, original_index: usize) -> Option<usize> {
@@ -104,7 +111,7 @@ impl ScalarRefinement {
 /// Contextual failure while constructing one candidate-scalar refinement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScalarRefinementError {
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     scalar: RecordScalar,
     cutoff: PhysicalCutoff,
     kind: ScalarRefinementErrorKind,
@@ -112,7 +119,7 @@ pub struct ScalarRefinementError {
 
 impl ScalarRefinementError {
     #[must_use]
-    pub const fn coordinate(&self) -> FixtureCoordinate {
+    pub const fn coordinate(&self) -> CaseCoordinate {
         self.coordinate
     }
 
@@ -234,7 +241,7 @@ impl std::error::Error for ScalarRefinementError {
 }
 
 /// Construct the candidate-scalar one-third/two-thirds refinement of one
-/// represented fixture case.
+/// represented case.
 pub fn refine_represented_case(
     case: &RepresentedCase,
 ) -> Result<ScalarRefinement, ScalarRefinementError> {
@@ -244,15 +251,17 @@ pub fn refine_represented_case(
         case.physical_cutoff(),
         case.candidate_cutoff_bits(),
         case.candidate_angular_cutoff_bits(),
+        case.tone_fit_metadata().cloned(),
     )
 }
 
 fn refine_record(
     source: &RepresentedRecord,
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     physical_cutoff: PhysicalCutoff,
     candidate_cutoff_bits: ScalarBits,
     candidate_angular_cutoff_bits: ScalarBits,
+    tone_fit_metadata: Option<ToneFitMetadata>,
 ) -> Result<ScalarRefinement, ScalarRefinementError> {
     let scalar = source.scalar();
     let interval_count = source.intervals_seconds().len();
@@ -369,12 +378,13 @@ fn refine_record(
         candidate_angular_cutoff_bits,
         record,
         original_sample_count: source.samples().len(),
+        tone_fit_metadata,
     })
 }
 
 fn refine_f32(
     source: &RepresentedRecord,
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     physical_cutoff: PhysicalCutoff,
     refined_intervals: &mut Vec<f32>,
     refined_samples: &mut Vec<f32>,
@@ -445,7 +455,7 @@ fn refine_f32(
 
 fn refine_f64(
     source: &RepresentedRecord,
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     physical_cutoff: PhysicalCutoff,
     refined_intervals: &mut Vec<f64>,
     refined_samples: &mut Vec<f64>,
@@ -608,7 +618,7 @@ fn narrow_f32(
 }
 
 fn error(
-    coordinate: FixtureCoordinate,
+    coordinate: CaseCoordinate,
     scalar: RecordScalar,
     cutoff: PhysicalCutoff,
     kind: ScalarRefinementErrorKind,
@@ -629,8 +639,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        QMax, SCHEDULES, TIME_DOMAIN_FIXTURES, TimeDomainFixture, build_nominal_record,
-        build_represented_case,
+        FixtureCoordinate, QMax, SCHEDULES, TIME_DOMAIN_FIXTURES, TONE_FREQUENCIES, TONE_ORDERS,
+        TONE_PHASES, TONE_RECORD_COUNT, TimeDomainFixture, ToneFrequency, ToneOrder, TonePhase,
+        build_nominal_record, build_nominal_tone_record, build_represented_case,
+        build_represented_tone_case,
     };
 
     const TEST_PRECISION: u32 = 256;
@@ -686,7 +698,14 @@ mod tests {
             )
             .unwrap(),
         };
-        refine_record(&record, coordinate, cutoff, cutoff_bits, omega_bits)
+        refine_record(
+            &record,
+            coordinate.into(),
+            cutoff,
+            cutoff_bits,
+            omega_bits,
+            None,
+        )
     }
 
     fn exact_high_precision_interpolation(
@@ -720,6 +739,14 @@ mod tests {
             .iter()
             .map(|value| value.to_bits())
             .collect()
+    }
+
+    fn assert_same_float_representation(expected: &Float, actual: &Float) {
+        assert_eq!(expected.prec(), actual.prec());
+        assert_eq!(
+            expected.to_string_radix(2, None),
+            actual.to_string_radix(2, None)
+        );
     }
 
     #[test]
@@ -924,12 +951,13 @@ mod tests {
         let coordinate = coordinate();
         let record_error = RecordError::InvalidCutoff;
         let contextual = error(
-            coordinate,
+            coordinate.into(),
             RecordScalar::F64,
             PhysicalCutoff::ThirtySevenHz,
             ScalarRefinementErrorKind::RecordValidation(record_error.clone()),
         );
         assert!(contextual.to_string().contains("record validation failed"));
+        assert!(contextual.to_string().contains("TimeDomain("));
         assert_eq!(
             contextual.source().unwrap().to_string(),
             record_error.to_string()
@@ -946,6 +974,22 @@ mod tests {
         assert!(split.to_string().contains("split third duration"));
         assert!(split.to_string().contains("interval 0"));
         assert!(split.source().is_none());
+
+        let tone_coordinate = crate::ToneCoordinate {
+            order: ToneOrder::Eight,
+            frequency: ToneFrequency::Two,
+            phase: TonePhase::OneNineteen,
+            q_max: QMax::PiOver32,
+            schedule: crate::ScheduleKind::Uneven,
+        };
+        let tone_error = error(
+            CaseCoordinate::Tone(tone_coordinate),
+            RecordScalar::F64,
+            PhysicalCutoff::OneHz,
+            ScalarRefinementErrorKind::RefinedLengthOverflow { interval_count: 2 },
+        );
+        assert!(tone_error.to_string().contains("Tone("));
+        assert!(tone_error.to_string().contains("refining 2 intervals"));
     }
 
     #[test]
@@ -990,11 +1034,51 @@ mod tests {
     }
 
     #[test]
+    fn tone_metadata_clones_preserve_precision_and_binary_representation() {
+        let coordinate = crate::ToneCoordinate {
+            order: ToneOrder::Four,
+            frequency: ToneFrequency::SevenTenths,
+            phase: TonePhase::OneNineteen,
+            q_max: QMax::PiOver64,
+            schedule: crate::ScheduleKind::Jitter,
+        };
+        let nominal = build_nominal_tone_record(coordinate).unwrap();
+        let case =
+            build_represented_tone_case(&nominal, RecordScalar::F64, PhysicalCutoff::ThirtySevenHz)
+                .unwrap();
+        let refined = refine_represented_case(&case).unwrap();
+        let nominal_metadata = nominal.metadata();
+        let represented_metadata = case.tone_fit_metadata().unwrap();
+        let refined_metadata = refined.tone_fit_metadata().unwrap();
+
+        for (expected, represented, refined) in [
+            (
+                nominal_metadata.guard(),
+                represented_metadata.guard(),
+                refined_metadata.guard(),
+            ),
+            (
+                nominal_metadata.period(),
+                represented_metadata.period(),
+                refined_metadata.period(),
+            ),
+            (
+                nominal_metadata.nominal_endpoint(),
+                represented_metadata.nominal_endpoint(),
+                refined_metadata.nominal_endpoint(),
+            ),
+        ] {
+            assert_same_float_representation(expected, represented);
+            assert_same_float_representation(represented, refined);
+        }
+    }
+
+    #[test]
     fn every_frozen_case_refines_one_record_at_a_time() {
         let mut case_count = 0;
         let mut largest_base = (0, 0);
         let mut largest_refined = (0, 0);
-        let mut largest_coordinate = None;
+        let mut largest_coordinate: Option<CaseCoordinate> = None;
 
         for fixture in TIME_DOMAIN_FIXTURES {
             for q_max in crate::Q_MAXES {
@@ -1015,7 +1099,8 @@ mod tests {
                             let refined_sample_count =
                                 refined_interval_count.checked_add(1).unwrap();
 
-                            assert_eq!(refined.coordinate(), coordinate);
+                            assert_eq!(refined.coordinate(), CaseCoordinate::from(coordinate));
+                            assert!(refined.tone_fit_metadata().is_none());
                             assert_eq!(refined.physical_cutoff(), cutoff);
                             assert_eq!(
                                 refined.candidate_cutoff_bits(),
@@ -1087,7 +1172,7 @@ mod tests {
 
                             if base_interval_count > largest_base.0 {
                                 largest_base = (base_interval_count, case.record().samples().len());
-                                largest_coordinate = Some(coordinate);
+                                largest_coordinate = Some(CaseCoordinate::from(coordinate));
                             }
                             largest_refined.0 = largest_refined
                                 .0
@@ -1108,11 +1193,192 @@ mod tests {
         assert_eq!(largest_refined, (119_457, 119_458));
         assert_eq!(
             largest_coordinate,
-            Some(FixtureCoordinate {
+            Some(CaseCoordinate::TimeDomain(FixtureCoordinate {
                 fixture: TimeDomainFixture::UnequalMultitone,
                 q_max: QMax::PiOver128,
                 schedule: crate::ScheduleKind::Uneven,
-            })
+            }))
+        );
+    }
+
+    #[test]
+    fn every_tone_represented_cell_refines_with_exact_conservation() {
+        let mut case_count = 0;
+        let mut largest_nominal_shape = (0_usize, 0_usize);
+        let mut largest_refined_shape = (0_usize, 0_usize);
+
+        for order in TONE_ORDERS {
+            for frequency in TONE_FREQUENCIES {
+                for phase in TONE_PHASES {
+                    for q_max in crate::Q_MAXES {
+                        for schedule in SCHEDULES {
+                            let coordinate = crate::ToneCoordinate {
+                                order,
+                                frequency,
+                                phase,
+                                q_max,
+                                schedule,
+                            };
+                            let nominal = build_nominal_tone_record(coordinate).unwrap();
+                            largest_nominal_shape.0 = largest_nominal_shape
+                                .0
+                                .max(nominal.normalized_intervals().len());
+                            largest_nominal_shape.1 =
+                                largest_nominal_shape.1.max(nominal.samples().len());
+
+                            for scalar in [RecordScalar::F32, RecordScalar::F64] {
+                                for cutoff in [PhysicalCutoff::OneHz, PhysicalCutoff::ThirtySevenHz]
+                                {
+                                    let case =
+                                        build_represented_tone_case(&nominal, scalar, cutoff)
+                                            .unwrap();
+                                    let refined = refine_represented_case(&case).unwrap();
+                                    let base_interval_count =
+                                        case.record().intervals_seconds().len();
+                                    let refined_interval_count =
+                                        base_interval_count.checked_mul(3).unwrap();
+                                    let refined_sample_count =
+                                        refined_interval_count.checked_add(1).unwrap();
+
+                                    assert_eq!(case.coordinate(), CaseCoordinate::Tone(coordinate));
+                                    assert_eq!(
+                                        refined.coordinate(),
+                                        CaseCoordinate::Tone(coordinate)
+                                    );
+                                    assert_eq!(case.tone_fit_metadata(), Some(nominal.metadata()));
+                                    assert_eq!(
+                                        refined.tone_fit_metadata(),
+                                        case.tone_fit_metadata()
+                                    );
+                                    assert_eq!(refined.physical_cutoff(), cutoff);
+                                    assert_eq!(
+                                        refined.candidate_cutoff_bits(),
+                                        case.candidate_cutoff_bits()
+                                    );
+                                    assert_eq!(
+                                        refined.candidate_angular_cutoff_bits(),
+                                        case.candidate_angular_cutoff_bits()
+                                    );
+                                    assert_eq!(
+                                        refined.original_sample_count(),
+                                        case.record().samples().len()
+                                    );
+                                    assert_eq!(
+                                        refined.record().intervals_seconds().len(),
+                                        refined_interval_count
+                                    );
+                                    assert_eq!(
+                                        refined.record().samples().len(),
+                                        refined_sample_count
+                                    );
+                                    assert_eq!(
+                                        refined.record().scale(TEST_PRECISION),
+                                        case.record().scale(TEST_PRECISION)
+                                    );
+
+                                    for (original_index, original_sample) in
+                                        case.record().samples().iter().copied().enumerate()
+                                    {
+                                        let refined_index = refined
+                                            .refined_index_for_original(original_index)
+                                            .unwrap();
+                                        assert_eq!(
+                                            refined_index,
+                                            original_index.checked_mul(3).unwrap()
+                                        );
+                                        assert_eq!(
+                                            refined.record().samples()[refined_index].to_bits(),
+                                            original_sample.to_bits()
+                                        );
+                                    }
+                                    assert_eq!(
+                                        refined.refined_index_for_original(
+                                            case.record().samples().len()
+                                        ),
+                                        None
+                                    );
+
+                                    for interval_index in 0..base_interval_count {
+                                        let duration =
+                                            case.record().intervals_seconds()[interval_index];
+                                        let base_duration =
+                                            Float::with_val(TEST_PRECISION, duration);
+                                        let refined_start = interval_index * 3;
+                                        let parts = &refined.record().intervals_seconds()
+                                            [refined_start..refined_start + 3];
+                                        assert!(
+                                            parts
+                                                .iter()
+                                                .all(|part| part.is_finite() && *part > 0.0)
+                                        );
+                                        assert_eq!(
+                                            parts[0].to_bits(),
+                                            parts[1].to_bits(),
+                                            "{coordinate:?} {scalar:?} interval {interval_index}"
+                                        );
+                                        let mut sum = Float::with_val(TEST_PRECISION, parts[0]);
+                                        sum += Float::with_val(TEST_PRECISION, parts[1]);
+                                        sum += Float::with_val(TEST_PRECISION, parts[2]);
+                                        assert_eq!(
+                                            sum, base_duration,
+                                            "{coordinate:?} {scalar:?} interval {interval_index}"
+                                        );
+                                    }
+
+                                    largest_refined_shape.0 = largest_refined_shape
+                                        .0
+                                        .max(refined.record().intervals_seconds().len());
+                                    largest_refined_shape.1 = largest_refined_shape
+                                        .1
+                                        .max(refined.record().samples().len());
+                                    case_count += 1;
+                                    drop(refined);
+                                    drop(case);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(case_count, TONE_RECORD_COUNT * 2 * 2);
+        assert_eq!(largest_nominal_shape, (33_013, 33_014));
+        assert_eq!(largest_refined_shape, (99_039, 99_040));
+    }
+
+    #[test]
+    fn f32_tone_terminal_remainder_refinement_keeps_native_split_bits() {
+        let nominal = build_nominal_tone_record(crate::ToneCoordinate {
+            order: ToneOrder::Eight,
+            frequency: ToneFrequency::OneSixteenth,
+            phase: TonePhase::SeventeenHundredths,
+            q_max: QMax::PiOver128,
+            schedule: crate::ScheduleKind::Uneven,
+        })
+        .unwrap();
+        assert_eq!(
+            nominal.normalized_intervals().len(),
+            nominal.full_interval_count() + 1
+        );
+        let case = build_represented_tone_case(&nominal, RecordScalar::F32, PhysicalCutoff::OneHz)
+            .unwrap();
+        let refined = refine_represented_case(&case).unwrap();
+        let last_interval = case.record().intervals_seconds().len() - 1;
+        let duration = case.record().intervals_seconds()[last_interval] as f32;
+        let expected = split_f32(duration, last_interval).unwrap();
+        let parts = &refined.record().intervals_seconds()[last_interval * 3..last_interval * 3 + 3];
+        assert_eq!(
+            (parts[0] as f32).to_bits(),
+            expected.third_duration.to_bits()
+        );
+        assert_eq!(
+            (parts[1] as f32).to_bits(),
+            expected.third_duration.to_bits()
+        );
+        assert_eq!(
+            (parts[2] as f32).to_bits(),
+            expected.remainder_duration.to_bits()
         );
     }
 }

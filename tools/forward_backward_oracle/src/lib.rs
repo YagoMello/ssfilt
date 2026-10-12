@@ -2,6 +2,7 @@
 
 //! Standalone development support for the forward-backward reference oracle.
 
+mod case;
 mod fixtures;
 mod model;
 mod oracle;
@@ -12,6 +13,7 @@ mod segment;
 mod session;
 mod tones;
 
+pub use case::CaseCoordinate;
 pub use fixtures::{
     FixtureBuildError, FixtureCoordinate, NominalRecord, Q_MAXES, QMax, SCHEDULES, ScheduleKind,
     TIME_DOMAIN_FIXTURES, TimeDomainFixture, analytic_fixture_value, build_nominal_record,
@@ -25,7 +27,7 @@ pub use refinement::{
 };
 pub use represented::{
     PHYSICAL_CUTOFFS, PhysicalCutoff, RepresentedBuildError, RepresentedBuildErrorKind,
-    RepresentedCase, SCALAR_ORDER, ScalarBits, build_represented_case,
+    RepresentedCase, SCALAR_ORDER, ScalarBits, build_represented_case, build_represented_tone_case,
 };
 pub use session::run_session_smoke;
 pub use tones::{
