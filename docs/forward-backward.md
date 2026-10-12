@@ -277,9 +277,15 @@ The oracle must satisfy all of these before it scores a candidate:
 
 - 192-bit and 256-bit evaluations agree within `2e-13*Q` time-weighted RMS and
   `1e-12*Q` peak;
-- the residual imaginary component is at most `1e-30*Q`;
-- symmetry follows algebraically from `abs(d)`, while independent evaluations
-  at `d` and `-d` agree within `1e-30*Q`;
+- the residual imaginary component of every convolved output is at most
+  `1e-30*Q`; bare-kernel checks instead scale their imaginary residual by
+  `max(1, abs(real(K)))`;
+- symmetry follows algebraically from `abs(d)`, while independent signed
+  branches agree within `1e-30*max(1, abs(real(K)))`: for positive `d`, the
+  right branch places `exp(p_k*d)` on the second modal index and the left
+  branch places `exp(p_j*d)` on the first. Reversal covariance separately
+  exercises the complete convolution rather than calling one shared `abs`
+  implementation twice;
 - DC gain is one within `2e-14`, and the transform agrees within `2e-13` at
   `W = 0, 1/16, 1/4, 0.7, 1, 2, 4` with
   `1 / (1 + (W/alpha)^(2*N))`;

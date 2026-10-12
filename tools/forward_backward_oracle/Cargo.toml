@@ -1,0 +1,11 @@
+[package]
+name = "forward-backward-oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Standalone development tool for forward-backward reference fixtures"
+
+[workspace]
+
+[dependencies]
+rug = { version = "=1.30.0", default-features = false, features = ["complex", "std"] }
