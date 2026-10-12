@@ -6,6 +6,7 @@ mod fixtures;
 mod model;
 mod oracle;
 mod record;
+mod refinement;
 mod represented;
 mod segment;
 mod session;
@@ -17,6 +18,10 @@ pub use fixtures::{
 pub use model::ButterworthModes;
 pub use oracle::{OracleOutput, evaluate};
 pub use record::{RecordError, RecordScalar, RepresentedRecord};
+pub use refinement::{
+    RefinedBuffer, RepresentedValueField, ScalarRefinement, ScalarRefinementError,
+    ScalarRefinementErrorKind, SplitPart, refine_represented_case,
+};
 pub use represented::{
     PHYSICAL_CUTOFFS, PhysicalCutoff, RepresentedBuildError, RepresentedBuildErrorKind,
     RepresentedCase, SCALAR_ORDER, ScalarBits, build_represented_case,
