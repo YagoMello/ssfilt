@@ -10,6 +10,8 @@
 compile_error!("enable either the `std` or `libm` feature");
 
 mod band_pass;
+#[cfg(test)]
+mod batch_prototype;
 mod config;
 mod diagnostics;
 mod error;

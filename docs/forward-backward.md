@@ -486,9 +486,9 @@ permissive untested behavior.
 2. Commit the exact fixture formulas, durations, centers, tapers, and record
    boundaries in [`forward-backward-fixtures.md`](forward-backward-fixtures.md),
    then implement and independently validate the multiprecision modal-kernel
-   oracle and analytic cutoff compensation without adding runtime API.
+   oracle and analytic cutoff compensation without adding runtime API. ✓
 3. Implement a private endpoint-only negative-control baseline with validation,
-   transactional failure tests, and no assumption that it will be selected.
+   transactional failure tests, and no assumption that it will be selected. ✓
 4. Evaluate its oracle error and partition dependence over the frozen matrix;
    implement one bounded trajectory-aware replay candidate if it fails.
 5. Select endpoint replay or a trajectory-aware engine from the predeclared
