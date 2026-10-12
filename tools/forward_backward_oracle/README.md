@@ -8,8 +8,9 @@ The Rust sources implement the independent compensated Butterworth modes,
 stable affine-segment primitives, and the linear-time constant-continued
 modal convolution. The seven shared-duration time-domain fixtures, their
 exact-tick nominal schedules, candidate-scalar conversions, and scalar
-one-third/two-thirds refinements are available. Tone records and the complete
-represented-scalar matrix are not yet generated.
+one-third/two-thirds refinements are available. The 360 nominal tone records
+and their steady-state fit metadata are also available; the complete
+represented-scalar matrix is not yet generated.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream
