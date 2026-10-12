@@ -474,10 +474,16 @@ The protocol is versioned and framed, represents candidate values by their
 exact `f32` or `f64` bits, bounds every decoded length before allocation, and
 identifies every case by both coordinate and represented-record digest. A
 successful response repeats that identity and supplies exact output bits plus
-per-pass work. A structured candidate-error response instead records the pass,
-interval, and source category when available. Unknown versions or tags,
-inconsistent lengths, arithmetic overflow, truncation, and identity mismatch
-invalidate the run. Candidate errors and non-finite successful outputs are
+per-pass and tail work. It also declares whether the candidate omitted the
+tail, used the analytic tail directly, or used numerical continuation. For
+numerical continuation the client certifies its final normalized residual and
+public-normalized extension in the candidate scalar, and streams the complete
+analytic-tail-substitution output so the oracle computes the replacement peak
+delta independently. A structured candidate-error response instead records
+the pass, record interval, and source category when available. Unknown
+versions or tags, inconsistent lengths, arithmetic overflow, truncation, and
+identity mismatch invalidate the run. Candidate errors and non-finite
+successful outputs are
 cell errors: the report records them and continues when protocol and oracle
 integrity remain intact. Response arrival order is not significant; reports
 sort by the frozen coordinate order. The concrete byte layout, connection
