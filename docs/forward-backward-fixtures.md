@@ -449,6 +449,91 @@ every input segment afresh for every output timestamp is not an acceptable
 implementation strategy. This computational requirement does not reduce the
 matrix or weaken the independent modal-kernel definition.
 
+## Acceptance harness and artifacts
+
+The complete matrix is a dedicated development acceptance run, not part of an
+ordinary `cargo test`. Its canonical entry point is:
+
+```text
+cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- matrix --output target/forward-backward-matrix
+```
+
+The isolated multiprecision tool owns fixture construction, oracle evaluation,
+scoring, and report generation. For each shard it starts one root-library
+unit-test client and streams one represented record at a time through a
+versioned framed binary protocol over a loopback connection. The client calls
+the actual private batch prototype and returns its exact scalar output bits
+plus work diagnostics. This keeps `rug` outside the root dependency graph,
+adds no public or feature-gated library surface, and bounds live record storage
+independently of total matrix size. Routine root tests exercise protocol
+framing and a compact smoke case; they do not start the multiprecision matrix.
+Those tests use root-local codec code or frozen byte vectors, not an oracle
+dev-dependency that would pull `rug` and its native libraries into root tests.
+
+The protocol is versioned and framed, represents candidate values by their
+exact `f32` or `f64` bits, bounds every decoded length before allocation, and
+identifies every case by both coordinate and represented-record digest. A
+successful response repeats that identity and supplies exact output bits plus
+per-pass work. A structured candidate-error response instead records the pass,
+interval, and source category when available. Unknown versions or tags,
+inconsistent lengths, arithmetic overflow, truncation, and identity mismatch
+invalidate the run. Candidate errors and non-finite successful outputs are
+cell errors: the report records them and continues when protocol and oracle
+integrity remain intact. Response arrival order is not significant; reports
+sort by the frozen coordinate order. The concrete byte layout, connection
+handshake, and process concurrency belong to the implemented protocol version,
+not this numerical contract.
+
+The default response-matrix shard key is `(fixture record, per-pass order)`,
+with fixture records in this document's declaration order and orders
+`[1, 2, 4, 8]`. Boundary probes occupy a separate named shard namespace.
+Alternative deterministic partitions may be used after measurement, provided
+the manifest proves that every required coordinate is covered exactly once.
+Unfiltered `matrix` executes every response and boundary shard. Development
+filters may select a fixture record or probe, order, scalar, cutoff, maximum
+interval, or schedule, but a filtered report is diagnostic and cannot satisfy
+the full-acceptance gate. Every report records the selected coordinate set and
+its digest so partial and complete runs cannot be confused.
+
+Full output arrays are generated and consumed during the run; they are not
+committed or cached as the reference. The committed evidence is compact:
+
+- a coordinate manifest and digest covering formulas, scalar conversions,
+  schedules, refinements, reversals, and boundary probes;
+- typed metrics rows whose member case identifiers are explicit: single-cell
+  rows contain oracle convergence RMS and peak, imaginary residual, candidate
+  RMS and peak, tone fit fields where applicable, per-pass work, and every
+  local gate; comparison rows contain the base/refined, 1/37 Hz, reversal, or
+  other grouped members and their corresponding gates;
+- an aggregate summary with tool/protocol versions, canonical source and
+  manifest digests, complete-versus-filtered status, observational elapsed
+  time, and the count of passed, failed, and errored cells. Host-local peak
+  resident memory may be reported when available only if its platform and
+  measurement method are named; time and memory are non-gating observations.
+
+The canonical source digest covers the relevant ssfilt source-file contents,
+oracle and client protocol source, fixture document/version, oracle
+`Cargo.lock`, and manifest bytes. A Git commit plus an explicit dirty-state
+digest may encode the same identity. Absolute paths, timestamps, target
+directories, report ordering, and other host-dependent metadata are excluded.
+
+Reports collect all cells in their selected coordinate set instead of stopping
+at the first numerical failure. Transport, validation, or oracle self-check
+failures still make the run unsuccessful and are distinguished from an
+expected candidate gate failure. The full matrix initially remains an explicit
+acceptance job until measured runtime and memory justify a normal CI cadence.
+A candidate may be selected at stage 5 only after that candidate passes a
+complete, reproducible run. The stage-4 endpoint negative-control report remains
+complete and useful when it records expected gate failures.
+
+Fresh 192-bit and 256-bit oracle runs score both the time-weighted RMS and peak
+convergence gates for every represented base, scalar-refined, and reversed
+record. Exact high-precision collinear refinement is exhaustive for every
+selected base record; it is not recursively reapplied to the derived
+scalar-refined or reversed records, whose own convergence, partition, and
+reversal gates remain exhaustive. Compact `verify` remains a fast oracle smoke
+test and does not substitute for these per-record checks.
+
 The frozen whole-record, tone, partition, physical-scaling, boundary, tail,
 and work ceilings remain those in `forward-backward.md`. This file supplies
 only reproducible inputs and execution organization.

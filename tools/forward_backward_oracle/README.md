@@ -32,7 +32,11 @@ additionally checks independent pole/residue forms, signed kernel symmetry and
 reality, exact constants, record reversal, exact collinear refinement, and
 scalar-record promotion.
 
-The future fixture generator will build on this oracle. Any generated fixture
-values must be emitted as Rust `f64::from_bits(...)` constants and accompanied
-by a manifest and checksum so the committed binary values and their provenance
-can be verified.
+The future matrix command will build on this oracle and stream full represented
+records and outputs on demand; those large arrays are not committed as the
+reference. Small frozen sentinels or constants, when useful, must be emitted as
+Rust `f64::from_bits(...)` values. Compact coordinate manifests, metrics, and
+recorded tool/source identities preserve provenance for complete and filtered
+runs; checksums verify artifact integrity. The protocol, sharding, and artifact
+contract is frozen in
+[`docs/forward-backward-fixtures.md`](../../docs/forward-backward-fixtures.md#acceptance-harness-and-artifacts).
