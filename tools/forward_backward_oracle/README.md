@@ -6,9 +6,10 @@ forward-backward reference and fixture generation described in
 [`docs/forward-backward-fixtures.md`](../../docs/forward-backward-fixtures.md).
 The Rust sources implement the independent compensated Butterworth modes,
 stable affine-segment primitives, and the linear-time constant-continued
-modal convolution. The seven shared-duration time-domain fixtures and their
-exact-tick nominal schedules are available; tone records and the represented-
-scalar matrix are not yet generated.
+modal convolution. The seven shared-duration time-domain fixtures, their
+exact-tick nominal schedules, candidate-scalar conversions, and scalar
+one-third/two-thirds refinements are available. Tone records and the complete
+represented-scalar matrix are not yet generated.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream
@@ -33,7 +34,9 @@ agreement, and the 256-bit imaginary residual. It exits unsuccessfully if any
 reported value exceeds its compact self-check threshold. The test suite
 additionally checks independent pole/residue forms, signed kernel symmetry and
 reality, exact constants, record reversal, exact collinear refinement, and
-scalar-record promotion.
+scalar-record promotion. It also exhaustively checks represented conversion
+and scalar refinement across the current time-domain fixture axes, including
+native-width rounding and original-knot preservation.
 
 The `session-smoke` command starts the exact ignored root-library endpoint
 client used by the future matrix harness. It sends a small nonconstant valid
