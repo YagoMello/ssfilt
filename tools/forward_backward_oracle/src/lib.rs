@@ -6,6 +6,7 @@ mod fixtures;
 mod model;
 mod oracle;
 mod record;
+mod represented;
 mod segment;
 mod session;
 
@@ -16,4 +17,8 @@ pub use fixtures::{
 pub use model::ButterworthModes;
 pub use oracle::{OracleOutput, evaluate};
 pub use record::{RecordError, RecordScalar, RepresentedRecord};
+pub use represented::{
+    PHYSICAL_CUTOFFS, PhysicalCutoff, RepresentedBuildError, RepresentedBuildErrorKind,
+    RepresentedCase, SCALAR_ORDER, ScalarBits, build_represented_case,
+};
 pub use session::run_session_smoke;
