@@ -10,3 +10,4 @@ description = "Standalone development tool for forward-backward reference fixtur
 [dependencies]
 forward-backward-protocol = { path = "../forward_backward_protocol" }
 rug = { version = "=1.30.0", default-features = false, features = ["complex", "std"] }
+sha2 = "=0.10.9"

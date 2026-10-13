@@ -8,6 +8,9 @@ mod assessment;
 mod candidate;
 mod case;
 mod fixtures;
+// The matrix runner will consume these frozen identities in a later stage.
+#[allow(dead_code)]
+mod identity;
 mod model;
 mod oracle;
 mod record;

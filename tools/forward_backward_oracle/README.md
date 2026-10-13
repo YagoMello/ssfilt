@@ -39,6 +39,11 @@ Private candidate-result materialization preserves structured errors and tail
 evidence, promotes finite outputs exactly to 256-bit values, and records the
 first non-finite output with its original scalar bits for later scoring.
 
+Private response-cell identities combine the frozen coordinate bit layout
+with an incremental SHA-256 digest of the exact represented scalar record.
+The digest implementation is pinned in this tool and does not affect the root
+library's dependencies.
+
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream
 users' dependency graph. `rug` is pinned to `1.30.0` and enabled only with its
