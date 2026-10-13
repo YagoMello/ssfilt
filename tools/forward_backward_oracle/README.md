@@ -9,10 +9,10 @@ stable affine-segment primitives, and the linear-time constant-continued
 modal convolution. The seven shared-duration time-domain fixtures and 360
 nominal tone records have frozen schedules and samples. Both case families use
 the same represented-scalar conversion and one-third/two-thirds refinement
-paths, while tone cases retain their copied fit metadata. The full 2,448-cell
-acceptance scoring matrix and its reports are not yet implemented. The
-standalone library includes bounded per-record oracle assessment helpers;
-they do not implement candidate scoring or the full acceptance matrix.
+paths, while tone cases retain their copied fit metadata. A private whole-record
+scorer now certifies the oracle and applies the frozen normalized RMS and peak
+gates to one finite candidate output. The full 2,448-cell acceptance matrix and
+its reports are not yet implemented.
 
 `weighted_error` compares two promoted value slices at the exact represented
 physical interval weights, using endpoint-inclusive peak error and trapezoidal

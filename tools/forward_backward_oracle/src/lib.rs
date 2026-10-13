@@ -3,7 +3,7 @@
 //! Standalone development support for the forward-backward reference oracle.
 
 mod assessment;
-// This module is staged for the next scorer; remove the allowance when it consumes these types.
+// Candidate materialization is ready for the scorer; both await the matrix runner.
 #[allow(dead_code)]
 mod candidate;
 mod case;
@@ -13,6 +13,9 @@ mod oracle;
 mod record;
 mod refinement;
 mod represented;
+// Whole-record scoring is staged until the matrix runner consumes its results.
+#[allow(dead_code)]
+mod score;
 mod segment;
 mod session;
 mod tones;
