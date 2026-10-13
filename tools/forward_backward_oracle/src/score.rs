@@ -93,10 +93,14 @@ impl CandidateGates {
 }
 
 /// Candidate result for one certified represented record.
+// Retaining the exact promoted output is required for later cross-cell
+// comparisons; boxing this outcome would add an allocation per scored cell.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub(crate) enum CandidateDisposition {
     /// A finite candidate output was measured against the canonical oracle.
     Scored {
+        output: Vec<Float>,
         metrics: ErrorMetrics,
         gates: CandidateGates,
         work: CandidateWorkCounters,
@@ -124,6 +128,17 @@ impl WholeRecordAssessment {
     #[must_use]
     pub(crate) const fn candidate(&self) -> &CandidateDisposition {
         &self.candidate
+    }
+
+    /// The exact 256-bit promotion of a finite scored output, when available.
+    #[must_use]
+    pub(crate) fn scored_output(&self) -> Option<&[Float]> {
+        match &self.candidate {
+            CandidateDisposition::Scored { output, .. } => Some(output),
+            CandidateDisposition::CandidateError(_) | CandidateDisposition::NonFiniteSuccess(_) => {
+                None
+            }
+        }
     }
 }
 
@@ -157,7 +172,8 @@ impl std::error::Error for WholeRecordFatalError {
 ///
 /// Candidate errors and non-finite successes remain collectable cell outcomes,
 /// but each still receives fresh oracle-integrity diagnostics. The canonical
-/// reference and candidate output vectors are dropped before returning.
+/// reference is dropped before returning; a finite promoted candidate output
+/// remains attached to the assessment for later cross-cell comparisons.
 pub(crate) fn score_whole_record(
     order: usize,
     record: &RepresentedRecord,
@@ -179,9 +195,9 @@ pub(crate) fn score_whole_record(
                 HIGH_ORACLE_PRECISION,
             )
             .map_err(WholeRecordFatalError::CandidateMetric)?;
-            drop(output);
             let gates = candidate_gates(record.scalar(), &metrics);
             CandidateDisposition::Scored {
+                output,
                 metrics,
                 gates,
                 work,
@@ -389,6 +405,7 @@ mod tests {
             assert_eq!(result.oracle().order(), 1);
             match result.candidate() {
                 CandidateDisposition::Scored {
+                    output: _,
                     metrics,
                     gates,
                     work: actual_work,

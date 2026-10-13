@@ -40,9 +40,16 @@ evidence, promotes finite outputs exactly to 256-bit values, and records the
 first non-finite output with its original scalar bits for later scoring.
 
 Private response-cell identities combine the frozen coordinate bit layout
-with an incremental SHA-256 digest of the exact represented scalar record.
-The digest implementation is pinned in this tool and does not affect the root
-library's dependencies.
+with an incremental SHA-256 digest of the exact represented scalar record. The
+private single-cell executor uses one shard-owned candidate session, constructs
+requests from exact native scalar bits, drops request buffers after each
+response, and then materializes and scores that result. Identity validation
+precedes request-buffer allocation. The digest implementation is pinned in
+this tool and does not affect the root library's dependencies.
+
+Finite scored outcomes retain their promoted 256-bit output in memory so later
+cross-cell comparisons can use the same exact candidate values. The planned
+reports will store compact metrics and gates rather than full output arrays.
 
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream

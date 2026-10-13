@@ -96,7 +96,7 @@ pub fn run_session_smoke() -> Result<String, String> {
     ))
 }
 
-struct CandidateSession {
+pub(crate) struct CandidateSession {
     child: Option<Child>,
     stream: Option<TcpStream>,
     stdout_tail: SharedTail,
@@ -104,7 +104,7 @@ struct CandidateSession {
 }
 
 impl CandidateSession {
-    fn start() -> Result<Self, SessionError> {
+    pub(crate) fn start() -> Result<Self, SessionError> {
         let listener =
             TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).map_err(|error| {
                 SessionError::bare(
@@ -216,7 +216,7 @@ impl CandidateSession {
         Ok(())
     }
 
-    fn round_trip(&mut self, request: &CaseRequest) -> Result<CaseResult, SessionError> {
+    pub(crate) fn round_trip(&mut self, request: &CaseRequest) -> Result<CaseResult, SessionError> {
         let exchange = match self.stream.as_mut() {
             Some(stream) => exchange_one_case(stream, request),
             None => {
@@ -235,7 +235,7 @@ impl CandidateSession {
         }
     }
 
-    fn finish(mut self) -> Result<(), SessionError> {
+    pub(crate) fn finish(mut self) -> Result<(), SessionError> {
         let write_result = match self.stream.as_mut() {
             Some(stream) => write_frame(stream, &Frame::Done),
             None => {
@@ -415,7 +415,7 @@ fn cleanup_child(child: &mut Child) -> ChildCleanupOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SessionErrorKind {
+pub(crate) enum SessionErrorKind {
     Io,
     Startup,
     Timeout,
@@ -444,7 +444,7 @@ impl SessionErrorKind {
 }
 
 #[derive(Debug)]
-struct SessionError {
+pub(crate) struct SessionError {
     kind: SessionErrorKind,
     message: String,
     stdout: TailSnapshot,
@@ -453,6 +453,10 @@ struct SessionError {
 }
 
 impl SessionError {
+    pub(crate) const fn kind(&self) -> SessionErrorKind {
+        self.kind
+    }
+
     fn bare(kind: SessionErrorKind, message: String) -> Self {
         Self {
             kind,
@@ -481,7 +485,7 @@ impl SessionError {
 
 impl fmt::Display for SessionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.kind.label(), self.message)?;
+        write!(formatter, "{}: {}", self.kind().label(), self.message)?;
         for failure in &self.cleanup_failures {
             write!(formatter, "\ncleanup issue: {failure}")?;
         }
@@ -1124,6 +1128,26 @@ mod tests {
         assert_eq!(tail.bytes.len(), OUTPUT_TAIL_BYTES);
         assert_eq!(tail.omitted_bytes, 37);
         assert_eq!(tail.bytes, bytes[37..]);
+    }
+
+    #[test]
+    fn session_failure_keeps_its_fatal_cell_category_without_transport() {
+        for kind in [SessionErrorKind::Io, SessionErrorKind::IdentityMismatch] {
+            let error = SessionError::bare(
+                kind,
+                "synthetic session failure for category mapping".to_owned(),
+            );
+            let cell_error = crate::matrix::CellExecutionError::Session(error);
+
+            match &cell_error {
+                crate::matrix::CellExecutionError::Session(error) => {
+                    assert_eq!(error.kind(), kind);
+                }
+                other => panic!("session failure changed fatal category: {other:?}"),
+            }
+            assert!(cell_error.to_string().contains("candidate session failed"));
+            assert!(std::error::Error::source(&cell_error).is_some());
+        }
     }
 
     #[test]
