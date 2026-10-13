@@ -3,6 +3,9 @@
 //! Standalone development support for the forward-backward reference oracle.
 
 mod assessment;
+// This module is staged for the next scorer; remove the allowance when it consumes these types.
+#[allow(dead_code)]
+mod candidate;
 mod case;
 mod fixtures;
 mod model;

@@ -35,6 +35,10 @@ intervals and samples without changing their scalar bits, and
 refinement using its checked mapping. Both helpers return contextual errors
 and reserve output buffers fallibly.
 
+Private candidate-result materialization preserves structured errors and tail
+evidence, promotes finite outputs exactly to 256-bit values, and records the
+first non-finite output with its original scalar bits for later scoring.
+
 The tool has its own empty Cargo workspace so its multiprecision dependency is
 not part of the root `ssfilt` build, its `no_std` configuration, or downstream
 users' dependency graph. `rug` is pinned to `1.30.0` and enabled only with its
