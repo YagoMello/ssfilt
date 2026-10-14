@@ -14,7 +14,7 @@ The agent must not receive this manifest, the evaluator notes, other cards, or
 
 ```text
 protocol: UX-1
-round: UX-1-PILOT-1
+round: UX-1-PILOT-2
 scenario selection: P01, P02, P03, C01
 preferred model: GPT-5.6 Terra Medium
 required isolation for comparable scores: strict
@@ -32,16 +32,28 @@ check may emit any number of diagnostics, but it consumes one cycle. Formatting,
 running an already-compiling demonstration, and writing the report do not
 consume correction cycles; changing source after either of those does.
 
-All four trials use the same repository commit and content-addressed snapshot
-of their allowlisted material. The allowlist is:
+Round `UX-1-PILOT-1` stopped after its first two trials exposed packet defects:
+the agents could see unrelated `Cargo.toml` sections, and the report template
+omitted the direction of the scoring scale. Its scores are invalid and the
+remaining cards were not dispatched. All four cards restart in this round.
+
+All four trials use the same repository commit and content-addressed directory
+snapshot of their allowlisted material. The snapshot contains:
 
 ```text
 README.md
 generated public rustdoc for ssfilt and its public items
-Cargo.toml package name, version, features, and dependency information
+PUBLIC-CARGO-METADATA.txt containing only Cargo.toml package name, version,
+features, and dependency information
 maintained user guides and examples explicitly linked by the README, if any
-compiler and runtime diagnostics produced by the scratch application
 ```
+
+The curator, not the trial agent, creates a sorted file manifest and digest for
+the snapshot. The exact snapshot path and digest are copied into each trial
+packet. The repository `Cargo.toml` is not allowlisted.
+
+In addition to the frozen snapshot, an agent may consult compiler and runtime
+diagnostics produced by its own scratch application.
 
 Links from the README to `AGENTS.md`, `DESIGN.md`, UX documents, research
 records, tests, benchmarks, source, Git history, or development-only tools are
@@ -77,6 +89,11 @@ Cold evidence
 - unsupported or unclear requirements encountered:
 
 Dimension scores (0-3, with one-sentence evidence for each)
+  0 = no material friction; the intended path was discoverable and correct
+  1 = minor friction recoverable directly from documentation or diagnostics
+  2 = significant friction requiring repeated guessing, unnecessary ceremony,
+      or a source lookup
+  3 = blocking or dangerous: incomplete, or likely materially wrong
 - discovery and installation:
 - topology and response selection:
 - timing and input reconstruction:

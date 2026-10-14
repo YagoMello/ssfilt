@@ -63,7 +63,8 @@ or project history. Create it with an empty-history mechanism such as
 `fork_turns: "none"`, and provide only:
 
 - the frozen scenario prompt;
-- the exact public-material allowlist;
+- a content-addressed snapshot containing only the exact public-material
+  allowlist;
 - the scratch-crate location and build instructions;
 - the frozen action budget and reporting template.
 
@@ -101,7 +102,14 @@ The agent may use only the surfaces intended for a library user:
 - user-guide documents linked from the README or crate documentation;
 - explicitly linked, maintained examples;
 - compiler and runtime diagnostics from its own scratch application;
-- `Cargo.toml` package metadata needed to depend on the crate.
+- a curator-generated file containing only the `Cargo.toml` package name,
+  version, features, and dependency metadata needed to depend on the crate.
+
+Do not expose the repository `Cargo.toml` and ask the agent to ignore unrelated
+sections. Materialize the allowed fields into the public snapshot so normal
+file inspection cannot accidentally reveal benchmarks, internal tooling, or
+workspace policy. The snapshot includes its file manifest and digest; every
+trial in one round receives the identical snapshot.
 
 The agent must not inspect `src/`, tests, benchmarks, `DESIGN.md`, numerical
 research records, agent instructions, Git history, or another trial's report.
@@ -193,14 +201,17 @@ stopping rules work.
 
 ## Trial procedure
 
-1. Record the repository commit, dirty state, documentation snapshot digest,
+1. Materialize the public snapshot and record the repository commit, dirty
+   state, snapshot file manifest and digest,
    Rust version, platform, model, protocol version, scenario ID, isolation
    mode, and exact allowed documentation set.
 2. Start a no-history agent outside the repository. Create a clean scratch
    crate depending on the frozen local `ssfilt` checkout without granting the
    agent permission to browse that checkout.
 3. Send only the trial-prompt portion of the frozen card, allowlist, action
-   budget, and report template before opening user documentation.
+   budget, report template, and public-snapshot path before opening user
+   documentation. The repository path is supplied only as the local Cargo
+   dependency; it is not a documentation surface.
 4. Attempt a compiling solution using only the cold information boundary.
 5. Record compiler attempts and documentation consulted. Do not silently erase
    wrong assumptions from the report after fixing them.
