@@ -77,9 +77,57 @@ cargo run --release --example filter_lab -- matrix --output target/filter-lab
 
 `--help` should list valid responses, orders, band profiles, schedules, and
 default output paths. Each run prints its complete configuration and writes to
-a reproducible case directory under `target/filter-lab/`. A lightweight
-development-only argument parser is acceptable; it must not add a runtime
-dependency to `ssfilt`.
+a reproducible case directory under `target/filter-lab/`. Development-only CLI
+dependencies must not enter the runtime dependency graph of `ssfilt`.
+
+## Tool dependency policy
+
+Development programs have a different dependency budget from the runtime
+library: they may use `std`, allocate, and depend on application-oriented
+crates. Keep those crates in root `dev-dependencies` or a standalone tool
+manifest so disabling default library features still leaves the `ssfilt`
+runtime graph unchanged.
+
+Adopt dependencies only where they remove a maintained subsystem or provide a
+well-tested boundary:
+
+- use [`clap`](https://docs.rs/clap/) with its derive API for the next CLI
+  expansion. It replaces the growing hand-written parsers, generates useful
+  help and invalid-value diagnostics, and provides tool-local value enums.
+  Preserve the current `plot_responses [order] [output.svg]` form through an
+  explicit compatibility-normalization layer while named options become the
+  preferred interface. Test parsing with `try_parse_from`, including help,
+  invalid combinations, defaults, and the legacy form;
+- use [`anyhow`](https://docs.rs/anyhow/) only at executable and orchestration
+  boundaries. Add context containing the case or output path being processed,
+  while retaining typed filter, numerical, protocol, and scoring errors below
+  that boundary. Do not expose `anyhow::Error` from the library;
+- use [`csv`](https://docs.rs/csv/) without Serde when report code is next
+  changed. Its writer should replace the two hand-written quoting paths and
+  validate consistent record widths. Configure line endings explicitly and
+  compare complete report bytes before accepting the migration. Add Serde only
+  if a stable typed replay or manifest schema later makes it pay for itself;
+- defer [`rayon`](https://docs.rs/rayon/) until release-mode timing shows that
+  independent cases dominate a tool's runtime. Parallelism must operate on
+  complete keyed cases, never on stateful updates or floating-point reductions
+  within a case. Provide a bounded job count, collect into deterministic order,
+  and require byte-identical reports plus unchanged metrics between one and
+  multiple jobs. The matrix oracle should use a dedicated pool because each
+  shard owns a candidate session and high-precision records can be large;
+- reserve `thiserror` for new structured tool errors when it materially removes
+  display/source boilerplate. Do not churn the existing contextual error
+  families merely to replace their hand-written implementations;
+- defer progress-bar, logging, snapshot, and general serialization frameworks
+  until a demonstrated workflow needs them. Plain status lines and focused
+  assertions are sufficient today; snapshots must never become numerical
+  acceptance oracles.
+
+Before landing a new crate, inspect its current primary documentation,
+maintenance activity, license, MSRV, feature set, transitive graph, and known
+advisories. Commit lockfile changes and note why the dependency is a net
+positive. Popularity is not a security argument. Add a modest automated
+license, source, and RustSec advisory policy as a separate CI change rather
+than mixing supply-chain configuration into a numerical feature commit.
 
 ## Analytic lines and real implementation points
 
