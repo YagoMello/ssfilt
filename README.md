@@ -35,6 +35,9 @@ cost are available from the constructed filter.
   found before the phase work began.
 - [Development tools roadmap](docs/development-tools.md) defines analytic
   references, measured streaming overlays, reports, and plot-tool boundaries.
+- [UX evaluation and documentation plan](docs/ux-evaluation.md) defines cold
+  application trials, scenario controls, scoring, review cadence, and the
+  intended user-documentation structure.
 - [Agent collaboration guide](AGENTS.md) defines delegated work packages,
   review independence, quality gates, and Git ownership.
 

@@ -154,6 +154,30 @@ not author them. Reviews prioritize:
 An alternative implementation branch is comparison material only after the
 current approach and acceptance criteria have been written down independently.
 
+## UX trials
+
+Public usability reviews follow `docs/ux-evaluation.md`. The primary agent
+freezes goal-based scenarios and the allowed user-facing material before a
+trial begins. A comparable cold-trial agent starts with no inherited project
+or conversation context, outside the repository, and works in a separate
+scratch crate. It must not receive repository agent instructions or inspect
+`src/`, tests, benchmarks, internal design records, Git history, or another
+trial's findings until its first attempt and report are frozen. If the
+execution platform cannot provide that isolation, label the trial advisory;
+do not mix it into the strict baseline.
+
+Prefer GPT-5.6 Terra Medium for ordinary application trials when it is
+available. Record the actual model rather than presenting another model as a
+Terra baseline. Trial agents do not edit the library. They report the program
+attempted, public documentation consulted, compiler failures, incorrect
+assumptions, source lookups, ceremony, missing guidance or tools, and whether
+the request was appropriately rejected as out of scope.
+
+Do not add public API from one agent preference. Promote repeated friction,
+clear correctness hazards, or narrowly justified documentation and diagnostic
+improvements. The primary agent owns aggregation, remedies, and final API
+decisions.
+
 ## Quality gates
 
 Run focused tests while iterating. Before a functional commit, run:

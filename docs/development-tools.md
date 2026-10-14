@@ -14,6 +14,11 @@ part of the runtime library. They should answer three different questions:
 Plots are supporting evidence. Machine-readable measurements and automated
 assertions remain the acceptance oracle.
 
+User-facing friction and requests for new inspection utilities are evaluated
+under [`ux-evaluation.md`](ux-evaluation.md). A repeated UX need can justify a
+small tool extension, but does not bypass the numerical evidence requirements
+or turn these development programs into a general signal-processing suite.
+
 ## Data pipeline
 
 Keep one structured pipeline rather than computing values inside chart code:
