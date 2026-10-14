@@ -22,7 +22,7 @@ pub(crate) fn low_pass(
     response: Response,
     order: usize,
     frequency_ratio: f64,
-) -> Result<TransferPoint, Box<dyn Error>> {
+) -> Result<TransferPoint, Box<dyn Error + Send + Sync>> {
     if order == 0 {
         return Err("transfer-function order must be positive".into());
     }
@@ -122,7 +122,7 @@ pub(crate) fn low_pass(
 pub(crate) fn slowest_normalized_decay(
     response: Response,
     order: usize,
-) -> Result<f64, Box<dyn Error>> {
+) -> Result<f64, Box<dyn Error + Send + Sync>> {
     if order == 0 {
         return Err("transfer-function order must be positive".into());
     }

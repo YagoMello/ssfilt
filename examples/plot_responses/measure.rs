@@ -181,7 +181,7 @@ pub(super) fn measure_low_pass<const N: usize>(
     frequency_ratio: f64,
     schedule: SampleSchedule,
     samples_per_cycle: u32,
-) -> Result<SineMeasurement, Box<dyn Error>> {
+) -> Result<SineMeasurement, Box<dyn Error + Send + Sync>> {
     if !frequency_ratio.is_finite() || frequency_ratio <= 0.0 {
         return Err("frequency ratio must be finite and positive".into());
     }
@@ -312,7 +312,7 @@ fn advance_to<const N: usize>(
     schedule_index: &mut usize,
     diagnostics: &mut AggregateDiagnostics,
     mut samples: Option<&mut Vec<(f64, f64)>>,
-) -> Result<usize, Box<dyn Error>> {
+) -> Result<usize, Box<dyn Error + Send + Sync>> {
     let mut updates = 0;
     while *time_seconds < end_seconds {
         let remaining = end_seconds - *time_seconds;
@@ -341,7 +341,10 @@ fn advance_to<const N: usize>(
 
 /// Fits `y = c + a sin(omega t) + b cos(omega t)` with trapezoidal timestamp
 /// weights, so irregular spacing cannot silently become a sample-count fit.
-fn fit_sine(samples: &[(f64, f64)], angular_frequency: f64) -> Result<SineFit, Box<dyn Error>> {
+fn fit_sine(
+    samples: &[(f64, f64)],
+    angular_frequency: f64,
+) -> Result<SineFit, Box<dyn Error + Send + Sync>> {
     if samples.len() < 3 || !angular_frequency.is_finite() || angular_frequency <= 0.0 {
         return Err("sine fitting requires three samples and a positive finite frequency".into());
     }
@@ -376,7 +379,7 @@ fn fit_sine(samples: &[(f64, f64)], angular_frequency: f64) -> Result<SineFit, B
                 .mul_add(1.0, cosine * (angular_frequency * time).cos())
                 + offset;
             let error = value - fitted;
-            Ok::<_, Box<dyn Error>>((
+            Ok::<_, Box<dyn Error + Send + Sync>>((
                 error.mul_add(error * weight, square_error),
                 weight_sum + weight,
             ))
@@ -390,7 +393,10 @@ fn fit_sine(samples: &[(f64, f64)], angular_frequency: f64) -> Result<SineFit, B
     })
 }
 
-fn trapezoidal_weight(samples: &[(f64, f64)], index: usize) -> Result<f64, Box<dyn Error>> {
+fn trapezoidal_weight(
+    samples: &[(f64, f64)],
+    index: usize,
+) -> Result<f64, Box<dyn Error + Send + Sync>> {
     let before = index
         .checked_sub(1)
         .map(|previous| samples[index].0 - samples[previous].0);
@@ -406,7 +412,10 @@ fn trapezoidal_weight(samples: &[(f64, f64)], index: usize) -> Result<f64, Box<d
     Ok(weight)
 }
 
-fn solve_3x3(mut matrix: [[f64; 3]; 3], mut rhs: [f64; 3]) -> Result<[f64; 3], Box<dyn Error>> {
+fn solve_3x3(
+    mut matrix: [[f64; 3]; 3],
+    mut rhs: [f64; 3],
+) -> Result<[f64; 3], Box<dyn Error + Send + Sync>> {
     for column in 0..3 {
         let pivot = (column..3)
             .max_by(|&left, &right| {

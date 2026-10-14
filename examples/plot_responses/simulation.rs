@@ -8,7 +8,7 @@ const TRANSIENT_POINTS: u32 = 1_601;
 
 pub(super) fn measure_step_response<const N: usize>(
     response: Response,
-) -> Result<Vec<(f64, f64)>, Box<dyn Error>> {
+) -> Result<Vec<(f64, f64)>, Box<dyn Error + Send + Sync>> {
     let order = N.to_f64().ok_or("order does not fit in f64")?;
     let duration = 4.0_f64.max(order);
     let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));

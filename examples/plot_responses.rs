@@ -1,7 +1,8 @@
 //! Generates end-to-end response plots through the public streaming API.
 //!
 //! Usage:
-//! cargo run --release --example `plot_responses` -- [order] [output.svg] [--csv output.csv]
+//! cargo run --release --example `plot_responses` -- [--order ORDER] [--output PATH] [--csv PATH]
+//! Legacy positional form: [order] [output.svg]
 
 #[path = "plot_responses/analytic.rs"]
 mod analytic;
@@ -16,12 +17,13 @@ mod simulation;
 #[path = "support/svg_smoothing.rs"]
 mod svg_smoothing;
 
-use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use analytic::{exact_frequency_point, frequency_ratios, group_delay};
+use anyhow::Context;
+use clap::{Parser, error::ErrorKind};
 use measure::{
     DEFAULT_SAMPLES_PER_CYCLE, MeasuredFrequencyPoint, SampleSchedule, measure_low_pass,
 };
@@ -47,18 +49,109 @@ macro_rules! dispatch_order {
 const MEASUREMENT_FREQUENCY_RATIOS: [f64; 11] =
     [0.05, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1];
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "plot_responses",
+    about = "Generate response plots through the public streaming API.",
+    after_help = "Legacy positional form: [ORDER] [OUTPUT.SVG]\nDefaults: order 4, target/filter-responses.svg, and a sibling .csv file."
+)]
+struct Cli {
+    /// Legacy positional filter order; prefer `--order`.
+    #[arg(
+        value_name = "ORDER",
+        conflicts_with = "order",
+        value_parser = parse_order
+    )]
+    legacy_order: Option<usize>,
+    /// Legacy positional SVG path; prefer `--output`.
+    #[arg(value_name = "OUTPUT.SVG", conflicts_with = "output")]
+    legacy_output: Option<PathBuf>,
+    /// Filter order from 1 through 50.
+    #[arg(
+        long,
+        value_name = "ORDER",
+        conflicts_with = "legacy_order",
+        value_parser = parse_order
+    )]
+    order: Option<usize>,
+    /// SVG dashboard output path.
+    #[arg(long, value_name = "PATH", conflicts_with = "legacy_output")]
+    output: Option<PathBuf>,
+    /// CSV measurement report path; defaults beside the SVG.
+    #[arg(long, value_name = "PATH")]
+    csv: Option<PathBuf>,
+}
+
+#[derive(Debug)]
 struct Arguments {
     order: usize,
     output_path: PathBuf,
     csv_path: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let Some(arguments) = arguments()? else {
-        return Ok(());
-    };
-    create_parent_directory(&arguments.output_path)?;
-    create_parent_directory(&arguments.csv_path)?;
+fn parse_order(value: &str) -> Result<usize, String> {
+    let order = value
+        .parse::<usize>()
+        .map_err(|_| format!("order must be an integer from 1 through 50, got {value:?}"))?;
+    if (1..=50).contains(&order) {
+        Ok(order)
+    } else {
+        Err(format!("order must be between 1 and 50, got {order}"))
+    }
+}
+
+impl Cli {
+    fn normalize(self) -> Result<Arguments, clap::Error> {
+        if self.legacy_order.is_some() && self.order.is_some() {
+            return Err(clap::Error::raw(
+                ErrorKind::ArgumentConflict,
+                "positional ORDER conflicts with --order",
+            ));
+        }
+        if self.legacy_output.is_some() && self.output.is_some() {
+            return Err(clap::Error::raw(
+                ErrorKind::ArgumentConflict,
+                "positional OUTPUT.SVG conflicts with --output",
+            ));
+        }
+
+        let order = self.order.or(self.legacy_order).unwrap_or(4);
+        let output_path = self
+            .output
+            .or(self.legacy_output)
+            .unwrap_or_else(|| PathBuf::from("target/filter-responses.svg"));
+        let csv_path = self
+            .csv
+            .unwrap_or_else(|| output_path.with_extension("csv"));
+        if csv_path == output_path {
+            return Err(clap::Error::raw(
+                ErrorKind::ArgumentConflict,
+                "SVG and CSV output paths must be different",
+            ));
+        }
+
+        Ok(Arguments {
+            order,
+            output_path,
+            csv_path,
+        })
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let arguments = Cli::parse().normalize()?;
+    create_parent_directory(&arguments.output_path).with_context(|| {
+        format!(
+            "creating the parent directory for SVG output {}",
+            arguments.output_path.display()
+        )
+    })?;
+    create_parent_directory(&arguments.csv_path).with_context(|| {
+        format!(
+            "creating the parent directory for CSV output {}",
+            arguments.csv_path.display()
+        )
+    })?;
 
     dispatch_order!(arguments.order, &arguments.output_path, &arguments.csv_path;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -66,69 +159,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
         31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
         41, 42, 43, 44, 45, 46, 47, 48, 49, 50
-    )?;
+    )
+    .map_err(anyhow::Error::from_boxed)
+    .with_context(|| {
+        format!(
+            "generating order {} response plots (SVG: {}, CSV: {})",
+            arguments.order,
+            arguments.output_path.display(),
+            arguments.csv_path.display()
+        )
+    })?;
 
     println!("wrote {}", arguments.output_path.display());
     println!("wrote {}", arguments.csv_path.display());
     Ok(())
 }
 
-fn arguments() -> Result<Option<Arguments>, Box<dyn Error>> {
-    parse_arguments(env::args().skip(1))
-}
-
-fn parse_arguments(
-    arguments: impl IntoIterator<Item = String>,
-) -> Result<Option<Arguments>, Box<dyn Error>> {
-    let mut positional = Vec::new();
-    let mut csv_path = None;
-    let mut arguments = arguments.into_iter();
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "-h" | "--help" => {
-                println!("usage: plot_responses [order] [output.svg] [--csv output.csv]");
-                println!("defaults: order 4, target/filter-responses.svg, sibling .csv file");
-                return Ok(None);
-            }
-            "--csv" => {
-                let value = arguments.next().ok_or("--csv requires a path")?;
-                if csv_path.replace(PathBuf::from(value)).is_some() {
-                    return Err("--csv may be supplied only once".into());
-                }
-            }
-            value if value.starts_with('-') => {
-                return Err(format!("unknown option: {value}").into());
-            }
-            value => positional.push(value.to_owned()),
-        }
-    }
-    if positional.len() > 2 {
-        return Err(format!("unexpected argument: {}", positional[2]).into());
-    }
-    let order = positional.first().map_or(Ok(4), |value| value.parse())?;
-    let output_path = positional.get(1).map_or_else(
-        || PathBuf::from("target/filter-responses.svg"),
-        PathBuf::from,
-    );
-    let csv_path = csv_path.unwrap_or_else(|| output_path.with_extension("csv"));
-    if csv_path == output_path {
-        return Err("SVG and CSV output paths must be different".into());
-    }
-    Ok(Some(Arguments {
-        order,
-        output_path,
-        csv_path,
-    }))
-}
-
-fn create_parent_directory(path: &Path) -> Result<(), Box<dyn Error>> {
+fn create_parent_directory(path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
     Ok(())
 }
 
-fn plot<const N: usize>(output_path: &Path, csv_path: &Path) -> Result<(), Box<dyn Error>> {
+fn plot<const N: usize>(
+    output_path: &Path,
+    csv_path: &Path,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut specs = vec![
         ResponseSpec {
             label: "Repeated pole",
@@ -200,46 +257,113 @@ fn plot<const N: usize>(output_path: &Path, csv_path: &Path) -> Result<(), Box<d
 mod tests {
     use std::path::PathBuf;
 
-    use super::parse_arguments;
+    use clap::{Parser, error::ErrorKind};
+
+    use super::{Arguments, Cli};
+
+    fn args(values: &[&str]) -> Result<Arguments, String> {
+        let mut argv = vec!["plot_responses"];
+        argv.extend_from_slice(values);
+        let cli = Cli::try_parse_from(argv).map_err(|error| error.to_string())?;
+        cli.normalize().map_err(|error| error.to_string())
+    }
+
+    fn path(value: &str) -> PathBuf {
+        PathBuf::from(value)
+    }
 
     #[test]
     fn arguments_keep_positional_compatibility_and_derive_csv_path() {
-        let arguments = parse_arguments(["8".to_owned(), "out/response.svg".to_owned()])
-            .unwrap()
-            .unwrap();
+        let arguments = args(&["8", "out/response.svg"]).unwrap();
         assert_eq!(arguments.order, 8);
-        assert_eq!(arguments.output_path, PathBuf::from("out/response.svg"));
-        assert_eq!(arguments.csv_path, PathBuf::from("out/response.csv"));
+        assert_eq!(arguments.output_path, path("out/response.svg"));
+        assert_eq!(arguments.csv_path, path("out/response.csv"));
     }
 
     #[test]
     fn explicit_csv_path_may_appear_before_positionals() {
-        let arguments = parse_arguments([
-            "--csv".to_owned(),
-            "measurements/data.csv".to_owned(),
-            "3".to_owned(),
-            "plot.svg".to_owned(),
+        let arguments = args(&["--csv", "measurements/data.csv", "3", "plot.svg"]).unwrap();
+        assert_eq!(arguments.order, 3);
+        assert_eq!(arguments.output_path, path("plot.svg"));
+        assert_eq!(arguments.csv_path, path("measurements/data.csv"));
+    }
+
+    #[test]
+    fn named_options_and_defaults_normalize_to_the_expected_paths() {
+        let arguments = args(&[
+            "--order",
+            "3",
+            "--output",
+            "out/response.svg",
+            "--csv",
+            "reports/data.csv",
         ])
-        .unwrap()
         .unwrap();
         assert_eq!(arguments.order, 3);
-        assert_eq!(arguments.output_path, PathBuf::from("plot.svg"));
-        assert_eq!(arguments.csv_path, PathBuf::from("measurements/data.csv"));
+        assert_eq!(arguments.output_path, path("out/response.svg"));
+        assert_eq!(arguments.csv_path, path("reports/data.csv"));
+
+        let defaults = args(&[]).unwrap();
+        assert_eq!(defaults.order, 4);
+        assert_eq!(defaults.output_path, path("target/filter-responses.svg"));
+        assert_eq!(defaults.csv_path, path("target/filter-responses.csv"));
+    }
+
+    #[test]
+    fn named_options_conflict_with_their_legacy_positionals() {
+        for values in [
+            vec!["4", "--order", "8"],
+            vec!["4", "plot.svg", "--output", "named.svg"],
+        ] {
+            assert!(args(&values).is_err(), "accepted {values:?}");
+        }
+    }
+
+    #[test]
+    fn help_is_generated_with_named_and_legacy_forms() {
+        let error = Cli::try_parse_from(["plot_responses", "--help"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let help = error.to_string();
+        assert!(help.contains("--order"));
+        assert!(help.contains("--output"));
+        assert!(help.contains("--csv"));
+        assert!(help.contains("Filter order from 1 through 50"));
+        assert!(help.contains("SVG dashboard output path"));
+        assert!(help.contains("CSV measurement report path"));
+        assert!(help.contains("Legacy positional form"));
+        assert!(help.contains("target/filter-responses.svg"));
+    }
+
+    #[test]
+    fn order_range_is_rejected_during_parsing_for_named_and_legacy_forms() {
+        for values in [
+            vec!["1"],
+            vec!["50"],
+            vec!["--order", "1"],
+            vec!["--order", "50"],
+        ] {
+            assert!(
+                args(&values).is_ok(),
+                "rejected inclusive boundary {values:?}"
+            );
+        }
+        for values in [
+            vec!["0"],
+            vec!["51"],
+            vec!["--order", "0"],
+            vec!["--order", "51"],
+        ] {
+            let error = args(&values).unwrap_err();
+            assert!(
+                error.contains("between 1 and 50"),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
     fn csv_cannot_overwrite_the_svg_output() {
-        let error = parse_arguments([
-            "4".to_owned(),
-            "same-path".to_owned(),
-            "--csv".to_owned(),
-            "same-path".to_owned(),
-        ])
-        .err()
-        .unwrap();
-        assert_eq!(
-            error.to_string(),
-            "SVG and CSV output paths must be different"
-        );
+        let error = args(&["4", "same-path", "--csv", "same-path"]).unwrap_err();
+        assert!(error.contains("SVG and CSV output paths must be different"));
     }
 }

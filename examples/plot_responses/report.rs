@@ -5,7 +5,10 @@ use std::path::Path;
 
 use super::render::ResponseData;
 
-pub(super) fn write_csv(path: &Path, responses: &[ResponseData]) -> Result<(), Box<dyn Error>> {
+pub(super) fn write_csv(
+    path: &Path,
+    responses: &[ResponseData],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     fs::write(path, csv(responses))?;
     Ok(())
 }

@@ -27,7 +27,7 @@ pub(super) const fn scaled(value: u32) -> u32 {
 pub(super) fn write_dashboards(
     output_dir: &Path,
     results: &[CaseResult],
-) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+) -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> {
     fs::create_dir_all(output_dir)?;
     let mut paths = Vec::with_capacity(results.len());
     for result in results {
@@ -47,7 +47,7 @@ fn case_file_name(result: &CaseResult) -> String {
     )
 }
 
-fn draw(output_path: &Path, result: &CaseResult) -> Result<(), Box<dyn Error>> {
+fn draw(output_path: &Path, result: &CaseResult) -> Result<(), Box<dyn Error + Send + Sync>> {
     let status = if result.gates.passes() {
         "ANALYTIC GATES PASS; NOT STREAMING"
     } else {
@@ -80,7 +80,7 @@ fn draw(output_path: &Path, result: &CaseResult) -> Result<(), Box<dyn Error>> {
 fn draw_total_delay(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     result: &CaseResult,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let points = &result.holdout_points;
     let minimum = points
         .iter()
@@ -153,7 +153,7 @@ fn draw_total_delay(
 fn draw_delay_residual(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     result: &CaseResult,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let points = &result.holdout_points;
     let maximum = points
         .iter()
@@ -221,7 +221,7 @@ fn draw_delay_residual(
 fn draw_phase_residual(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     result: &CaseResult,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let points = &result.holdout_points;
     let maximum = points
         .iter()
@@ -283,7 +283,7 @@ fn draw_phase_residual(
 fn draw_added_delay(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     result: &CaseResult,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let points = &result.holdout_points;
     let maximum = result.maximum_added_delay.max(
         points
@@ -348,7 +348,7 @@ fn configure_mesh<'chart, 'backend: 'chart>(
     >,
     x_description: &str,
     y_description: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     chart
         .configure_mesh()
         .x_desc(x_description)
@@ -373,7 +373,7 @@ fn draw_markers<'chart, 'backend: 'chart, Y>(
     points: &[SweepPoint],
     y_value: Y,
     color: RGBColor,
-) -> Result<(), Box<dyn Error>>
+) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     Y: Fn(&SweepPoint) -> f64,
 {
@@ -403,7 +403,7 @@ fn shade_near_cutoff_region<'chart, 'backend: 'chart>(
     x_upper: f64,
     y_lower: f64,
     y_upper: f64,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     if x_upper > 0.7 {
         chart.draw_series([Rectangle::new(
             [(0.7, y_lower), (x_upper, y_upper)],
@@ -423,7 +423,7 @@ fn draw_legend<'chart, 'backend: 'chart>(
         SVGBackend<'backend>,
         Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
     >,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     chart
         .configure_series_labels()
         .label_font(("sans-serif", scaled(12)))

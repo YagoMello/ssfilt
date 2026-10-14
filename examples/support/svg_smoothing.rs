@@ -4,7 +4,9 @@ use std::path::Path;
 
 use super::render::{DISPLAY_HEIGHT, DISPLAY_WIDTH, RESPONSE_STROKES, scaled};
 
-pub(super) fn smooth_svg_curves(output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn smooth_svg_curves(
+    output_path: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Plotters maps chart coordinates to integer backend pixels and emits
     // polylines. Replacing only the declared data curves with shape-preserving
     // cubic paths removes visible quantization at high SVG zoom levels.

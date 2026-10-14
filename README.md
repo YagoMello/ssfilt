@@ -324,12 +324,15 @@ To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
 delay, and unit-step responses, run:
 
 ```text
-cargo run --release --example plot_responses -- 4 target/filter-responses.svg
+cargo run --release --example plot_responses -- \
+  --order 4 --output target/filter-responses.svg
 ```
 
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to
-`target/filter-responses.svg` and order 4. Frequency curves use 1,601
+`target/filter-responses.svg` and order 4. The original positional form
+`plot_responses 4 target/filter-responses.svg` remains accepted for existing
+scripts. Frequency curves use 1,601
 logarithmically spaced points; high orders can therefore take noticeably
 longer to render. Bessel is included through its supported maximum order and
 is omitted from higher-order dashboards. Frequency-domain curves are evaluated

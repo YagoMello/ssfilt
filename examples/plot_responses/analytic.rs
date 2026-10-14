@@ -51,7 +51,7 @@ pub(super) fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f
 pub(super) fn exact_frequency_point<const N: usize>(
     response: Response,
     frequency_ratio: f64,
-) -> Result<FrequencyPoint, Box<dyn Error>> {
+) -> Result<FrequencyPoint, Box<dyn Error + Send + Sync>> {
     let point = transfer::low_pass(response, N, frequency_ratio)?;
 
     Ok(FrequencyPoint {
@@ -68,7 +68,7 @@ pub(super) fn exact_frequency_point<const N: usize>(
 /// repeated-pole multiplicity and ordinary low-order cases.
 pub(super) fn minimum_settling_time_seconds<const N: usize>(
     response: Response,
-) -> Result<f64, Box<dyn Error>> {
+) -> Result<f64, Box<dyn Error + Send + Sync>> {
     let slowest_normalized_decay = transfer::slowest_normalized_decay(response, N)?;
     Ok(SETTLING_E_FOLDS / (core::f64::consts::TAU * slowest_normalized_decay))
 }

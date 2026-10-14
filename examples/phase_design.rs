@@ -14,11 +14,10 @@ mod svg_smoothing;
 #[path = "support/transfer.rs"]
 mod transfer;
 
-use std::env;
-use std::error::Error;
-use std::io;
 use std::path::PathBuf;
 
+use anyhow::Context;
+use clap::{Parser, ValueEnum};
 use search::{Band, Case, CaseResult};
 
 const DEFAULT_OUTPUT_DIR: &str = "target/phase-design";
@@ -28,25 +27,80 @@ struct Arguments {
     output_dir: PathBuf,
     order: Option<usize>,
     band: Option<Band>,
-    help: bool,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let arguments = parse_arguments(env::args().skip(1)).map_err(invalid_input)?;
-    if arguments.help {
-        print!("{}", usage());
-        return Ok(());
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum DesignOrder {
+    #[value(name = "4")]
+    Four,
+    #[value(name = "8")]
+    Eight,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "phase_design",
+    about = "Search and report normalized low-pass phase-equalizer designs.",
+    after_help = "response: Butterworth low-pass\ndefaults: order 4 and 8; bands core and cutoff; output target/phase-design\nbands: core = 0..0.7 * cutoff; cutoff = 0..1.0 * cutoff\nevidence: analytic feasibility only; no streaming equalizer is implemented\nwrites summary.csv, sweep.csv, summary.md, and one SVG dashboard per case"
+)]
+struct Cli {
+    /// Directory for CSV, Markdown, and SVG reports.
+    #[arg(long, value_name = "PATH", default_value = DEFAULT_OUTPUT_DIR)]
+    output_dir: PathBuf,
+    /// Restrict the design study to one supported filter order.
+    #[arg(long, value_enum, value_name = "ORDER")]
+    order: Option<DesignOrder>,
+    /// Restrict the design study to the core or cutoff-wide band.
+    #[arg(long, value_enum, value_name = "BAND")]
+    band: Option<Band>,
+}
+
+impl Cli {
+    fn normalize(self) -> Arguments {
+        Arguments {
+            output_dir: self.output_dir,
+            order: self.order.map(|order| match order {
+                DesignOrder::Four => 4,
+                DesignOrder::Eight => 8,
+            }),
+            band: self.band,
+        }
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    let arguments = Cli::parse().normalize();
 
     let mut results = Vec::new();
     for case in selected_cases(arguments.order, arguments.band) {
-        let result = search::design(case)?;
+        let result = search::design(case)
+            .map_err(anyhow::Error::from_boxed)
+            .with_context(|| {
+                format!(
+                    "designing {} order {} {} band",
+                    case.response_label,
+                    case.order,
+                    case.band.label()
+                )
+            })?;
         print_case_result(&result);
         results.push(result);
     }
 
-    report::write_reports(&arguments.output_dir, &results)?;
-    let dashboards = render::write_dashboards(&arguments.output_dir, &results)?;
+    report::write_reports(&arguments.output_dir, &results).with_context(|| {
+        format!(
+            "writing phase-design reports to {}",
+            arguments.output_dir.display()
+        )
+    })?;
+    let dashboards = render::write_dashboards(&arguments.output_dir, &results)
+        .map_err(anyhow::Error::from_boxed)
+        .with_context(|| {
+            format!(
+                "writing phase-design dashboards to {}",
+                arguments.output_dir.display()
+            )
+        })?;
     println!(
         "wrote {}",
         arguments.output_dir.join("summary.csv").display()
@@ -60,73 +114,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("wrote {}", dashboard.display());
     }
     Ok(())
-}
-
-fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
-    let mut output_dir = None;
-    let mut order = None;
-    let mut band = None;
-    let mut help = false;
-    let mut arguments = arguments.into_iter();
-
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--output-dir" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--output-dir requires a path".to_owned())?;
-                if value.is_empty() {
-                    return Err("--output-dir requires a non-empty path".to_owned());
-                }
-                if output_dir.replace(PathBuf::from(value)).is_some() {
-                    return Err("--output-dir may be supplied only once".to_owned());
-                }
-            }
-            "--order" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--order requires 4 or 8".to_owned())?;
-                let parsed = match value.as_str() {
-                    "4" => 4,
-                    "8" => 8,
-                    _ => return Err(format!("invalid order {value:?}; expected 4 or 8")),
-                };
-                if order.replace(parsed).is_some() {
-                    return Err("--order may be supplied only once".to_owned());
-                }
-            }
-            "--band" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--band requires core or cutoff".to_owned())?;
-                let parsed = match value.as_str() {
-                    "core" => Band::Core,
-                    "cutoff" => Band::Cutoff,
-                    _ => return Err(format!("invalid band {value:?}; expected core or cutoff")),
-                };
-                if band.replace(parsed).is_some() {
-                    return Err("--band may be supplied only once".to_owned());
-                }
-            }
-            "-h" | "--help" => {
-                if help {
-                    return Err("help may be requested only once".to_owned());
-                }
-                help = true;
-            }
-            value if value.starts_with('-') => {
-                return Err(format!("unknown option: {value}"));
-            }
-            value => return Err(format!("unexpected positional argument: {value}")),
-        }
-    }
-
-    Ok(Arguments {
-        output_dir: output_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_OUTPUT_DIR)),
-        order,
-        band,
-        help,
-    })
 }
 
 fn selected_cases(order: Option<usize>, band: Option<Band>) -> Vec<Case> {
@@ -171,28 +158,20 @@ fn print_case_result(result: &CaseResult) {
     }
 }
 
-fn invalid_input(message: String) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, message)
-}
-
-fn usage() -> &'static str {
-    "usage: phase_design [--output-dir PATH] [--order 4|8] [--band core|cutoff] [-h|--help]\n\
-     response: Butterworth low-pass\n\
-     defaults: order 4 and 8; bands core and cutoff; output target/phase-design\n\
-     bands: core = 0..0.7 * cutoff; cutoff = 0..1.0 * cutoff\n\
-     evidence: analytic feasibility only; no streaming equalizer is implemented\n\
-     writes summary.csv, sweep.csv, summary.md, and one SVG dashboard per case\n"
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Arguments, DEFAULT_OUTPUT_DIR, parse_arguments, selected_cases, usage};
+    use clap::{Parser, error::ErrorKind};
+
+    use super::{Arguments, Cli, DEFAULT_OUTPUT_DIR, selected_cases};
     use crate::search::Band;
 
     fn args(values: &[&str]) -> Result<Arguments, String> {
-        parse_arguments(values.iter().map(|value| (*value).to_owned()))
+        let mut argv = vec!["phase_design"];
+        argv.extend_from_slice(values);
+        let cli = Cli::try_parse_from(argv).map_err(|error| error.to_string())?;
+        Ok(cli.normalize())
     }
 
     #[test]
@@ -201,7 +180,6 @@ mod tests {
         assert_eq!(parsed.output_dir, PathBuf::from(DEFAULT_OUTPUT_DIR));
         assert_eq!(parsed.order, None);
         assert_eq!(parsed.band, None);
-        assert!(!parsed.help);
 
         let cases = selected_cases(parsed.order, parsed.band);
         assert_eq!(cases.len(), 4);
@@ -239,12 +217,20 @@ mod tests {
     }
 
     #[test]
-    fn help_aliases_are_recognized() {
-        assert!(args(&["-h"]).unwrap().help);
-        assert!(args(&["--help"]).unwrap().help);
-        assert!(usage().contains("core = 0..0.7 * cutoff"));
-        assert!(usage().contains("analytic feasibility only"));
-        assert!(usage().contains("one SVG dashboard per case"));
+    fn generated_help_lists_choices_defaults_and_evidence_scope() {
+        for flag in ["-h", "--help"] {
+            let error = Cli::try_parse_from(["phase_design", flag]).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+            let help = error.to_string();
+            assert!(help.contains("--output-dir"));
+            assert!(help.contains("--order"));
+            assert!(help.contains("4, 8"));
+            assert!(help.contains("--band"));
+            assert!(help.contains("core, cutoff"));
+            assert!(help.contains("target/phase-design"));
+            assert!(help.contains("analytic feasibility only"));
+            assert!(help.contains("one SVG dashboard per case"));
+        }
     }
 
     #[test]
@@ -253,8 +239,7 @@ mod tests {
             vec!["--output-dir", "one", "--output-dir", "two"],
             vec!["--order", "4", "--order", "8"],
             vec!["--band", "core", "--band", "cutoff"],
-            vec!["--help", "-h"],
-            vec!["--order", "2"],
+            vec!["--order", "5"],
             vec!["--band", "wide"],
             vec!["--unknown"],
             vec!["extra"],

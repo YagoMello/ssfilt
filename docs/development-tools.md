@@ -197,11 +197,12 @@ Frequency selection includes:
 The incremental response tool currently covers low-pass `f64` measurements at
 `0.05`, `0.1`, `0.25`, `0.5`, `0.7`, `0.8`, `0.9`, `0.95`, `1.0`, `1.05`, and
 `1.1` times cutoff. Filled dots denote uniform timestamps and open rings denote
-deterministic bounded jitter. Its positional interface remains compatible with
-the original development example while accepting an explicit CSV path:
+deterministic bounded jitter. Named options are preferred, while the positional
+order and output path remain compatible with the original development example:
 
 ```text
-cargo run --release --example plot_responses -- 8 target/order-8.svg \
+cargo run --release --example plot_responses -- \
+  --order 8 --output target/order-8.svg \
   --csv target/order-8.csv
 ```
 

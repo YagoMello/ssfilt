@@ -39,7 +39,7 @@ pub(super) struct ResponseData {
 pub(super) fn draw<const N: usize>(
     output_path: &Path,
     responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
         .into_drawing_area();
     root.fill(&WHITE)?;
@@ -61,7 +61,7 @@ pub(super) fn draw<const N: usize>(
 fn draw_magnitude(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut chart = ChartBuilder::on(area)
         .caption(
             "Magnitude response — lines: analytic; dots: uniform; rings: jittered",
@@ -124,7 +124,7 @@ fn draw_magnitude(
 fn draw_phase<const N: usize>(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let phase_floor = -90.0 * N.to_f64().ok_or("order does not fit in f64")?;
     let mut chart = ChartBuilder::on(area)
         .caption(
@@ -170,7 +170,7 @@ fn draw_phase<const N: usize>(
 fn draw_magnitude_markers(
     chart: &mut ChartContext<'_, SVGBackend<'_>, Cartesian2d<LogCoord<f64>, RangedCoordf64>>,
     response: &ResponseData,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     chart.draw_series(
         response
             .measurements
@@ -205,7 +205,7 @@ fn draw_magnitude_markers(
 fn draw_phase_markers(
     chart: &mut ChartContext<'_, SVGBackend<'_>, Cartesian2d<LogCoord<f64>, RangedCoordf64>>,
     response: &ResponseData,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     chart.draw_series(
         response
             .measurements
@@ -250,7 +250,7 @@ fn draw_phase_markers(
 fn draw_group_delay(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let maximum = responses
         .iter()
         .flat_map(|response| response.group_delay.iter().map(|(_, delay)| *delay))
@@ -294,7 +294,7 @@ fn draw_group_delay(
 fn draw_step(
     area: &DrawingArea<SVGBackend<'_>, Shift>,
     responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let end = responses
         .first()
         .and_then(|response| response.step.last())

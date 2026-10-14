@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use clap::ValueEnum;
+
 use num_traits::ToPrimitive;
 use ssfilt::Response;
 
@@ -26,7 +28,7 @@ const MAX_MEAN_ADDED_DELAY: f64 = 5.0;
 const MAX_F64_MAGNITUDE_CHANGE: f64 = 1.0e-12;
 const MAX_F32_MAGNITUDE_CHANGE: f64 = 1.0e-5;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(super) enum Band {
     Core,
     Cutoff,
@@ -241,7 +243,7 @@ impl CandidateScore {
     }
 }
 
-pub(super) fn design(case: Case) -> Result<CaseResult, Box<dyn Error>> {
+pub(super) fn design(case: Case) -> Result<CaseResult, Box<dyn Error + Send + Sync>> {
     let upper = case.band.upper_frequency_ratio();
     let fit_frequencies = midpoint_frequencies(upper, FIT_POINT_COUNT);
     let fit_source = source_points(case, &fit_frequencies)?;
@@ -445,7 +447,10 @@ fn compare_scores(left: &CandidateScore, right: &CandidateScore) -> std::cmp::Or
         .then_with(|| left.candidate.eta.total_cmp(&right.candidate.eta))
 }
 
-fn source_points(case: Case, frequencies: &[f64]) -> Result<Vec<SourcePoint>, Box<dyn Error>> {
+fn source_points(
+    case: Case,
+    frequencies: &[f64],
+) -> Result<Vec<SourcePoint>, Box<dyn Error + Send + Sync>> {
     frequencies
         .iter()
         .map(|&frequency_ratio| {
