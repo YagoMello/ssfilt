@@ -190,11 +190,20 @@ behind each curve; they must not be confused with public-API streaming
 measurements. Every SVG repeats that limitation in its title. Named `--order`
 and `--band` options narrow the default four-case matrix.
 
-The current deterministic search passes both core-band cases and explicitly
-reports no useful cutoff-wide design. These analytic results authorize the
-next coupled-streaming experiment only. They do not satisfy the waveform,
-jitter, bounded-gap, physical-scaling, or runtime-cost gates and therefore do
-not expose a library API.
+The deterministic search passes both core-band cases and explicitly reports no
+useful cutoff-wide design. Those analytic results originally authorized the
+coupled-streaming experiment. The subsequent three-signal waveform matrix now
+passes for both precisions, uniform and irregular schedules, and 1 Hz/37 Hz
+physical scaling for Butterworth orders 4 and 8 over DC through
+`0.7 * cutoff`. Separate structural `f64` tests cover stage coupling, step
+bounds, ramp partitioning, physical scaling, and transactional failure. The
+narrow `build_phase_equalized` API is public, remains fixed-size and
+allocation-free, and exposes integration diagnostics for observing its work;
+this record does not claim a separate runtime-cost gate. Cutoff-wide claims,
+other orders, and other response families remain unsupported. This tool is
+still an analytic design record: its rings are not public-API streaming
+measurements, and the separate response dashboard must provide those
+implementation overlays.
 
 ## Views
 
@@ -206,11 +215,24 @@ not expose a library API.
   unexplained smooth curve;
 - explicit topology, response, order, precision, and timestamp schedule.
 
-### Planned streaming phase-equalization dashboard
+### Streaming phase-equalization dashboard
 
-This broader view follows the current analytic per-case dashboards. It is not
-implemented until a coupled streaming candidate supplies the waveform and
-runtime records below.
+This broader view follows the current analytic per-case dashboards. The public
+coupled streaming candidate now exists, but its dashboard is not implemented
+yet. Build it incrementally rather than making the response plot a second
+phase-design program.
+
+The first slice stays low-pass-only and adds named topology/response/order
+selection plus an optional Butterworth order-4/order-8 phase-equalized overlay
+to `plot_responses`. Source and equalized measurements must use the same
+timestamps, inputs, fit windows, and convergence checks. Magnitude shows their
+shared analytic curve with distinct public-API markers; phase and group delay
+show source and combined responses, the constant-delay target, and the
+`0.7 * cutoff` validation boundary. Frequencies above that boundary are
+diagnostic context, not a supported equalization claim. Sparse measured phase
+must not be differentiated into group-delay markers in this first slice.
+
+Later waveform views may add:
 
 - source delay, equalized delay, and best constant-delay target;
 - absolute delay residual with the acceptance threshold drawn;
