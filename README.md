@@ -21,25 +21,18 @@ band-pass filters with four response families:
 The phase equalizer is causal and adds latency; its supported band and delay
 cost are available from the constructed filter.
 
-## Project documents
+## Install
 
-- [Design notes](DESIGN.md) define the numerical models, invariants, and
-  milestone sequence.
-- [Phase equalization record](docs/phase-equalization.md) defines the active
-  problem, evidence requirements, and current support boundary.
-- [Forward-backward batch design](docs/forward-backward.md) defines the
-  noncausal filtering contract, public boundary, and pre-implementation gates.
-- [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
-  freezes the stage-2 analytic signals, schedules, and refinement semantics.
-- [Baseline review](docs/baseline-review.md) records correctness and test gaps
-  found before the phase work began.
-- [Development tools roadmap](docs/development-tools.md) defines analytic
-  references, measured streaming overlays, reports, and plot-tool boundaries.
-- [UX evaluation and documentation plan](docs/ux-evaluation.md) defines cold
-  application trials, scenario controls, scoring, review cadence, and the
-  intended user-documentation structure.
-- [Agent collaboration guide](AGENTS.md) defines delegated work packages,
-  review independence, quality gates, and Git ownership.
+`ssfilt` is not published on crates.io yet. From a neighboring checkout, add:
+
+```toml
+[dependencies]
+ssfilt = { path = "../ssfilt" }
+```
+
+Pin a Git revision instead when consuming the repository remotely. A normal
+version dependency will replace this pre-release guidance when the crate is
+published.
 
 ## Example
 
@@ -274,8 +267,35 @@ the pure-Rust math backend:
 
 ```toml
 [dependencies]
-ssfilt = { version = "0.1", default-features = false, features = ["libm"] }
+ssfilt = { path = "../ssfilt", default-features = false, features = ["libm"] }
 ```
+
+Replace the path source as described under [Install](#install) when consuming
+the repository remotely.
+
+## Contributor and project documents
+
+These records explain ongoing design and validation work; they are not needed
+to use the public API.
+
+- [Design notes](DESIGN.md) define the numerical models, invariants, and
+  milestone sequence.
+- [Phase equalization record](docs/phase-equalization.md) defines the active
+  problem, evidence requirements, and current support boundary.
+- [Forward-backward batch design](docs/forward-backward.md) defines the
+  planned noncausal filtering contract and pre-implementation gates; it is not
+  a public batch API.
+- [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
+  freezes the stage-2 analytic signals, schedules, and refinement semantics.
+- [Baseline review](docs/baseline-review.md) records correctness and test gaps
+  found before the phase work began.
+- [Development tools roadmap](docs/development-tools.md) defines analytic
+  references, measured streaming overlays, reports, and plot-tool boundaries.
+- [UX evaluation and documentation plan](docs/ux-evaluation.md) defines cold
+  application trials, scenario controls, scoring, review cadence, and the
+  intended user-documentation structure.
+- [Agent collaboration guide](AGENTS.md) defines delegated work packages,
+  review independence, quality gates, and Git ownership.
 
 ## Development
 

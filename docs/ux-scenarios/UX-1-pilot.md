@@ -50,7 +50,9 @@ maintained user guides and examples explicitly linked by the README, if any
 
 The curator, not the trial agent, creates a sorted file manifest and digest for
 the snapshot. The exact snapshot path and digest are copied into each trial
-packet. The repository `Cargo.toml` is not allowlisted.
+packet. For this pilot, `SNAPSHOT.sha256` is the sorted manifest and the
+snapshot digest is the SHA-256 of that manifest's exact bytes (for example,
+`sha256sum SNAPSHOT.sha256`). The repository `Cargo.toml` is not allowlisted.
 
 In addition to the frozen snapshot, an agent may consult compiler and runtime
 diagnostics produced by its own scratch application.
