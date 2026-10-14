@@ -3,13 +3,90 @@
 use core::fmt;
 use std::error::Error as StdError;
 
-use forward_backward_protocol::{CaseRequest, FilterOrder, RecordBits};
+use forward_backward_protocol::{CaseIdentity, CaseRequest, FilterOrder, RecordBits};
 
 use crate::candidate::{CandidateMaterializationError, materialize_candidate_result};
 use crate::identity::{IdentityError, ResponseCellKey, identity_for};
 use crate::score::{WholeRecordAssessment, WholeRecordFatalError, score_whole_record};
 use crate::session::{CandidateSession, SessionError};
 use crate::{RecordScalar, RepresentedRecord};
+
+/// The response's immutable request provenance and its whole-record outcome.
+///
+/// Production values can only be made after the matching request has returned
+/// and its result has been scored. Keeping the key and identity beside the
+/// assessment prevents callers from relabeling a candidate during comparison.
+#[derive(Debug)]
+pub(crate) struct ResponseCellAssessment {
+    key: ResponseCellKey,
+    identity: CaseIdentity,
+    assessment: WholeRecordAssessment,
+    #[cfg(test)]
+    output_override: Option<Vec<rug::Float>>,
+}
+
+impl ResponseCellAssessment {
+    fn from_executed(
+        key: ResponseCellKey,
+        identity: CaseIdentity,
+        assessment: WholeRecordAssessment,
+    ) -> Self {
+        Self {
+            key,
+            identity,
+            assessment,
+            #[cfg(test)]
+            output_override: None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn key(&self) -> ResponseCellKey {
+        self.key
+    }
+
+    #[must_use]
+    pub(crate) const fn identity(&self) -> CaseIdentity {
+        self.identity
+    }
+
+    #[must_use]
+    pub(crate) const fn assessment(&self) -> &WholeRecordAssessment {
+        &self.assessment
+    }
+
+    /// Return the exact promoted output retained by scoring, if finite.
+    #[must_use]
+    pub(crate) fn scored_output(&self) -> Option<&[rug::Float]> {
+        #[cfg(test)]
+        if let Some(output) = &self.output_override {
+            return Some(output);
+        }
+        self.assessment.scored_output()
+    }
+
+    /// A narrowly scoped seam for comparison tests that need exact 256-bit
+    /// boundary values while retaining a real, locally certified assessment.
+    #[cfg(test)]
+    pub(crate) fn from_test(
+        key: ResponseCellKey,
+        identity: CaseIdentity,
+        assessment: WholeRecordAssessment,
+        output_override: Option<Vec<rug::Float>>,
+    ) -> Self {
+        Self {
+            key,
+            identity,
+            assessment,
+            output_override,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_output_override(&mut self, output: Vec<rug::Float>) {
+        self.output_override = Some(output);
+    }
+}
 
 /// Which request vector could not reserve its exact required capacity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,13 +205,17 @@ pub(crate) fn execute_response_cell(
     session: &mut CandidateSession,
     key: &ResponseCellKey,
     record: &RepresentedRecord,
-) -> Result<WholeRecordAssessment, CellExecutionError> {
+) -> Result<ResponseCellAssessment, CellExecutionError> {
     let request = build_case_request(key, record)?;
     let response = session
         .round_trip(&request)
         .map_err(CellExecutionError::Session)?;
+    let identity = request.identity;
     drop(request);
-    score_response(key.filter_order(), record, response)
+    let assessment = score_response(key.filter_order(), record, response)?;
+    Ok(ResponseCellAssessment::from_executed(
+        *key, identity, assessment,
+    ))
 }
 
 fn build_case_request(
@@ -223,7 +304,7 @@ fn encode_record(
     }
 }
 
-fn score_response(
+pub(crate) fn score_response(
     order: FilterOrder,
     record: &RepresentedRecord,
     response: forward_backward_protocol::CaseResult,

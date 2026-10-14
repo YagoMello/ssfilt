@@ -7,6 +7,9 @@ mod assessment;
 #[allow(dead_code)]
 mod candidate;
 mod case;
+// Cross-cell acceptance checks are consumed by the future matrix runner.
+#[allow(dead_code)]
+mod comparison;
 mod fixtures;
 // The matrix runner will consume these frozen identities in a later stage.
 #[allow(dead_code)]
