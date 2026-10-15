@@ -21,7 +21,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use analytic::{exact_frequency_point, frequency_ratios, group_delay};
+use analytic::{exact_frequency_point, frequency_ratios};
 use anyhow::Context;
 use clap::{Parser, error::ErrorKind};
 use measure::{
@@ -236,7 +236,10 @@ fn plot<const N: usize>(
                 ));
             }
         }
-        let group_delay = group_delay(&frequency);
+        let group_delay = frequency
+            .iter()
+            .map(|point| (point.ratio, point.normalized_group_delay))
+            .collect();
         let step = measure_step_response::<N>(spec.response)?;
         responses.push(ResponseData {
             spec,

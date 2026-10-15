@@ -181,9 +181,11 @@ equivalent `2π` branch nearest the independent analytic phase. This branch
 selection makes the comparison readable but does not alter the least-squares
 fit or participate in settling detection.
 
-Group-delay markers may be derived from symmetric nearby measured phase points,
-but analytic group delay remains the primary reference because differentiating
-measured phase amplifies error. Never differentiate wrapped phase directly.
+The response dashboard evaluates analytic group delay directly from the
+independent pole contributions used by its transfer-function oracle. Future
+measured group-delay markers may be derived from symmetric nearby measured
+phase points, but they remain secondary because differentiation amplifies
+measurement error. Never differentiate wrapped phase directly.
 
 Frequency selection includes:
 

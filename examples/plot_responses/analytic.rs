@@ -1,6 +1,5 @@
 use std::error::Error;
 
-use num_traits::ToPrimitive;
 use ssfilt::Response;
 
 #[path = "../support/transfer.rs"]
@@ -10,13 +9,13 @@ const FREQUENCY_POINTS: u32 = 1_601;
 pub(super) const MIN_FREQUENCY_RATIO: f64 = 0.01;
 pub(super) const MAX_FREQUENCY_RATIO: f64 = 20.0;
 pub(super) const MAGNITUDE_FLOOR_DB: f64 = -140.0;
-const GROUP_DELAY_HALF_WINDOW: usize = 4;
 const SETTLING_E_FOLDS: f64 = 24.0;
 
 pub(super) struct FrequencyPoint {
     pub(super) ratio: f64,
     pub(super) gain_db: f64,
     pub(super) phase_radians: f64,
+    pub(super) normalized_group_delay: f64,
 }
 
 pub(super) fn frequency_ratios() -> impl Iterator<Item = f64> {
@@ -58,6 +57,7 @@ pub(super) fn exact_frequency_point<const N: usize>(
         ratio: frequency_ratio,
         gain_db: point.gain_db,
         phase_radians: point.phase_radians,
+        normalized_group_delay: point.normalized_group_delay,
     })
 }
 
@@ -71,29 +71,6 @@ pub(super) fn minimum_settling_time_seconds<const N: usize>(
 ) -> Result<f64, Box<dyn Error + Send + Sync>> {
     let slowest_normalized_decay = transfer::slowest_normalized_decay(response, N)?;
     Ok(SETTLING_E_FOLDS / (core::f64::consts::TAU * slowest_normalized_decay))
-}
-
-pub(super) fn group_delay(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
-    let width = 2 * GROUP_DELAY_HALF_WINDOW + 1;
-    points
-        .windows(width)
-        .filter_map(|window| {
-            let center = &window[GROUP_DELAY_HALF_WINDOW];
-            let mean_ratio = window.iter().map(|point| point.ratio).sum::<f64>()
-                / width.to_f64().expect("small constant fits in f64");
-            let mean_phase = window.iter().map(|point| point.phase_radians).sum::<f64>()
-                / width.to_f64().expect("small constant fits in f64");
-            let (covariance, variance) = window.iter().fold((0.0, 0.0), |acc, point| {
-                let ratio_offset = point.ratio - mean_ratio;
-                (
-                    (point.phase_radians - mean_phase).mul_add(ratio_offset, acc.0),
-                    ratio_offset.mul_add(ratio_offset, acc.1),
-                )
-            });
-            let delay = -covariance / variance;
-            (delay.is_finite() && delay >= 0.0).then_some((center.ratio, delay))
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -130,6 +107,16 @@ mod tests {
         let bessel = exact_frequency_point::<25>(Response::Bessel, 1.0).unwrap();
         assert_relative_eq!(bessel.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
         assert!(bessel.phase_radians.is_finite());
+    }
+
+    #[test]
+    fn frequency_points_keep_the_oracles_exact_group_delay() {
+        let point = exact_frequency_point::<1>(Response::Butterworth, 0.75).unwrap();
+        assert_relative_eq!(
+            point.normalized_group_delay,
+            1.0 / 0.75_f64.mul_add(0.75, 1.0),
+            epsilon = 1.0e-14
+        );
     }
 
     #[test]
