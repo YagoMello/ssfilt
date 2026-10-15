@@ -6,7 +6,7 @@
 
 use std::error::Error;
 
-use ssfilt::{InputModel, IntegrationDiagnostics, LowPass, Response};
+use ssfilt::{InputModel, IntegrationDiagnostics, LowPass, PhaseEqualizedLowPass, Response};
 
 use super::analytic::minimum_settling_time_seconds;
 
@@ -23,6 +23,11 @@ const SETTLING_PHASE_TOLERANCE_RADIANS: f64 = 1.0e-4;
 const SETTLING_GAIN_SCALE_FLOOR: f64 = 1.0e-4;
 const REQUIRED_SETTLED_COMPARISONS: u32 = 2;
 const MAX_SETTLING_WINDOWS: u32 = 8;
+const PHASE_EQUALIZER_SETTLING_E_FOLDS: f64 = 24.0;
+// The documented validated design bounds every all-pass section by sigma >= 0.2.
+// Use that conservative lower bound instead of copying the selected coefficients
+// from the independent transfer-function oracle into this measurement driver.
+const MIN_VALIDATED_PHASE_EQUALIZER_SIGMA: f64 = 0.2;
 
 /// Deterministic schedules for piecewise-linear sampled-sine measurements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,6 +120,14 @@ pub(super) struct SineMeasurement {
     pub(super) diagnostics: AggregateDiagnostics,
 }
 
+/// Source and phase-equalized records made from one shared timestamp stream.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Consumed by the planned measured equalization overlay.
+pub(super) struct PairedSineMeasurement {
+    pub(super) source: SineMeasurement,
+    pub(super) equalized: SineMeasurement,
+}
+
 impl SineMeasurement {
     pub(super) fn phase_is_resolved(self) -> bool {
         self.gain >= SETTLING_GAIN_SCALE_FLOOR
@@ -160,6 +173,151 @@ struct SineFit {
     rms: f64,
 }
 
+#[derive(Debug)]
+struct FitSamples {
+    source: Vec<(f64, f64)>,
+    equalized: Option<Vec<(f64, f64)>>,
+}
+
+impl FitSamples {
+    fn new<const N: usize>(driver: &MeasurementDriver<N>, time_seconds: f64) -> Self {
+        Self {
+            source: vec![(time_seconds, driver.source_output())],
+            equalized: driver
+                .equalized_output()
+                .map(|output| vec![(time_seconds, output)]),
+        }
+    }
+}
+
+struct MeasurementDriver<const N: usize> {
+    source: LowPass<N, f64>,
+    equalized: Option<PhaseEqualizedLowPass<N, f64>>,
+    source_diagnostics: AggregateDiagnostics,
+    equalized_diagnostics: Option<AggregateDiagnostics>,
+}
+
+impl<const N: usize> MeasurementDriver<N> {
+    fn new(
+        response: Response,
+        include_equalized: bool,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let source = LowPass::<N>::builder(1.0)
+            .response(response)
+            .input_model(InputModel::Linear)
+            .initial_input(0.0)
+            .build()?;
+        let equalized = if include_equalized {
+            Some(
+                LowPass::<N>::builder(1.0)
+                    .response(response)
+                    .input_model(InputModel::Linear)
+                    .initial_input(0.0)
+                    .build_phase_equalized()?,
+            )
+        } else {
+            None
+        };
+        let equalized_diagnostics = equalized.as_ref().map(|_| AggregateDiagnostics::default());
+
+        Ok(Self {
+            source,
+            equalized,
+            source_diagnostics: AggregateDiagnostics::default(),
+            equalized_diagnostics,
+        })
+    }
+
+    fn source_output(&self) -> f64 {
+        self.source.output()
+    }
+
+    fn equalized_output(&self) -> Option<f64> {
+        self.equalized.as_ref().map(PhaseEqualizedLowPass::output)
+    }
+
+    fn update(
+        &mut self,
+        input: f64,
+        dt_seconds: f64,
+    ) -> Result<(f64, Option<f64>), Box<dyn Error + Send + Sync>> {
+        let source_output = self.source.update(input, dt_seconds)?;
+        self.source_diagnostics
+            .record(self.source.last_diagnostics());
+
+        let equalized_output = if let Some(filter) = self.equalized.as_mut() {
+            let output = filter.update(input, dt_seconds)?;
+            self.equalized_diagnostics
+                .as_mut()
+                .expect("equalized diagnostics accompany the equalized filter")
+                .record(filter.last_diagnostics());
+            Some(output)
+        } else {
+            None
+        };
+        Ok((source_output, equalized_output))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SettlingState {
+    previous_fit: Option<SineFit>,
+    final_fit: Option<SineFit>,
+    settled_comparisons: u32,
+    relative_gain_delta: f64,
+    phase_delta_radians: f64,
+}
+
+impl SettlingState {
+    fn new() -> Self {
+        Self {
+            previous_fit: None,
+            final_fit: None,
+            settled_comparisons: 0,
+            relative_gain_delta: f64::INFINITY,
+            phase_delta_radians: f64::INFINITY,
+        }
+    }
+
+    fn observe(&mut self, fit: SineFit) {
+        if let Some(previous) = self.previous_fit {
+            self.relative_gain_delta = relative_gain_delta(previous, fit);
+            self.phase_delta_radians =
+                circular_phase_delta(previous.wrapped_phase(), fit.wrapped_phase());
+            let phase_is_resolved = previous.gain().max(fit.gain()) >= SETTLING_GAIN_SCALE_FLOOR;
+            let settled = self.relative_gain_delta <= SETTLING_RELATIVE_GAIN_TOLERANCE
+                && (!phase_is_resolved
+                    || self.phase_delta_radians <= SETTLING_PHASE_TOLERANCE_RADIANS);
+            self.settled_comparisons = if settled {
+                self.settled_comparisons + 1
+            } else {
+                0
+            };
+        }
+        self.previous_fit = Some(fit);
+        self.final_fit = Some(fit);
+    }
+
+    fn is_settled(self) -> bool {
+        self.settled_comparisons >= REQUIRED_SETTLED_COMPARISONS
+    }
+}
+
+struct MeasurementPaths {
+    source: SineMeasurement,
+    #[allow(dead_code)] // Read by the paired measurement entry point.
+    equalized: Option<SineMeasurement>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SettledFits {
+    source: SettlingState,
+    equalized: Option<SettlingState>,
+    fit_update_count: usize,
+    fit_sample_count: usize,
+    settling_window_count: u32,
+}
+
 impl SineFit {
     fn gain(self) -> f64 {
         self.sine.hypot(self.cosine)
@@ -182,6 +340,46 @@ pub(super) fn measure_low_pass<const N: usize>(
     schedule: SampleSchedule,
     samples_per_cycle: u32,
 ) -> Result<SineMeasurement, Box<dyn Error + Send + Sync>> {
+    Ok(measure_low_pass_paths::<N>(
+        response,
+        frequency_ratio,
+        schedule,
+        samples_per_cycle,
+        false,
+    )?
+    .source)
+}
+
+/// Measures Butterworth orders 4 and 8 through the ordinary and delayed-phase
+/// public APIs using one shared input and timestamp stream.
+#[allow(dead_code)] // The response plot will consume this with the equalized overlay.
+pub(super) fn measure_butterworth_low_pass_pair<const N: usize>(
+    frequency_ratio: f64,
+    schedule: SampleSchedule,
+    samples_per_cycle: u32,
+) -> Result<PairedSineMeasurement, Box<dyn Error + Send + Sync>> {
+    let paths = measure_low_pass_paths::<N>(
+        Response::Butterworth,
+        frequency_ratio,
+        schedule,
+        samples_per_cycle,
+        true,
+    )?;
+    Ok(PairedSineMeasurement {
+        source: paths.source,
+        equalized: paths
+            .equalized
+            .expect("paired measurements construct an equalized filter"),
+    })
+}
+
+fn measure_low_pass_paths<const N: usize>(
+    response: Response,
+    frequency_ratio: f64,
+    schedule: SampleSchedule,
+    samples_per_cycle: u32,
+    include_equalized: bool,
+) -> Result<MeasurementPaths, Box<dyn Error + Send + Sync>> {
     if !frequency_ratio.is_finite() || frequency_ratio <= 0.0 {
         return Err("frequency ratio must be finite and positive".into());
     }
@@ -190,101 +388,199 @@ pub(super) fn measure_low_pass<const N: usize>(
     }
 
     let maximum_interval_seconds = 1.0 / (frequency_ratio * f64::from(samples_per_cycle));
-    let mut filter = LowPass::<N>::builder(1.0)
-        .response(response)
-        .input_model(InputModel::Linear)
-        .initial_input(0.0)
-        .build()?;
+    let mut driver = MeasurementDriver::<N>::new(response, include_equalized)?;
     let mut time_seconds = 0.0;
     let mut schedule_index = 0;
-    let mut diagnostics = AggregateDiagnostics::default();
 
-    let warmup_end_seconds = (f64::from(DEFAULT_WARMUP_CYCLES) / frequency_ratio)
-        .max(minimum_settling_time_seconds::<N>(response)?);
+    let warmup_end_seconds =
+        minimum_warmup_seconds::<N>(response, frequency_ratio, include_equalized)?;
     let warmup_update_count = advance_to(
-        &mut filter,
+        &mut driver,
         &mut time_seconds,
         warmup_end_seconds,
         frequency_ratio,
         schedule,
         maximum_interval_seconds,
         &mut schedule_index,
-        &mut diagnostics,
         None,
     )?;
 
-    let angular_frequency = core::f64::consts::TAU * frequency_ratio;
-    let mut previous_fit = None;
-    let mut settled_comparisons = 0;
-    let mut fit_update_count = 0;
-    let mut final_fit = None;
-    let mut fit_sample_count = 0;
-    let mut settling_relative_gain_delta = f64::INFINITY;
-    let mut settling_phase_delta_radians = f64::INFINITY;
-    let mut settling_window_count = 0;
-    for window in 1..=MAX_SETTLING_WINDOWS {
-        let fit_end_seconds = time_seconds + f64::from(DEFAULT_FIT_CYCLES) / frequency_ratio;
-        let mut fit_samples = vec![(time_seconds, filter.output())];
-        fit_update_count += advance_to(
-            &mut filter,
-            &mut time_seconds,
-            fit_end_seconds,
-            frequency_ratio,
-            schedule,
-            maximum_interval_seconds,
-            &mut schedule_index,
-            &mut diagnostics,
-            Some(&mut fit_samples),
-        )?;
-        let fit = fit_sine(&fit_samples, angular_frequency)?;
-        if let Some(previous) = previous_fit {
-            settling_relative_gain_delta = relative_gain_delta(previous, fit);
-            settling_phase_delta_radians =
-                circular_phase_delta(previous.wrapped_phase(), fit.wrapped_phase());
-            let phase_is_resolved = previous.gain().max(fit.gain()) >= SETTLING_GAIN_SCALE_FLOOR;
-            let settled = settling_relative_gain_delta <= SETTLING_RELATIVE_GAIN_TOLERANCE
-                && (!phase_is_resolved
-                    || settling_phase_delta_radians <= SETTLING_PHASE_TOLERANCE_RADIANS);
-            settled_comparisons = if settled { settled_comparisons + 1 } else { 0 };
-        }
-        fit_sample_count = fit_samples.len();
-        final_fit = Some(fit);
-        settling_window_count = window;
-        if settled_comparisons >= REQUIRED_SETTLED_COMPARISONS {
-            break;
-        }
-        previous_fit = Some(fit);
-    }
-    if settled_comparisons < REQUIRED_SETTLED_COMPARISONS {
-        return Err(format!(
-            "measurement did not settle for {response:?} order {N} at {frequency_ratio} × cutoff with {} timestamps: relative gain delta {settling_relative_gain_delta:e}, phase delta {settling_phase_delta_radians:e} rad",
-            schedule.label(),
-        )
-        .into());
-    }
-    let fit = final_fit.expect("at least one settling window is configured");
-    Ok(SineMeasurement {
+    let fits = fit_until_settled::<N>(
+        &mut driver,
         response,
-        order: N,
+        frequency_ratio,
+        schedule,
+        maximum_interval_seconds,
+        &mut time_seconds,
+        &mut schedule_index,
+    )?;
+
+    let source = make_measurement(
+        response,
         frequency_ratio,
         schedule,
         samples_per_cycle,
         maximum_interval_seconds,
-        warmup_cycles: warmup_end_seconds * frequency_ratio,
-        warmup_seconds: warmup_end_seconds,
+        warmup_end_seconds,
+        warmup_update_count,
+        fits.fit_update_count,
+        fits.fit_sample_count,
+        fits.settling_window_count,
+        fits.source,
+        N,
+        driver.source_diagnostics,
+    );
+    let equalized = fits.equalized.map(|settling| {
+        make_measurement(
+            Response::Butterworth,
+            frequency_ratio,
+            schedule,
+            samples_per_cycle,
+            maximum_interval_seconds,
+            warmup_end_seconds,
+            warmup_update_count,
+            fits.fit_update_count,
+            fits.fit_sample_count,
+            fits.settling_window_count,
+            settling,
+            N,
+            driver
+                .equalized_diagnostics
+                .expect("equalized diagnostics accompany the equalized path"),
+        )
+    });
+    Ok(MeasurementPaths { source, equalized })
+}
+
+fn minimum_warmup_seconds<const N: usize>(
+    response: Response,
+    frequency_ratio: f64,
+    include_equalized: bool,
+) -> Result<f64, Box<dyn Error + Send + Sync>> {
+    let source_minimum = (f64::from(DEFAULT_WARMUP_CYCLES) / frequency_ratio)
+        .max(minimum_settling_time_seconds::<N>(response)?);
+    if !include_equalized {
+        return Ok(source_minimum);
+    }
+    let equalizer_minimum = PHASE_EQUALIZER_SETTLING_E_FOLDS
+        / (core::f64::consts::TAU * MIN_VALIDATED_PHASE_EQUALIZER_SIGMA);
+    Ok(source_minimum.max(equalizer_minimum))
+}
+
+fn fit_until_settled<const N: usize>(
+    driver: &mut MeasurementDriver<N>,
+    response: Response,
+    frequency_ratio: f64,
+    schedule: SampleSchedule,
+    maximum_interval_seconds: f64,
+    time_seconds: &mut f64,
+    schedule_index: &mut usize,
+) -> Result<SettledFits, Box<dyn Error + Send + Sync>> {
+    let angular_frequency = core::f64::consts::TAU * frequency_ratio;
+    let mut source_settling = SettlingState::new();
+    let mut equalized_settling = driver.equalized.as_ref().map(|_| SettlingState::new());
+    let mut fit_update_count = 0;
+    let mut fit_sample_count = 0;
+    let mut settling_window_count = 0;
+    for window in 1..=MAX_SETTLING_WINDOWS {
+        let fit_end_seconds = *time_seconds + f64::from(DEFAULT_FIT_CYCLES) / frequency_ratio;
+        let mut fit_samples = FitSamples::new(driver, *time_seconds);
+        fit_update_count += advance_to(
+            driver,
+            time_seconds,
+            fit_end_seconds,
+            frequency_ratio,
+            schedule,
+            maximum_interval_seconds,
+            schedule_index,
+            Some(&mut fit_samples),
+        )?;
+        source_settling.observe(fit_sine(&fit_samples.source, angular_frequency)?);
+        if let (Some(samples), Some(settling)) =
+            (fit_samples.equalized.as_ref(), equalized_settling.as_mut())
+        {
+            settling.observe(fit_sine(samples, angular_frequency)?);
+        }
+        fit_sample_count = fit_samples.source.len();
+        settling_window_count = window;
+        let all_paths_settled = source_settling.is_settled()
+            && equalized_settling.is_none_or(SettlingState::is_settled);
+        if all_paths_settled {
+            break;
+        }
+    }
+
+    if !source_settling.is_settled() || !equalized_settling.is_none_or(SettlingState::is_settled) {
+        if let Some(equalized) = equalized_settling {
+            return Err(format!(
+                "paired measurement did not settle for Butterworth order {N} at {frequency_ratio} × cutoff with {} timestamps: source relative gain delta {:e}, phase delta {:e} rad; equalized relative gain delta {:e}, phase delta {:e} rad",
+                schedule.label(),
+                source_settling.relative_gain_delta,
+                source_settling.phase_delta_radians,
+                equalized.relative_gain_delta,
+                equalized.phase_delta_radians,
+            )
+            .into());
+        }
+        return Err(format!(
+            "measurement did not settle for {response:?} order {N} at {frequency_ratio} × cutoff with {} timestamps: relative gain delta {:e}, phase delta {:e} rad",
+            schedule.label(),
+            source_settling.relative_gain_delta,
+            source_settling.phase_delta_radians,
+        )
+        .into());
+    }
+
+    Ok(SettledFits {
+        source: source_settling,
+        equalized: equalized_settling,
+        fit_update_count,
+        fit_sample_count,
+        settling_window_count,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_measurement(
+    response: Response,
+    frequency_ratio: f64,
+    schedule: SampleSchedule,
+    samples_per_cycle: u32,
+    maximum_interval_seconds: f64,
+    warmup_seconds: f64,
+    warmup_update_count: usize,
+    fit_update_count: usize,
+    fit_sample_count: usize,
+    settling_window_count: u32,
+    settling: SettlingState,
+    order: usize,
+    diagnostics: AggregateDiagnostics,
+) -> SineMeasurement {
+    let fit = settling
+        .final_fit
+        .expect("at least one settling window is configured");
+    SineMeasurement {
+        response,
+        order,
+        frequency_ratio,
+        schedule,
+        samples_per_cycle,
+        maximum_interval_seconds,
+        warmup_cycles: warmup_seconds * frequency_ratio,
+        warmup_seconds,
         fit_cycles: DEFAULT_FIT_CYCLES,
         warmup_update_count,
         fit_update_count,
         fit_sample_count,
         settling_window_count,
-        settling_relative_gain_delta,
-        settling_phase_delta_radians,
+        settling_relative_gain_delta: settling.relative_gain_delta,
+        settling_phase_delta_radians: settling.phase_delta_radians,
         fit_offset: fit.offset,
         gain: fit.gain(),
         wrapped_phase_radians: fit.wrapped_phase(),
         fit_rms: fit.rms,
         diagnostics,
-    })
+    }
 }
 
 fn relative_gain_delta(previous: SineFit, current: SineFit) -> f64 {
@@ -303,15 +599,14 @@ fn circular_phase_delta(previous: f64, current: f64) -> f64 {
 
 #[allow(clippy::too_many_arguments)]
 fn advance_to<const N: usize>(
-    filter: &mut LowPass<N, f64>,
+    driver: &mut MeasurementDriver<N>,
     time_seconds: &mut f64,
     end_seconds: f64,
     frequency_hz: f64,
     schedule: SampleSchedule,
     maximum_interval_seconds: f64,
     schedule_index: &mut usize,
-    diagnostics: &mut AggregateDiagnostics,
-    mut samples: Option<&mut Vec<(f64, f64)>>,
+    mut samples: Option<&mut FitSamples>,
 ) -> Result<usize, Box<dyn Error + Send + Sync>> {
     let mut updates = 0;
     while *time_seconds < end_seconds {
@@ -329,10 +624,15 @@ fn advance_to<const N: usize>(
             *time_seconds += dt_seconds;
         }
         let input = (core::f64::consts::TAU * frequency_hz * *time_seconds).sin();
-        let output = filter.update(input, dt_seconds)?;
-        diagnostics.record(filter.last_diagnostics());
+        let (source_output, equalized_output) = driver.update(input, dt_seconds)?;
         if let Some(samples) = samples.as_deref_mut() {
-            samples.push((*time_seconds, output));
+            samples.source.push((*time_seconds, source_output));
+            if let Some(equalized_samples) = samples.equalized.as_mut() {
+                equalized_samples.push((
+                    *time_seconds,
+                    equalized_output.expect("fit buffers match the active filter paths"),
+                ));
+            }
         }
         updates += 1;
     }
@@ -480,8 +780,103 @@ mod tests {
     use approx::assert_relative_eq;
     use ssfilt::Response;
 
-    use super::{MeasuredFrequencyPoint, SampleSchedule, fit_sine, measure_low_pass, unwrap_phase};
-    use crate::analytic::exact_frequency_point;
+    use super::{
+        DEFAULT_FIT_CYCLES, DEFAULT_SAMPLES_PER_CYCLE, DEFAULT_WARMUP_CYCLES, MAX_SETTLING_WINDOWS,
+        MIN_VALIDATED_PHASE_EQUALIZER_SIGMA, MeasuredFrequencyPoint,
+        PHASE_EQUALIZER_SETTLING_E_FOLDS, SampleSchedule, SineMeasurement, fit_sine,
+        measure_butterworth_low_pass_pair, measure_low_pass, minimum_warmup_seconds, unwrap_phase,
+    };
+    use crate::analytic::{exact_frequency_point, minimum_settling_time_seconds};
+
+    fn assert_shared_pair_structure(source: SineMeasurement, equalized: SineMeasurement) {
+        assert_eq!(source.frequency_ratio, equalized.frequency_ratio);
+        assert_eq!(source.schedule, equalized.schedule);
+        assert_eq!(source.samples_per_cycle, equalized.samples_per_cycle);
+        assert_eq!(
+            source.maximum_interval_seconds,
+            equalized.maximum_interval_seconds
+        );
+        assert_eq!(source.warmup_cycles, equalized.warmup_cycles);
+        assert_eq!(source.warmup_seconds, equalized.warmup_seconds);
+        assert_eq!(source.fit_cycles, equalized.fit_cycles);
+        assert_eq!(source.warmup_update_count, equalized.warmup_update_count);
+        assert_eq!(source.fit_update_count, equalized.fit_update_count);
+        assert_eq!(source.fit_sample_count, equalized.fit_sample_count);
+        assert_eq!(
+            source.settling_window_count,
+            equalized.settling_window_count
+        );
+        assert_eq!(source.response, Response::Butterworth);
+        assert_eq!(equalized.response, Response::Butterworth);
+        assert_eq!(source.order, equalized.order);
+        assert!(source.settling_window_count >= 3);
+        assert!(source.settling_window_count <= MAX_SETTLING_WINDOWS);
+        for measurement in [source, equalized] {
+            assert!(measurement.settling_relative_gain_delta <= 1.0e-4);
+            assert!(measurement.settling_phase_delta_radians <= 1.0e-4);
+            assert!(measurement.fit_rms.is_finite());
+            assert!(measurement.diagnostics.derivative_evaluations > 0);
+        }
+    }
+
+    fn expected_equalized_phase<const N: usize>(frequency_ratio: f64, source_phase: f64) -> f64 {
+        // These tool-local coefficients/formula independently mirror the
+        // transfer-function oracle for a test expectation only.
+        let (sigma, eta) = match N {
+            4 => (0.774_282_178_267_629_5, 0.420_158_711_359_650_1),
+            8 => (0.631_643_162_371_801_7, 0.381_855_079_433_413_2),
+            _ => panic!("the phase equalizer is validated for orders 4 and 8"),
+        };
+        let all_pass_phase = -2.0
+            * (2.0 * sigma * frequency_ratio)
+                .atan2(sigma.mul_add(sigma, eta * eta) - frequency_ratio * frequency_ratio);
+        source_phase + all_pass_phase
+    }
+
+    fn assert_pair_matches_analytic<const N: usize>(
+        frequency_ratio: f64,
+        schedule: SampleSchedule,
+    ) {
+        let pair = measure_butterworth_low_pass_pair::<N>(
+            frequency_ratio,
+            schedule,
+            DEFAULT_SAMPLES_PER_CYCLE,
+        )
+        .unwrap();
+        assert_shared_pair_structure(pair.source, pair.equalized);
+        assert_eq!(pair.source.frequency_ratio, frequency_ratio);
+        assert_eq!(pair.source.schedule, schedule);
+        assert_eq!(pair.source.fit_cycles, DEFAULT_FIT_CYCLES);
+        assert!(pair.source.warmup_cycles >= f64::from(DEFAULT_WARMUP_CYCLES));
+
+        let analytic = exact_frequency_point::<N>(Response::Butterworth, frequency_ratio).unwrap();
+        let expected_gain = 10.0_f64.powf(analytic.gain_db / 20.0);
+        for streamed in [pair.source, pair.equalized] {
+            let relative_gain_error = (streamed.gain - expected_gain).abs() / expected_gain;
+            assert!(
+                relative_gain_error < 1.0e-4,
+                "order {N} at {frequency_ratio} with {schedule:?}: gain error {relative_gain_error}"
+            );
+        }
+        let source =
+            MeasuredFrequencyPoint::new(pair.source, analytic.gain_db, analytic.phase_radians);
+        let expected_equalized_phase =
+            expected_equalized_phase::<N>(frequency_ratio, analytic.phase_radians);
+        let equalized_phase = unwrap_phase(
+            pair.equalized.wrapped_phase_radians,
+            expected_equalized_phase,
+        );
+        let source_phase_error = (source.unwrapped_phase_radians - analytic.phase_radians).abs();
+        let equalized_phase_error = (equalized_phase - expected_equalized_phase).abs();
+        assert!(
+            source_phase_error < 1.0e-6,
+            "order {N} at {frequency_ratio} with {schedule:?}: source phase error {source_phase_error}"
+        );
+        assert!(
+            equalized_phase_error < 1.0e-6,
+            "order {N} at {frequency_ratio} with {schedule:?}: equalized phase error {equalized_phase_error}"
+        );
+    }
 
     #[test]
     fn schedules_are_deterministic_and_bounded_by_the_nominal_interval() {
@@ -569,6 +964,52 @@ mod tests {
         assert!((coarse.wrapped_phase_radians - fine_phase).abs() < 1.0e-4);
         assert!(coarse.fit_rms.is_finite());
         assert!(coarse.diagnostics.derivative_evaluations > 0);
+    }
+
+    #[test]
+    fn source_only_measurement_retains_its_original_warmup_and_settling_contract() {
+        let measurement =
+            measure_low_pass::<4>(Response::Butterworth, 0.7, SampleSchedule::Uniform, 256)
+                .unwrap();
+        let expected_warmup = (f64::from(DEFAULT_WARMUP_CYCLES) / 0.7)
+            .max(minimum_settling_time_seconds::<4>(Response::Butterworth).unwrap());
+        let analytic = exact_frequency_point::<4>(Response::Butterworth, 0.7).unwrap();
+        let measured =
+            MeasuredFrequencyPoint::new(measurement, analytic.gain_db, analytic.phase_radians);
+
+        assert_eq!(measurement.warmup_seconds, expected_warmup);
+        assert_relative_eq!(measurement.warmup_cycles, 60.0, epsilon = 1.0e-12);
+        assert_eq!(measurement.fit_cycles, DEFAULT_FIT_CYCLES);
+        assert!(measurement.settling_window_count >= 3);
+        assert!(measurement.settling_window_count <= MAX_SETTLING_WINDOWS);
+        assert!(measurement.settling_relative_gain_delta <= 1.0e-4);
+        assert!(measurement.settling_phase_delta_radians <= 1.0e-4);
+        assert!((measurement.gain - 10.0_f64.powf(analytic.gain_db / 20.0)).abs() < 1.0e-4);
+        assert!((measured.unwrapped_phase_radians - analytic.phase_radians).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn paired_measurements_share_boundaries_and_match_analytic_responses() {
+        for frequency_ratio in [0.7, 0.9, 1.0] {
+            assert_pair_matches_analytic::<4>(frequency_ratio, SampleSchedule::Uniform);
+            assert_pair_matches_analytic::<8>(frequency_ratio, SampleSchedule::Uniform);
+        }
+    }
+
+    #[test]
+    fn paired_measurement_shares_the_bounded_jitter_schedule() {
+        assert_pair_matches_analytic::<8>(0.7, SampleSchedule::BoundedJitter);
+    }
+
+    #[test]
+    fn paired_warmup_applies_the_validated_equalizer_decay_floor() {
+        let source = minimum_warmup_seconds::<4>(Response::Butterworth, 100.0, false).unwrap();
+        let paired = minimum_warmup_seconds::<4>(Response::Butterworth, 100.0, true).unwrap();
+        let equalizer_floor = PHASE_EQUALIZER_SETTLING_E_FOLDS
+            / (core::f64::consts::TAU * MIN_VALIDATED_PHASE_EQUALIZER_SIGMA);
+
+        assert!(source < equalizer_floor);
+        assert_eq!(paired, equalizer_floor);
     }
 
     #[test]
