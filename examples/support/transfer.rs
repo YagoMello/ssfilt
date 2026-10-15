@@ -18,6 +18,21 @@ pub(crate) struct TransferPoint {
     pub(crate) normalized_group_delay: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PhaseEqualizerDesign {
+    sigma: f64,
+    eta: f64,
+}
+
+const ORDER_4_PHASE_EQUALIZER: PhaseEqualizerDesign = PhaseEqualizerDesign {
+    sigma: 0.774_282_178_267_629_5,
+    eta: 0.420_158_711_359_650_1,
+};
+const ORDER_8_PHASE_EQUALIZER: PhaseEqualizerDesign = PhaseEqualizerDesign {
+    sigma: 0.631_643_162_371_801_7,
+    eta: 0.381_855_079_433_413_2,
+};
+
 pub(crate) fn low_pass(
     response: Response,
     order: usize,
@@ -118,6 +133,31 @@ pub(crate) fn low_pass(
     Ok(point)
 }
 
+/// Evaluates one of the validated Butterworth-plus-all-pass designs.
+///
+/// These two coefficients are deliberately duplicated in the independent
+/// development oracle instead of exposing the runtime model's private poles.
+#[allow(dead_code)] // The response-dashboard overlay consumes this in the next slice.
+pub(crate) fn phase_equalized_butterworth(
+    order: usize,
+    frequency_ratio: f64,
+) -> Result<TransferPoint, Box<dyn Error + Send + Sync>> {
+    let design = match order {
+        4 => ORDER_4_PHASE_EQUALIZER,
+        8 => ORDER_8_PHASE_EQUALIZER,
+        _ => return Err("phase equalization is validated only for orders 4 and 8".into()),
+    };
+    let mut point = low_pass(Response::Butterworth, order, frequency_ratio)?;
+    accumulate_all_pass(design, frequency_ratio, &mut point);
+    if !point.phase_radians.is_finite()
+        || !point.normalized_group_delay.is_finite()
+        || point.normalized_group_delay < 0.0
+    {
+        return Err("phase-equalized transfer-function evaluation is not finite".into());
+    }
+    Ok(point)
+}
+
 #[allow(dead_code)] // Shared consumers do not all need settling-time data.
 pub(crate) fn slowest_normalized_decay(
     response: Response,
@@ -207,12 +247,24 @@ fn accumulate_second_order(
         damping * (natural_frequency_squared + frequency_squared) / denominator_power;
 }
 
+fn accumulate_all_pass(design: PhaseEqualizerDesign, frequency: f64, point: &mut TransferPoint) {
+    let natural_frequency_squared = design.sigma.mul_add(design.sigma, design.eta * design.eta);
+    point.phase_radians -= 2.0
+        * (2.0 * design.sigma * frequency).atan2(natural_frequency_squared - frequency * frequency);
+    point.normalized_group_delay += 2.0 * design.sigma
+        / (frequency - design.eta).mul_add(frequency - design.eta, design.sigma * design.sigma)
+        + 2.0 * design.sigma
+            / (frequency + design.eta).mul_add(frequency + design.eta, design.sigma * design.sigma);
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     use ssfilt::Response;
 
-    use super::low_pass;
+    use super::{
+        ORDER_4_PHASE_EQUALIZER, ORDER_8_PHASE_EQUALIZER, low_pass, phase_equalized_butterworth,
+    };
 
     #[test]
     fn response_families_share_the_whole_filter_minus_three_db_cutoff() {
@@ -280,5 +332,45 @@ mod tests {
             .is_err()
         );
         assert!(low_pass(Response::Butterworth, 4, f64::MAX).is_err());
+    }
+
+    #[test]
+    fn equalized_oracle_preserves_butterworth_magnitude() {
+        for order in [4, 8] {
+            for frequency in [0.0, 0.1, 0.7, 1.0, 4.0] {
+                let source = low_pass(Response::Butterworth, order, frequency).unwrap();
+                let equalized = phase_equalized_butterworth(order, frequency).unwrap();
+                assert_eq!(equalized.gain_db, source.gain_db);
+                assert!(equalized.phase_radians <= source.phase_radians);
+                assert!(equalized.normalized_group_delay > source.normalized_group_delay);
+            }
+        }
+    }
+
+    #[test]
+    fn equalized_group_delay_matches_a_phase_derivative_cross_check() {
+        let step = 1.0e-6;
+        for (order, design) in [(4, ORDER_4_PHASE_EQUALIZER), (8, ORDER_8_PHASE_EQUALIZER)] {
+            let crossing = design.sigma.hypot(design.eta);
+            for frequency in [0.63, crossing - 1.0e-4, crossing + 1.0e-4] {
+                let point = phase_equalized_butterworth(order, frequency).unwrap();
+                let before = phase_equalized_butterworth(order, frequency - step).unwrap();
+                let after = phase_equalized_butterworth(order, frequency + step).unwrap();
+                let finite_difference =
+                    -(after.phase_radians - before.phase_radians) / (2.0 * step);
+                assert_relative_eq!(
+                    point.normalized_group_delay,
+                    finite_difference,
+                    epsilon = 3.0e-8
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn equalized_oracle_rejects_unvalidated_orders_and_frequencies() {
+        assert!(phase_equalized_butterworth(2, 0.5).is_err());
+        assert!(phase_equalized_butterworth(4, -0.1).is_err());
+        assert!(phase_equalized_butterworth(8, f64::INFINITY).is_err());
     }
 }
