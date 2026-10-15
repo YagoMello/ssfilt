@@ -58,6 +58,36 @@ pub(super) struct Case {
     pub(super) band: Band,
 }
 
+impl Case {
+    pub(super) const fn has_public_streaming_support(self) -> bool {
+        matches!(self.order, 4 | 8) && matches!(self.band, Band::Core)
+    }
+
+    pub(super) const fn streaming_status(self) -> &'static str {
+        if self.has_public_streaming_support() {
+            "streaming-validated"
+        } else {
+            "streaming-not-validated"
+        }
+    }
+
+    pub(super) const fn public_support_status(self) -> &'static str {
+        if self.has_public_streaming_support() {
+            "public-support-yes"
+        } else {
+            "public-support-no"
+        }
+    }
+
+    pub(super) const fn evidence_scope(self) -> &'static str {
+        if self.has_public_streaming_support() {
+            "analytic-candidate / streaming-validated / public-support-yes"
+        } else {
+            "analytic-candidate / streaming-not-validated / public-support-no"
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Candidate {
     pub(super) sigma: f64,
@@ -648,6 +678,15 @@ mod tests {
             })
             .unwrap();
             assert!(result.gates.passes(), "order {order}: {result:#?}");
+            let expected = match order {
+                4 => (0.774_282_178_267_629_5, 0.420_158_711_359_650_1),
+                8 => (0.631_643_162_371_801_7, 0.381_855_079_433_413_2),
+                _ => unreachable!(),
+            };
+            assert_relative_eq!(result.candidate.sigma, expected.0, epsilon = 1.0e-15);
+            assert_relative_eq!(result.candidate.eta, expected.1, epsilon = 1.0e-15);
+            assert_eq!(result.case.streaming_status(), "streaming-validated");
+            assert_eq!(result.case.public_support_status(), "public-support-yes");
             assert!(
                 (result.corrected_metrics.peak_residual - result.crosscheck_metrics.peak_residual)
                     .abs()

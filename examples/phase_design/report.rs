@@ -14,6 +14,9 @@ const SUMMARY_HEADERS: &[&str] = &[
     "response",
     "order",
     "band",
+    "evidence_scope",
+    "streaming_status",
+    "public_support_status",
     "upper_frequency_ratio",
     "equalizer_sigma",
     "equalizer_eta",
@@ -78,6 +81,9 @@ const SWEEP_HEADERS: &[&str] = &[
     "response",
     "order",
     "band",
+    "evidence_scope",
+    "streaming_status",
+    "public_support_status",
     "sweep_index",
     "sweep_point_count",
     "frequency_ratio",
@@ -160,6 +166,9 @@ fn write_summary_records<W: io::Write>(
             result.case.response_label.to_owned(),
             result.case.order.to_string(),
             result.case.band.label().to_owned(),
+            "analytic-candidate".to_owned(),
+            result.case.streaming_status().to_owned(),
+            result.case.public_support_status().to_owned(),
             float(result.case.band.upper_frequency_ratio()),
             float(candidate.sigma),
             float(candidate.eta),
@@ -238,6 +247,9 @@ fn write_sweep_records<W: io::Write>(
                 result.case.response_label.to_owned(),
                 result.case.order.to_string(),
                 result.case.band.label().to_owned(),
+                "analytic-candidate".to_owned(),
+                result.case.streaming_status().to_owned(),
+                result.case.public_support_status().to_owned(),
                 index.to_string(),
                 point_count.to_string(),
                 float(point.frequency_ratio),
@@ -275,7 +287,7 @@ fn csv_bytes(
 fn summary_markdown(results: &[CaseResult]) -> String {
     let mut output = String::new();
     output.push_str(
-        "# Phase design search report\n\nThis is an analytic feasibility report, not evidence from a streaming equalizer implementation. It uses the stored search results. `sweep.csv` contains every holdout point from each result, including its actual frequency, delay, and phase values. Delays and frequencies are normalized by the source low-pass cutoff.\n\n",
+        "# Phase design search report\n\nEvery result is an analytic candidate, not a streaming measurement. Public streaming validation and support apply only to Butterworth orders 4 and 8 over the core band; every other case is labeled `streaming-not-validated / public-support-no`. The report uses the stored search results. `sweep.csv` contains every holdout point from each result, including its actual frequency, delay, and phase values. Delays and frequencies are normalized by the source low-pass cutoff.\n\n",
     );
     output.push_str("## Gate definitions\n\n| Gate | Criterion |\n| --- | --- |\n");
     for (name, criterion) in GATE_DEFINITIONS {
@@ -283,18 +295,19 @@ fn summary_markdown(results: &[CaseResult]) -> String {
     }
 
     output.push_str(
-        "\n## Results\n\n| Order | Band | Analytic status | Source peak | Corrected peak | Corrected RMS | Corrected max phase (rad) | Mean added delay | Maximum added delay |\n| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+        "\n## Results\n\n| Order | Band | Evidence/support scope | Analytic gate status | Source peak | Corrected peak | Corrected RMS | Corrected max phase (rad) | Mean added delay | Maximum added delay |\n| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
     for result in results {
         let _ = writeln!(
             output,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             result.case.order,
             result.case.band.label(),
+            result.case.evidence_scope(),
             if result.gates.passes() {
-                "GATES PASS — NOT STREAMING"
+                "GATES PASS"
             } else {
-                "GATES REJECT — NOT STREAMING"
+                "GATES REJECT"
             },
             float(result.source_metrics.peak_residual),
             float(result.corrected_metrics.peak_residual),
@@ -318,6 +331,11 @@ fn append_case_markdown(output: &mut String, result: &CaseResult) {
         result.case.response_label,
         result.case.order,
         result.case.band.label(),
+    );
+    let _ = writeln!(
+        output,
+        "Evidence/support scope: `{}`\n",
+        result.case.evidence_scope()
     );
     append_case_metrics(output, result);
     append_case_gates(output, result);
@@ -528,7 +546,7 @@ mod tests {
             case: Case {
                 response: Response::Butterworth,
                 response_label: "Butterworth",
-                order: 4,
+                order: 16,
                 band: Band::Core,
             },
             candidate: Candidate {
@@ -617,8 +635,11 @@ mod tests {
         };
 
         assert_eq!(get("response"), "Butterworth");
-        assert_eq!(get("order"), "4");
+        assert_eq!(get("order"), "16");
         assert_eq!(get("band"), "core");
+        assert_eq!(get("evidence_scope"), "analytic-candidate");
+        assert_eq!(get("streaming_status"), "streaming-not-validated");
+        assert_eq!(get("public_support_status"), "public-support-no");
         assert_eq!(get("equalizer_sigma"), format_float(0.25));
         assert_eq!(get("equalizer_eta"), format_float(0.75));
         assert_eq!(get("natural_frequency"), format_float(0.25_f64.hypot(0.75)));
@@ -686,6 +707,9 @@ mod tests {
 
         assert_eq!(get("sweep_index"), "1");
         assert_eq!(get("sweep_point_count"), "2");
+        assert_eq!(get("evidence_scope"), "analytic-candidate");
+        assert_eq!(get("streaming_status"), "streaming-not-validated");
+        assert_eq!(get("public_support_status"), "public-support-no");
         assert_eq!(get("frequency_ratio"), format_float(0.7));
         assert_eq!(get("source_delay"), format_float(0.4));
         assert_eq!(get("equalizer_delay"), format_float(0.9));
@@ -706,6 +730,9 @@ mod tests {
         assert!(markdown.contains("| `f64_bounds` | FAIL |"));
         assert!(markdown.contains("| `f32_bounds` | PASS |"));
         assert!(markdown.contains("sweep.csv` contains every holdout point"));
+        assert!(
+            markdown.contains("analytic-candidate / streaming-not-validated / public-support-no")
+        );
     }
 
     #[test]
@@ -714,7 +741,7 @@ mod tests {
         result.case.response_label = "Band, \"core\"\r\nnext";
         let bytes = summary_csv(&[result]).unwrap();
         let expected_prefix = format!(
-            "{}\n\"Band, \"\"core\"\"\r\nnext\",4,core,",
+            "{}\n\"Band, \"\"core\"\"\r\nnext\",16,core,analytic-candidate,streaming-not-validated,public-support-no,",
             SUMMARY_HEADERS.join(",")
         );
         assert!(bytes.starts_with(expected_prefix.as_bytes()));
@@ -729,7 +756,10 @@ mod tests {
         let mut empty_result = sample_result();
         empty_result.case.response_label = "";
         let empty_bytes = summary_csv(&[empty_result]).unwrap();
-        let empty_prefix = format!("{}\n,4,core,", SUMMARY_HEADERS.join(","));
+        let empty_prefix = format!(
+            "{}\n,16,core,analytic-candidate,streaming-not-validated,public-support-no,",
+            SUMMARY_HEADERS.join(",")
+        );
         assert!(empty_bytes.starts_with(empty_prefix.as_bytes()));
         let mut reader = csv::ReaderBuilder::new().from_reader(empty_bytes.as_slice());
         let values = reader.records().next().unwrap().unwrap();

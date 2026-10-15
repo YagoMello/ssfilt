@@ -49,22 +49,23 @@ fn case_file_name(result: &CaseResult) -> String {
 
 fn draw(output_path: &Path, result: &CaseResult) -> Result<(), Box<dyn Error + Send + Sync>> {
     let status = if result.gates.passes() {
-        "ANALYTIC GATES PASS; NOT STREAMING"
+        "ANALYTIC GATES PASS"
     } else {
-        "ANALYTIC GATES REJECT; NOT STREAMING"
+        "ANALYTIC GATES REJECT"
     };
     let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
         .into_drawing_area();
     root.fill(&WHITE)?;
     let root = root.titled(
         &format!(
-            "{} order {} — {} band 0..{} × cutoff — {status}",
+            "{} order {} — {} band 0..{} × cutoff — {status} — {}",
             result.case.response_label,
             result.case.order,
             result.case.band.label(),
             result.case.band.upper_frequency_ratio(),
+            result.case.evidence_scope(),
         ),
-        ("sans-serif", scaled(28)),
+        ("sans-serif", scaled(24)),
     )?;
     let panels = root.split_evenly((2, 2));
     draw_total_delay(&panels[0], result)?;
@@ -458,7 +459,7 @@ mod tests {
         let result = design(Case {
             response: Response::Butterworth,
             response_label: "Butterworth",
-            order: 4,
+            order: 16,
             band: Band::Core,
         })
         .unwrap();
@@ -473,7 +474,8 @@ mod tests {
         fs::remove_file(&path).unwrap();
 
         assert!(svg.contains("<svg"));
-        assert!(svg.contains("ANALYTIC GATES PASS; NOT STREAMING"));
+        assert!(svg.contains("ANALYTIC GATES"));
+        assert!(svg.contains("analytic-candidate / streaming-not-validated / public-support-no"));
         assert!(svg.contains("Group delay"));
         assert!(svg.contains("Absolute delay residual"));
         assert!(svg.contains("Residual phase"));
@@ -482,6 +484,6 @@ mod tests {
         assert!(svg.contains("#E05B4A"));
         assert!(svg.contains("width=\"1600\" height=\"1180\""));
         assert!(svg.contains("<path"));
-        assert_eq!(case_file_name(&result), "butterworth-order-4-core.svg");
+        assert_eq!(case_file_name(&result), "butterworth-order-16-core.svg");
     }
 }

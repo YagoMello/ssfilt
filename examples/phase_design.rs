@@ -1,7 +1,7 @@
 //! Searches and reports normalized low-pass phase-equalizer designs.
 //!
 //! Usage: `cargo run --release --example phase_design -- [--output-dir PATH]
-//! [--order 4|8] [--band core|cutoff]`
+//! [--order 1..=16] [--band core|cutoff]`
 
 #[path = "phase_design/render.rs"]
 mod render;
@@ -17,7 +17,7 @@ mod transfer;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use search::{Band, Case, CaseResult};
 
 const DEFAULT_OUTPUT_DIR: &str = "target/phase-design";
@@ -29,40 +29,43 @@ struct Arguments {
     band: Option<Band>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum DesignOrder {
-    #[value(name = "4")]
-    Four,
-    #[value(name = "8")]
-    Eight,
-}
-
 #[derive(Debug, Parser)]
 #[command(
     name = "phase_design",
     about = "Search and report normalized low-pass phase-equalizer designs.",
-    after_help = "response: Butterworth low-pass\ndefaults: order 4 and 8; bands core and cutoff; output target/phase-design\nbands: core = 0..0.7 * cutoff; cutoff = 0..1.0 * cutoff\nevidence: analytic feasibility only; no streaming equalizer is implemented\nwrites summary.csv, sweep.csv, summary.md, and one SVG dashboard per case"
+    after_help = "response: Butterworth low-pass\ndefaults: order 4 and 8; bands core and cutoff; output target/phase-design\norders: one explicitly requested order from 1 through 16\nbands: core = 0..0.7 * cutoff; cutoff = 0..1.0 * cutoff\nevidence: analytic candidates only; public streaming support is limited to orders 4 and 8 over the core band\nwrites summary.csv, sweep.csv, summary.md, and one SVG dashboard per case"
 )]
 struct Cli {
     /// Directory for CSV, Markdown, and SVG reports.
     #[arg(long, value_name = "PATH", default_value = DEFAULT_OUTPUT_DIR)]
     output_dir: PathBuf,
-    /// Restrict the design study to one supported filter order.
-    #[arg(long, value_enum, value_name = "ORDER")]
-    order: Option<DesignOrder>,
+    /// Restrict the design study to one analytic candidate order from 1 through 16.
+    #[arg(
+        long,
+        value_name = "ORDER",
+        value_parser = parse_design_order
+    )]
+    order: Option<usize>,
     /// Restrict the design study to the core or cutoff-wide band.
     #[arg(long, value_enum, value_name = "BAND")]
     band: Option<Band>,
+}
+
+fn parse_design_order(value: &str) -> Result<usize, String> {
+    let order = value
+        .parse::<usize>()
+        .map_err(|_| "order must be an integer from 1 through 16".to_owned())?;
+    (1..=16)
+        .contains(&order)
+        .then_some(order)
+        .ok_or_else(|| "order must be from 1 through 16".to_owned())
 }
 
 impl Cli {
     fn normalize(self) -> Arguments {
         Arguments {
             output_dir: self.output_dir,
-            order: self.order.map(|order| match order {
-                DesignOrder::Four => 4,
-                DesignOrder::Eight => 8,
-            }),
+            order: self.order,
             band: self.band,
         }
     }
@@ -118,10 +121,8 @@ fn main() -> anyhow::Result<()> {
 
 fn selected_cases(order: Option<usize>, band: Option<Band>) -> Vec<Case> {
     let mut cases = Vec::with_capacity(4);
-    for candidate_order in [4, 8] {
-        if order.is_some_and(|selected| selected != candidate_order) {
-            continue;
-        }
+    let orders = order.map_or_else(|| vec![4, 8], |order| vec![order]);
+    for candidate_order in orders {
         for candidate_band in [Band::Core, Band::Cutoff] {
             if band.is_some_and(|selected| selected != candidate_band) {
                 continue;
@@ -139,9 +140,10 @@ fn selected_cases(order: Option<usize>, band: Option<Band>) -> Vec<Case> {
 
 fn print_case_result(result: &CaseResult) {
     let case = result.case;
+    let evidence_scope = case.evidence_scope();
     if result.gates.passes() {
         println!(
-            "{} order {} {}: ANALYTIC GATES PASS, NOT STREAMING (peak delay residual {})",
+            "{} order {} {}: ANALYTIC GATES PASS; {evidence_scope} (peak delay residual {})",
             case.response_label,
             case.order,
             case.band.label(),
@@ -150,7 +152,7 @@ fn print_case_result(result: &CaseResult) {
     } else {
         let failed = report::failed_gate_names(result.gates).join(", ");
         println!(
-            "{} order {} {}: ANALYTIC GATES REJECT, NOT STREAMING (failed: {failed})",
+            "{} order {} {}: ANALYTIC GATES REJECT; {evidence_scope} (failed: {failed})",
             case.response_label,
             case.order,
             case.band.label(),
@@ -217,6 +219,25 @@ mod tests {
     }
 
     #[test]
+    fn explicitly_requested_exploratory_order_selects_both_bands() {
+        let parsed = args(&["--order", "16"]).unwrap();
+        assert_eq!(parsed.order, Some(16));
+        let cases = selected_cases(parsed.order, parsed.band);
+        assert_eq!(cases.len(), 2);
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| (case.order, case.band))
+                .collect::<Vec<_>>(),
+            [(16, Band::Core), (16, Band::Cutoff)]
+        );
+        assert_eq!(
+            cases[0].evidence_scope(),
+            "analytic-candidate / streaming-not-validated / public-support-no"
+        );
+    }
+
+    #[test]
     fn generated_help_lists_choices_defaults_and_evidence_scope() {
         for flag in ["-h", "--help"] {
             let error = Cli::try_parse_from(["phase_design", flag]).unwrap_err();
@@ -224,11 +245,12 @@ mod tests {
             let help = error.to_string();
             assert!(help.contains("--output-dir"));
             assert!(help.contains("--order"));
-            assert!(help.contains("4, 8"));
+            assert!(help.contains("1 through 16"));
             assert!(help.contains("--band"));
             assert!(help.contains("core, cutoff"));
             assert!(help.contains("target/phase-design"));
-            assert!(help.contains("analytic feasibility only"));
+            assert!(help.contains("analytic candidates only"));
+            assert!(help.contains("public streaming support is limited"));
             assert!(help.contains("one SVG dashboard per case"));
         }
     }
@@ -239,7 +261,8 @@ mod tests {
             vec!["--output-dir", "one", "--output-dir", "two"],
             vec!["--order", "4", "--order", "8"],
             vec!["--band", "core", "--band", "cutoff"],
-            vec!["--order", "5"],
+            vec!["--order", "0"],
+            vec!["--order", "17"],
             vec!["--band", "wide"],
             vec!["--unknown"],
             vec!["extra"],
