@@ -122,6 +122,62 @@ The numerical and waveform gates for these two cases passed before the narrow
 builder API and coefficient table were added. No other response/order/band
 combination is implied by those results.
 
+## Product value and pre-1.0 retention gate
+
+Passing the numerical gates proves that the equalizer implements its declared
+response; it does not by itself prove that the extra feature is preferable to
+a simpler response family. The currently defensible use case is deliberately
+narrow: retain Butterworth's nearly flat passband and sharper magnitude
+selectivity for signals confined to the validated core band, while accepting
+additional causal delay to preserve their waveform shape.
+
+This differs from the simpler alternatives. At `0.7 * cutoff_hz`, the
+order-4/order-8 Butterworth magnitude is approximately `-0.243`/`-0.0144` dB.
+The matched Bessel responses are about `1.17`/`1.44` dB lower than those
+values, while the repeated-pole responses are approximately `-1.54`/`-1.51`
+dB. Bessel and repeated-pole therefore remain attractive when that passband
+droop and their gentler transition are acceptable. They avoid the equalizer's
+two extra states and added latency. The current equalizer's mean added
+delay is approximately `0.597 / cutoff_hz` seconds for order 4 and
+`0.686 / cutoff_hz` seconds for order 8; at a 20 Hz cutoff that is about
+29.8 ms and 34.3 ms respectively, in addition to the source-filter delay.
+
+Before the 1.0 API is frozen, retain or remove the streaming equalizer using a
+predeclared application matrix that compares matched-order plain Butterworth,
+phase-equalized Butterworth, Bessel, and repeated-pole filters. It must include:
+
+- desired-band multitone, pulse, and swept-frequency signals plus declared
+  stopband interference;
+- waveform error against each response's independently predeclared analytic
+  constant-delay target, without fitting delay or phase from measured output;
+  passband magnitude error and stopband rejection;
+- step undershoot, overshoot, and settling behavior;
+- total and added latency, state size, adaptive work, and measured throughput;
+- uniform and irregular schedules in the existing frozen 1 Hz and 37 Hz
+  cross-scaling cases, plus the named scenario's cutoff when different.
+
+Thresholds and the named user scenario must be frozen before running this
+comparison. Retain the equalizer only if at least one frozen representative
+workload needs its magnitude selectivity, accepts its disclosed delay, and
+meets every predeclared hard application threshold only with the equalized
+filter while plain Butterworth, Bessel, and repeated-pole each fail at least
+one. The winning margins must exceed measurement uncertainty and a frozen
+minimum practical effect. Remove it before 1.0 if a simpler response satisfies
+every named workload, every target scenario requires correction beyond the
+validated band, or measured throughput exceeds the workload's frozen cost
+ceiling. This is a product retention gate, not permission to weaken any
+existing numerical test.
+
+Expansion follows an even stronger rule. A higher Butterworth order must pass
+the complete analytic and streaming matrix independently. Chebyshev is worth
+investigating only for a use case that actually values its sharper transition;
+an all-pass cannot remove its magnitude ripple, and validation must extend to
+the response-specific ripple edge rather than reusing the Butterworth core
+band. Bessel equalization remains out of scope unless a new requirement shows
+that Bessel itself is insufficient. High-pass and band-pass require their own
+useful-band and latency contracts. No expansion is justified merely because a
+bounded analytic search finds coefficients.
+
 ## Problem statement
 
 A filter can give frequencies in its useful band different delays. A

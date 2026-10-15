@@ -131,6 +131,28 @@ Public streaming equalization remains supported only for Butterworth orders 4
 and 8. Design results for every other order are labeled exploratory and do not
 imply public support.
 
+## Tracked tooling roadmap
+
+The development tools intentionally expose evidence in stages rather than
+offering switches for unimplemented products:
+
+| Area | Current state | Next evidence boundary |
+| --- | --- | --- |
+| Ordinary low-pass responses | Analytic curves and public streamed points for every response family and supported order | Keep as the shared numerical/style baseline |
+| Ordinary high-pass and band-pass responses | Library implementations exist; dashboard views do not | Add topology-specific analytic references, cutoff guides, streamed points, and reports without changing the public API |
+| Butterworth phase equalization, orders 4 and 8 | Analytic and public streamed overlays exist | Add the pre-1.0 application/cost comparison against Bessel and repeated-pole |
+| Other Butterworth equalizer orders | Analytic candidates can be inspected for orders 1 through 16 | Add private coupled streaming validation one order at a time; do not display public measurement markers before promotion |
+| Other response families and topologies | No supported equalizer design | Define a response-specific useful band and user value first; Chebyshev must include its ripple edge |
+| Forward-backward batch filtering | Oracle and private negative-control components exist; no validated batch filter or public API exists | Implement deterministic filtered reports, then the full matrix and candidate selection before adding batch plots |
+
+Batch plots will live in the isolated forward-backward oracle workflow, not in
+`plot_responses`. They must be generated from the same scored records as the
+typed report and identify the noncausal operator, boundary continuation,
+per-pass order, complete-response cutoff, candidate status, and whether the
+run is filtered or complete. The first view should show the input, finite-record
+oracle, candidate output, signed or absolute error, edge influence, and work
+metadata. A favorable plot cannot substitute for the full acceptance matrix.
+
 ## Tool dependency policy
 
 Development programs have a different dependency budget from the runtime

@@ -273,14 +273,29 @@ updates preserve the preceding snapshot transactionally.
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
-7. Refactored development measurement tools with analytic curves, public-API
-   sample markers, machine-readable phase reports, and explicit band sweeps.
+7. Refactored development measurement tools. Low-pass analytic curves,
+   public-API sample markers, machine-readable phase reports, explicit band
+   sweeps, higher-order analytic equalizer candidates, and measured order-4/8
+   equalizer overlays are implemented. Ordinary high-pass and band-pass views
+   remain to be added. Batch evidence belongs to its separate oracle tool and
+   must not be presented as a public streaming measurement. ◐
 8. Delayed group-delay equalization and offline forward-backward filtering as
-   separate phase-handling approaches. The initial Butterworth order-4/8
-   streaming API is implemented and independently reviewed. Higher-order
-   support and analytic plus measured equalized-response overlays require
-   further validation before public support broadens. The separate batch
-   investigation is contract-first and is defined in
-   `docs/forward-backward.md`; it has no public API yet.
+   separate phase-handling approaches. ◐
+   - The initial Butterworth order-4/8 streaming API is implemented and
+     independently reviewed. Before 1.0, a frozen application and cost matrix
+     must decide whether its Butterworth-magnitude advantage over Bessel and
+     repeated-pole filters justifies its added delay, states, API, and
+     maintenance. Remove it before 1.0 if no named use case does.
+   - Higher Butterworth orders, Chebyshev, other response families, and other
+     topologies are separate expansions. None advances from an analytic curve
+     alone. Chebyshev must cover its response-specific ripple edge; high-pass
+     and band-pass need independently defined useful bands and latency goals.
+   - The forward-backward physical contract, multiprecision oracle, frozen
+     fixtures, protocol, endpoint-replay negative control, single-cell scoring,
+     and cross-cell comparisons are implemented. The next batch package is a
+     deterministic filtered matrix/report vertical slice, followed by the full
+     acceptance matrix, a trajectory-aware candidate if required, numerical
+     selection, batch-specific plots, and only then a public `ssfilt::batch`
+     surface. See `docs/forward-backward.md`.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.
