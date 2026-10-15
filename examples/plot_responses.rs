@@ -21,16 +21,17 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use analytic::{exact_frequency_point, frequency_ratios};
+use analytic::{exact_frequency_point, frequency_ratios, phase_equalized_frequency_point};
 use anyhow::Context;
 use clap::{Parser, ValueEnum, error::ErrorKind};
 use measure::{
-    DEFAULT_SAMPLES_PER_CYCLE, MeasuredFrequencyPoint, SampleSchedule, measure_low_pass,
+    DEFAULT_SAMPLES_PER_CYCLE, MeasuredFrequencyPoint, SampleSchedule,
+    measure_butterworth_low_pass_pair, measure_low_pass,
 };
 use plotters::prelude::RGBColor;
-use render::{ResponseData, ResponseSpec};
-use simulation::measure_step_response;
-use ssfilt::{MAX_BESSEL_ORDER, Response};
+use render::{PhaseEqualizedData, ResponseData, ResponseSpec};
+use simulation::{measure_phase_equalized_step_response, measure_step_response};
+use ssfilt::{InputModel, LowPass, MAX_BESSEL_ORDER, Response};
 
 macro_rules! dispatch_order {
     ($order:expr, $output:expr, $csv:expr, $configuration:expr; $($supported:literal),+ $(,)?) => {
@@ -46,8 +47,9 @@ macro_rules! dispatch_order {
     (@last $head:literal, $($tail:literal),+) => { dispatch_order!(@last $($tail),+) };
 }
 
-const MEASUREMENT_FREQUENCY_RATIOS: [f64; 11] =
-    [0.05, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1];
+const MEASUREMENT_FREQUENCY_RATIOS: [f64; 18] = [
+    0.05, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum TopologyArg {
@@ -100,6 +102,9 @@ struct Cli {
     /// Response family to plot, or all available families.
     #[arg(long, value_enum, default_value_t = ResponseArg::All)]
     response: ResponseArg,
+    /// Overlay the validated Butterworth phase-equalized response (orders 4 and 8 only).
+    #[arg(long)]
+    phase_equalized: bool,
 }
 
 #[derive(Debug)]
@@ -109,6 +114,7 @@ struct Arguments {
     csv_path: PathBuf,
     topology: TopologyArg,
     response: ResponseArg,
+    phase_equalized: bool,
 }
 
 fn parse_order(value: &str) -> Result<usize, String> {
@@ -151,6 +157,20 @@ impl Cli {
                 "SVG and CSV output paths must be different",
             ));
         }
+        if self.phase_equalized && !matches!(order, 4 | 8) {
+            return Err(clap::Error::raw(
+                ErrorKind::InvalidValue,
+                "--phase-equalized is validated only for Butterworth orders 4 and 8",
+            ));
+        }
+        if self.phase_equalized
+            && !matches!(self.response, ResponseArg::All | ResponseArg::Butterworth)
+        {
+            return Err(clap::Error::raw(
+                ErrorKind::ArgumentConflict,
+                "--phase-equalized requires --response all or --response butterworth",
+            ));
+        }
 
         Ok(Arguments {
             order,
@@ -158,6 +178,7 @@ impl Cli {
             csv_path,
             topology: self.topology,
             response: self.response,
+            phase_equalized: self.phase_equalized,
         })
     }
 }
@@ -180,6 +201,7 @@ fn main() -> anyhow::Result<()> {
     let configuration = PlotConfiguration {
         topology: arguments.topology,
         response: arguments.response,
+        phase_equalized: arguments.phase_equalized,
     };
     dispatch_order!(arguments.order, &arguments.output_path, &arguments.csv_path, configuration;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -223,21 +245,55 @@ fn plot<const N: usize>(
         let frequency = frequency_ratios()
             .map(|ratio| exact_frequency_point::<N>(spec.response, ratio))
             .collect::<Result<Vec<_>, _>>()?;
+        let include_equalized =
+            configuration.phase_equalized && spec.response == Response::Butterworth;
         let mut measurements = Vec::with_capacity(MEASUREMENT_FREQUENCY_RATIOS.len() * 2);
+        let mut equalized_measurements =
+            include_equalized.then(|| Vec::with_capacity(MEASUREMENT_FREQUENCY_RATIOS.len() * 2));
         for ratio in MEASUREMENT_FREQUENCY_RATIOS {
             let analytic = exact_frequency_point::<N>(spec.response, ratio)?;
+            let equalized_analytic = include_equalized
+                .then(|| phase_equalized_frequency_point::<N>(ratio))
+                .transpose()?;
             for schedule in [SampleSchedule::Uniform, SampleSchedule::BoundedJitter] {
-                let streamed = measure_low_pass::<N>(
-                    spec.response,
-                    ratio,
-                    schedule,
-                    DEFAULT_SAMPLES_PER_CYCLE,
-                )?;
-                measurements.push(MeasuredFrequencyPoint::new(
-                    streamed,
-                    analytic.gain_db,
-                    analytic.phase_radians,
-                ));
+                if include_equalized {
+                    let pair = measure_butterworth_low_pass_pair::<N>(
+                        ratio,
+                        schedule,
+                        DEFAULT_SAMPLES_PER_CYCLE,
+                    )?;
+                    measurements.push(MeasuredFrequencyPoint::new(
+                        pair.source,
+                        analytic.gain_db,
+                        analytic.phase_radians,
+                        analytic.normalized_group_delay,
+                    ));
+                    let equalized_analytic = equalized_analytic
+                        .as_ref()
+                        .expect("equalized analytics accompany paired measurements");
+                    equalized_measurements
+                        .as_mut()
+                        .expect("equalized storage accompanies paired measurements")
+                        .push(MeasuredFrequencyPoint::new(
+                            pair.equalized,
+                            equalized_analytic.gain_db,
+                            equalized_analytic.phase_radians,
+                            equalized_analytic.normalized_group_delay,
+                        ));
+                } else {
+                    let streamed = measure_low_pass::<N>(
+                        spec.response,
+                        ratio,
+                        schedule,
+                        DEFAULT_SAMPLES_PER_CYCLE,
+                    )?;
+                    measurements.push(MeasuredFrequencyPoint::new(
+                        streamed,
+                        analytic.gain_db,
+                        analytic.phase_radians,
+                        analytic.normalized_group_delay,
+                    ));
+                }
             }
         }
         let group_delay = frequency
@@ -245,12 +301,35 @@ fn plot<const N: usize>(
             .map(|point| (point.ratio, point.normalized_group_delay))
             .collect();
         let step = measure_step_response::<N>(spec.response)?;
+        let phase_equalized = if include_equalized {
+            let metadata = LowPass::<N>::builder(1.0)
+                .response(Response::Butterworth)
+                .input_model(InputModel::Linear)
+                .build_phase_equalized()?;
+            let frequency = frequency_ratios()
+                .map(phase_equalized_frequency_point::<N>)
+                .collect::<Result<Vec<_>, _>>()?;
+            Some(PhaseEqualizedData {
+                frequency,
+                measurements: equalized_measurements
+                    .expect("equalized measurements were collected"),
+                step: measure_phase_equalized_step_response::<N>()?,
+                validated_band_edge_ratio: metadata.validated_band_edge_hz(),
+                target_normalized_delay: core::f64::consts::TAU
+                    * metadata.target_constant_delay_seconds(),
+                mean_added_normalized_delay: core::f64::consts::TAU
+                    * metadata.mean_added_delay_seconds(),
+            })
+        } else {
+            None
+        };
         responses.push(ResponseData {
             spec,
             frequency,
             measurements,
             group_delay,
             step,
+            phase_equalized,
         });
     }
 
@@ -264,6 +343,7 @@ fn plot<const N: usize>(
 struct PlotConfiguration {
     topology: TopologyArg,
     response: ResponseArg,
+    phase_equalized: bool,
 }
 
 fn selected_specs<const N: usize>(
@@ -315,7 +395,10 @@ mod tests {
 
     use clap::{Parser, error::ErrorKind};
 
-    use super::{Arguments, Cli, PlotConfiguration, ResponseArg, TopologyArg, selected_specs};
+    use super::{
+        Arguments, Cli, MEASUREMENT_FREQUENCY_RATIOS, PlotConfiguration, ResponseArg, TopologyArg,
+        selected_specs,
+    };
 
     fn args(values: &[&str]) -> Result<Arguments, String> {
         let mut argv = vec!["plot_responses"];
@@ -371,6 +454,7 @@ mod tests {
         assert_eq!(defaults.csv_path, path("target/filter-responses.csv"));
         assert_eq!(defaults.topology, TopologyArg::LowPass);
         assert_eq!(defaults.response, ResponseArg::All);
+        assert!(!defaults.phase_equalized);
     }
 
     #[test]
@@ -393,6 +477,7 @@ mod tests {
         assert!(help.contains("--csv"));
         assert!(help.contains("--topology"));
         assert!(help.contains("--response"));
+        assert!(help.contains("--phase-equalized"));
         assert!(help.contains("Filter order from 1 through 50"));
         assert!(help.contains("SVG dashboard output path"));
         assert!(help.contains("CSV measurement report path"));
@@ -438,6 +523,7 @@ mod tests {
         let butterworth = selected_specs::<4>(PlotConfiguration {
             topology: TopologyArg::LowPass,
             response: ResponseArg::Butterworth,
+            phase_equalized: false,
         })
         .unwrap();
         assert_eq!(butterworth.len(), 1);
@@ -446,6 +532,7 @@ mod tests {
         let all_high_order = selected_specs::<26>(PlotConfiguration {
             topology: TopologyArg::LowPass,
             response: ResponseArg::All,
+            phase_equalized: false,
         })
         .unwrap();
         assert_eq!(all_high_order.len(), 3);
@@ -458,6 +545,7 @@ mod tests {
         let requested_bessel = selected_specs::<26>(PlotConfiguration {
             topology: TopologyArg::LowPass,
             response: ResponseArg::Bessel,
+            phase_equalized: false,
         })
         .err()
         .expect("an explicitly unsupported Bessel order must fail")
@@ -472,6 +560,39 @@ mod tests {
             vec!["--response", "elliptic"],
         ] {
             assert!(args(&values).is_err(), "accepted {values:?}");
+        }
+    }
+
+    #[test]
+    fn phase_equalized_overlay_accepts_only_its_publicly_validated_cases() {
+        for values in [
+            vec!["--order", "4", "--phase-equalized"],
+            vec![
+                "--order",
+                "8",
+                "--response",
+                "butterworth",
+                "--phase-equalized",
+            ],
+        ] {
+            assert!(args(&values).unwrap().phase_equalized);
+        }
+
+        for values in [
+            vec!["--order", "3", "--phase-equalized"],
+            vec!["--order", "16", "--phase-equalized"],
+            vec!["--order", "4", "--response", "bessel", "--phase-equalized"],
+        ] {
+            assert!(args(&values).is_err(), "accepted {values:?}");
+        }
+    }
+
+    #[test]
+    fn streamed_validation_ratios_span_the_complete_plotted_frequency_band() {
+        assert!(MEASUREMENT_FREQUENCY_RATIOS.is_sorted());
+        assert_eq!(MEASUREMENT_FREQUENCY_RATIOS.last(), Some(&20.0));
+        for expected in [1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0] {
+            assert!(MEASUREMENT_FREQUENCY_RATIOS.contains(&expected));
         }
     }
 }

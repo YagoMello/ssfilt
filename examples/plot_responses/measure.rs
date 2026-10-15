@@ -21,6 +21,7 @@ const SETTLING_PHASE_TOLERANCE_RADIANS: f64 = 1.0e-4;
 // dominate phase. Gain convergence then uses an absolute 1e-8 scale and phase
 // is recorded in CSV but not claimed as a resolved plot marker.
 const SETTLING_GAIN_SCALE_FLOOR: f64 = 1.0e-4;
+const PHASE_RESOLUTION_FLOOR_DB: f64 = -80.0;
 const REQUIRED_SETTLED_COMPARISONS: u32 = 2;
 const MAX_SETTLING_WINDOWS: u32 = 8;
 const PHASE_EQUALIZER_SETTLING_E_FOLDS: f64 = 24.0;
@@ -28,6 +29,7 @@ const PHASE_EQUALIZER_SETTLING_E_FOLDS: f64 = 24.0;
 // Use that conservative lower bound instead of copying the selected coefficients
 // from the independent transfer-function oracle into this measurement driver.
 const MIN_VALIDATED_PHASE_EQUALIZER_SIGMA: f64 = 0.2;
+const MAX_UPDATES_PER_MEASUREMENT: usize = 24_000_000;
 
 /// Deterministic schedules for piecewise-linear sampled-sine measurements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,18 +130,13 @@ pub(super) struct PairedSineMeasurement {
     pub(super) equalized: SineMeasurement,
 }
 
-impl SineMeasurement {
-    pub(super) fn phase_is_resolved(self) -> bool {
-        self.gain >= SETTLING_GAIN_SCALE_FLOOR
-    }
-}
-
 /// One measured point paired with the independent continuous-time reference.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeasuredFrequencyPoint {
     pub(super) streamed: SineMeasurement,
     pub(super) analytic_gain_db: f64,
     pub(super) analytic_phase_radians: f64,
+    pub(super) analytic_normalized_group_delay: f64,
     pub(super) unwrapped_phase_radians: f64,
 }
 
@@ -148,6 +145,7 @@ impl MeasuredFrequencyPoint {
         streamed: SineMeasurement,
         analytic_gain_db: f64,
         analytic_phase_radians: f64,
+        analytic_normalized_group_delay: f64,
     ) -> Self {
         Self {
             unwrapped_phase_radians: unwrap_phase(
@@ -157,11 +155,17 @@ impl MeasuredFrequencyPoint {
             streamed,
             analytic_gain_db,
             analytic_phase_radians,
+            analytic_normalized_group_delay,
         }
     }
 
     pub(super) fn measured_gain_db(self) -> f64 {
         20.0 * self.streamed.gain.log10()
+    }
+
+    pub(super) fn phase_is_resolved(self) -> bool {
+        self.streamed.gain >= SETTLING_GAIN_SCALE_FLOOR
+            && self.analytic_gain_db >= PHASE_RESOLUTION_FLOOR_DB
     }
 }
 
@@ -309,6 +313,13 @@ struct MeasurementPaths {
     equalized: Option<SineMeasurement>,
 }
 
+#[derive(Debug, Default)]
+struct MeasurementTimeline {
+    time_seconds: f64,
+    schedule_index: usize,
+    update_count: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SettledFits {
     source: SettlingState,
@@ -389,19 +400,17 @@ fn measure_low_pass_paths<const N: usize>(
 
     let maximum_interval_seconds = 1.0 / (frequency_ratio * f64::from(samples_per_cycle));
     let mut driver = MeasurementDriver::<N>::new(response, include_equalized)?;
-    let mut time_seconds = 0.0;
-    let mut schedule_index = 0;
+    let mut timeline = MeasurementTimeline::default();
 
     let warmup_end_seconds =
         minimum_warmup_seconds::<N>(response, frequency_ratio, include_equalized)?;
     let warmup_update_count = advance_to(
         &mut driver,
-        &mut time_seconds,
+        &mut timeline,
         warmup_end_seconds,
         frequency_ratio,
         schedule,
         maximum_interval_seconds,
-        &mut schedule_index,
         None,
     )?;
 
@@ -411,8 +420,7 @@ fn measure_low_pass_paths<const N: usize>(
         frequency_ratio,
         schedule,
         maximum_interval_seconds,
-        &mut time_seconds,
-        &mut schedule_index,
+        &mut timeline,
     )?;
 
     let source = make_measurement(
@@ -473,8 +481,7 @@ fn fit_until_settled<const N: usize>(
     frequency_ratio: f64,
     schedule: SampleSchedule,
     maximum_interval_seconds: f64,
-    time_seconds: &mut f64,
-    schedule_index: &mut usize,
+    timeline: &mut MeasurementTimeline,
 ) -> Result<SettledFits, Box<dyn Error + Send + Sync>> {
     let angular_frequency = core::f64::consts::TAU * frequency_ratio;
     let mut source_settling = SettlingState::new();
@@ -483,16 +490,16 @@ fn fit_until_settled<const N: usize>(
     let mut fit_sample_count = 0;
     let mut settling_window_count = 0;
     for window in 1..=MAX_SETTLING_WINDOWS {
-        let fit_end_seconds = *time_seconds + f64::from(DEFAULT_FIT_CYCLES) / frequency_ratio;
-        let mut fit_samples = FitSamples::new(driver, *time_seconds);
+        let fit_end_seconds =
+            timeline.time_seconds + f64::from(DEFAULT_FIT_CYCLES) / frequency_ratio;
+        let mut fit_samples = FitSamples::new(driver, timeline.time_seconds);
         fit_update_count += advance_to(
             driver,
-            time_seconds,
+            timeline,
             fit_end_seconds,
             frequency_ratio,
             schedule,
             maximum_interval_seconds,
-            schedule_index,
             Some(&mut fit_samples),
         )?;
         source_settling.observe(fit_sine(&fit_samples.source, angular_frequency)?);
@@ -597,44 +604,49 @@ fn circular_phase_delta(previous: f64, current: f64) -> f64 {
         .abs()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn advance_to<const N: usize>(
     driver: &mut MeasurementDriver<N>,
-    time_seconds: &mut f64,
+    timeline: &mut MeasurementTimeline,
     end_seconds: f64,
     frequency_hz: f64,
     schedule: SampleSchedule,
     maximum_interval_seconds: f64,
-    schedule_index: &mut usize,
     mut samples: Option<&mut FitSamples>,
 ) -> Result<usize, Box<dyn Error + Send + Sync>> {
     let mut updates = 0;
-    while *time_seconds < end_seconds {
-        let remaining = end_seconds - *time_seconds;
-        let requested = schedule.interval(maximum_interval_seconds, *schedule_index);
+    while timeline.time_seconds < end_seconds {
+        if timeline.update_count >= MAX_UPDATES_PER_MEASUREMENT {
+            return Err(format!(
+                "streamed measurement exceeded the {MAX_UPDATES_PER_MEASUREMENT}-update work limit; select a lower order or a less slowly settling response"
+            )
+            .into());
+        }
+        let remaining = end_seconds - timeline.time_seconds;
+        let requested = schedule.interval(maximum_interval_seconds, timeline.schedule_index);
         let reaches_end = requested >= remaining;
         let dt_seconds = requested.min(remaining);
         if !dt_seconds.is_finite() || dt_seconds <= 0.0 {
             return Err("timestamp schedule did not advance".into());
         }
-        *schedule_index += 1;
+        timeline.schedule_index += 1;
         if reaches_end {
-            *time_seconds = end_seconds;
+            timeline.time_seconds = end_seconds;
         } else {
-            *time_seconds += dt_seconds;
+            timeline.time_seconds += dt_seconds;
         }
-        let input = (core::f64::consts::TAU * frequency_hz * *time_seconds).sin();
+        let input = (core::f64::consts::TAU * frequency_hz * timeline.time_seconds).sin();
         let (source_output, equalized_output) = driver.update(input, dt_seconds)?;
         if let Some(samples) = samples.as_deref_mut() {
-            samples.source.push((*time_seconds, source_output));
+            samples.source.push((timeline.time_seconds, source_output));
             if let Some(equalized_samples) = samples.equalized.as_mut() {
                 equalized_samples.push((
-                    *time_seconds,
+                    timeline.time_seconds,
                     equalized_output.expect("fit buffers match the active filter paths"),
                 ));
             }
         }
         updates += 1;
+        timeline.update_count += 1;
     }
     Ok(updates)
 }
@@ -858,8 +870,12 @@ mod tests {
                 "order {N} at {frequency_ratio} with {schedule:?}: gain error {relative_gain_error}"
             );
         }
-        let source =
-            MeasuredFrequencyPoint::new(pair.source, analytic.gain_db, analytic.phase_radians);
+        let source = MeasuredFrequencyPoint::new(
+            pair.source,
+            analytic.gain_db,
+            analytic.phase_radians,
+            analytic.normalized_group_delay,
+        );
         let expected_equalized_phase =
             expected_equalized_phase::<N>(frequency_ratio, analytic.phase_radians);
         let equalized_phase = unwrap_phase(
@@ -974,8 +990,12 @@ mod tests {
         let expected_warmup = (f64::from(DEFAULT_WARMUP_CYCLES) / 0.7)
             .max(minimum_settling_time_seconds::<4>(Response::Butterworth).unwrap());
         let analytic = exact_frequency_point::<4>(Response::Butterworth, 0.7).unwrap();
-        let measured =
-            MeasuredFrequencyPoint::new(measurement, analytic.gain_db, analytic.phase_radians);
+        let measured = MeasuredFrequencyPoint::new(
+            measurement,
+            analytic.gain_db,
+            analytic.phase_radians,
+            analytic.normalized_group_delay,
+        );
 
         assert_eq!(measurement.warmup_seconds, expected_warmup);
         assert_relative_eq!(measurement.warmup_cycles, 60.0, epsilon = 1.0e-12);
@@ -1032,6 +1052,7 @@ mod tests {
                         streamed,
                         analytic.gain_db,
                         analytic.phase_radians,
+                        analytic.normalized_group_delay,
                     );
                     assert!(
                         relative_gain_error < 1.0e-4,
@@ -1049,11 +1070,33 @@ mod tests {
     }
 
     #[test]
+    fn public_api_measurements_reach_the_far_stopband_plot_edge() {
+        let frequency_ratio = 20.0;
+        let analytic = exact_frequency_point::<1>(Response::Butterworth, frequency_ratio).unwrap();
+        for schedule in [SampleSchedule::Uniform, SampleSchedule::BoundedJitter] {
+            let streamed =
+                measure_low_pass::<1>(Response::Butterworth, frequency_ratio, schedule, 256)
+                    .unwrap();
+            let expected_gain = 10.0_f64.powf(analytic.gain_db / 20.0);
+            let relative_gain_error = (streamed.gain - expected_gain).abs() / expected_gain;
+            assert!(
+                relative_gain_error < 1.0e-4,
+                "far-stopband gain error {relative_gain_error} with {schedule:?}"
+            );
+        }
+    }
+
+    #[test]
     fn slow_high_order_chebyshev_transient_is_settled_before_fitting() {
         let response = Response::Chebyshev1 { ripple_db: 0.5 };
         let analytic = exact_frequency_point::<25>(response, 1.0).unwrap();
         let streamed = measure_low_pass::<25>(response, 1.0, SampleSchedule::Uniform, 256).unwrap();
-        let point = MeasuredFrequencyPoint::new(streamed, analytic.gain_db, analytic.phase_radians);
+        let point = MeasuredFrequencyPoint::new(
+            streamed,
+            analytic.gain_db,
+            analytic.phase_radians,
+            analytic.normalized_group_delay,
+        );
         let expected_gain = 10.0_f64.powf(analytic.gain_db / 20.0);
 
         assert!(streamed.warmup_cycles > 60.0);

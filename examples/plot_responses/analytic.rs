@@ -61,6 +61,18 @@ pub(super) fn exact_frequency_point<const N: usize>(
     })
 }
 
+pub(super) fn phase_equalized_frequency_point<const N: usize>(
+    frequency_ratio: f64,
+) -> Result<FrequencyPoint, Box<dyn Error + Send + Sync>> {
+    let point = transfer::phase_equalized_butterworth(N, frequency_ratio)?;
+    Ok(FrequencyPoint {
+        ratio: frequency_ratio,
+        gain_db: point.gain_db,
+        phase_radians: point.phase_radians,
+        normalized_group_delay: point.normalized_group_delay,
+    })
+}
+
 /// Returns a conservative warm-up time for a one-hertz-cutoff filter.
 ///
 /// The bound gives the slowest pole 24 exponential time constants. The tone
