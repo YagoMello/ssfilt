@@ -289,7 +289,7 @@ to use the public API.
   freezes the stage-2 analytic signals, schedules, and refinement semantics.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps
   found before the phase work began.
-- [Development tools roadmap](docs/development-tools.md) defines analytic
+- [Development tools guide](docs/development-tools.md) explains analytic
   references, measured streaming overlays, reports, and plot-tool boundaries.
 - [UX evaluation and documentation plan](docs/ux-evaluation.md) defines cold
   application trials, scenario controls, scoring, review cadence, and the
@@ -300,6 +300,7 @@ to use the public API.
 ## Development
 
 ```text
+cargo fmt --all -- --check
 cargo test --all-features
 cargo check --no-default-features --features libm
 cargo clippy --all-targets --all-features -- -D warnings
@@ -320,8 +321,9 @@ The Criterion benchmarks cover order, response and topology scaling, input
 reconstruction policies, and increasingly large normalized sample intervals.
 Benchmark dependencies are development-only and do not affect library users.
 
-To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
-delay, and unit-step responses, run:
+### Development tools
+
+Generate the response dashboard and its sibling CSV report:
 
 ```text
 cargo run --release --example plot_responses -- \
@@ -329,50 +331,28 @@ cargo run --release --example plot_responses -- \
   --output target/filter-responses.svg
 ```
 
-Orders 1 through 50 are accepted through a compile-time dispatch macro. The
-topology currently has the explicit `low-pass` value. `--response` selects
-`repeated-pole`, `butterworth`, `bessel`, `chebyshev1`, or the default `all`.
-The output path and order are optional and default to
-`target/filter-responses.svg` and order 4. The original positional form
-`plot_responses 4 target/filter-responses.svg` remains accepted for existing
-scripts. Frequency curves use 1,601
-logarithmically spaced points; high orders can therefore take noticeably
-longer to render. Bessel is included through its supported maximum order and
-is omitted from higher-order `all` dashboards; explicitly requesting an
-unsupported Bessel order reports an error. Frequency-domain curves are evaluated
-directly from the normalized continuous transfer functions. Filled dots and
-open rings overlay gain and phase measured through the public streaming API
-under uniform and deterministic bounded-jitter timestamps. A sibling CSV
-contains the exact plotted measurement records, fit residuals, sampling
-details, topology-aware warm-up duration, and integration work; pass
-`--csv path/to/report.csv` to choose another report path. Markers below the
-visible magnitude floor remain available in CSV. Phase fits below −80 dB are
-marked unresolved and kept out of the phase panel.
+To include the public streaming phase-equalized Butterworth response, use an
+order-4 or order-8 filter and select `all` or `butterworth`:
 
-The unit-step panel also drives the public streaming API end to end. Curves are
-written as shape-preserving cubic SVG paths from an oversampled internal
-canvas, so subpixel detail remains smooth when zoomed without introducing
-spline overshoot.
+```text
+cargo run --release --example plot_responses -- \
+  --topology low-pass --response butterworth --order 4 \
+  --phase-equalized --output target/order-4-phase-equalized.svg
+```
 
-The development-only phase study searches the bounded one-section all-pass
-candidate and writes reproducible summary and holdout-sweep reports:
+Explore candidate designs and write analytic reports with:
 
 ```text
 cargo run --release --example phase_design -- \
   --output-dir target/phase-design
 ```
 
-By default it evaluates Butterworth orders 4 and 8 over both the core
-`0..0.7 * cutoff` band and the full `0..cutoff` band. The analytic screen and
-streaming waveform matrix pass both core cases and reject both cutoff-wide
-claims. The public builder therefore supports only Butterworth orders 4 and 8
-over DC through `0.7 * cutoff`; other orders, responses, and the full cutoff
-band are not supported. Each selected analytic case also writes an SVG
-dashboard showing source and source-plus-candidate delay, absolute delay
-residual, residual phase, and the added causal delay cost. Its rings are stored
-analytic holdout points—not streamed samples—and every SVG repeats that
-limitation in its title.
-Use `--order 4|8` and `--band core|cutoff` to narrow a run.
+The streaming equalizer is publicly supported only for Butterworth orders 4
+and 8 through `0.7 * cutoff_hz`. The design tool can explore orders 1 through
+16; every case outside the released order-4/order-8 core-band designs is
+exploratory and does not expand that support. See [the development-tools
+guide](docs/development-tools.md) for flags, outputs, measurement
+interpretation, and report details.
 
 The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires

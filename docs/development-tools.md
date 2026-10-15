@@ -1,4 +1,4 @@
-# Development measurement and visualization roadmap
+# Development measurement and visualization tools
 
 ## Purpose
 
@@ -36,7 +36,9 @@ The CSV rows and plotted points must come from the same measurement records.
 This makes a suspicious marker reproducible and prevents a chart from silently
 using different math than the report.
 
-Suggested eventual development-only module split:
+The current examples separate analytic calculation, public-API measurement,
+report generation, and rendering into development-only modules. A future shared
+tool could consolidate them along these boundaries:
 
 ```text
 examples/filter_lab.rs              small CLI and order dispatch
@@ -50,63 +52,110 @@ examples/filter_lab/plot/           shared style and individual SVG views
 ```
 
 The current shape-preserving SVG smoothing is visually useful, but its parser
-depends on Plotters' emitted markup and literal stroke colors. Isolate it behind
-one renderer module with focused tests, or replace it with direct path drawing;
-do not mix SVG rewriting with filter analysis.
+depends on Plotters' emitted markup and literal stroke colors. Keep it isolated
+behind rendering code with focused tests, or replace it with direct path
+drawing; do not mix SVG rewriting with filter analysis. The current focused
+examples remain the user-facing tools; add a broader shared CLI only when its
+phase and matrix workflows are ready.
 
-Reach that structure incrementally. First extract analytic calculation,
-measurement records, and rendering from the existing response example without
-changing its output. Then add one low-pass measured overlay and CSV export.
-Introduce the broader `filter_lab` subcommands only when phase and matrix views
-need them; do not begin with a wholesale CLI rewrite.
+## Current command-line tools
 
-## Command-line UX
-
-Use explicit named arguments and useful defaults rather than overloaded
-positional forms. A representative interface is:
+Both examples are development-only and leave the runtime dependency graph of
+`ssfilt` unchanged. Run `--help` to see the options accepted by the checked-out
+version:
 
 ```text
-cargo run --release --example filter_lab -- response \
-  --topology low-pass --response chebyshev --order 8 --ripple-db 0.5
-
-cargo run --release --example filter_lab -- phase \
-  --response butterworth --order 8 --band cutoff --schedule jittered
-
-cargo run --release --example filter_lab -- matrix --output target/filter-lab
+cargo run --release --example plot_responses -- --help
+cargo run --release --example phase_design -- --help
 ```
 
-`--help` should list valid responses, orders, band profiles, schedules, and
-default output paths. Each run prints its complete configuration and writes to
-a reproducible case directory under `target/filter-lab/`. Development-only CLI
-dependencies must not enter the runtime dependency graph of `ssfilt`.
+Generate the response dashboard and a sibling CSV report:
+
+```text
+cargo run --release --example plot_responses -- \
+  --topology low-pass --response all --order 4 \
+  --output target/filter-responses.svg \
+  --csv target/filter-responses.csv
+```
+
+| `plot_responses` option | Values and default |
+| --- | --- |
+| `--topology <TOPOLOGY>` | `low-pass` (default); the only current topology |
+| `--response <RESPONSE>` | `all` (default), `repeated-pole`, `butterworth`, `bessel`, or `chebyshev1` |
+| `--order <ORDER>` | Integer 1–50; defaults to 4. Bessel is available only through its supported maximum order. |
+| `--output <PATH>` | SVG path; defaults to `target/filter-responses.svg` |
+| `--csv <PATH>` | CSV path; defaults to a `.csv` file beside the SVG |
+| `--phase-equalized` | Add the public Butterworth phase-equalized measurements; requires order 4 or 8 and response `all` or `butterworth` |
+
+For example, compare the public order-4 Butterworth source and
+phase-equalized responses:
+
+```text
+cargo run --release --example plot_responses -- \
+  --topology low-pass --response butterworth --order 4 \
+  --phase-equalized --output target/order-4-phase-equalized.svg \
+  --csv target/order-4-phase-equalized.csv
+```
+
+The legacy positional form `[ORDER] [OUTPUT.SVG]` remains available. For
+example, `cargo run --release --example plot_responses -- 4 target/order-4.svg`
+selects order 4 and that SVG path.
+
+The phase-equalized overlay is a public streaming filter measurement. It keeps
+the source Butterworth magnitude response and complete-filter −3 dB cutoff,
+while adding causal delay to reduce group-delay variation over DC through
+`0.7 * cutoff_hz`. Frequencies above that boundary are diagnostic context, not
+a supported equalization claim.
+
+Run the analytic candidate-design study and write its reports:
+
+```text
+cargo run --release --example phase_design -- \
+  --output-dir target/phase-design
+```
+
+| `phase_design` option | Values and default |
+| --- | --- |
+| `--output-dir <PATH>` | Report directory; defaults to `target/phase-design` |
+| `--order <ORDER>` | One order from 1–16; by default evaluates orders 4 and 8 |
+| `--band <BAND>` | `core` or `cutoff`; by default evaluates both |
+
+Use this command to examine one exploratory order-12 core-band candidate:
+
+```text
+cargo run --release --example phase_design -- \
+  --order 12 --band core --output-dir target/phase-design-order-12
+```
+
+Public streaming equalization remains supported only for Butterworth orders 4
+and 8. Design results for every other order are labeled exploratory and do not
+imply public support.
 
 ## Tool dependency policy
 
 Development programs have a different dependency budget from the runtime
 library: they may use `std`, allocate, and depend on application-oriented
-crates. Keep those crates in root `dev-dependencies` or a standalone tool
-manifest so disabling default library features still leaves the `ssfilt`
-runtime graph unchanged.
+crates. The current examples use `clap` for CLI parsing, `anyhow` at executable
+boundaries, and `csv` for reports; keep these in root `dev-dependencies` or a
+standalone tool manifest so disabling default library features leaves the
+`ssfilt` runtime graph unchanged.
 
 Adopt dependencies only where they remove a maintained subsystem or provide a
 well-tested boundary:
 
-- use [`clap`](https://docs.rs/clap/) with its derive API for the next CLI
-  expansion. It replaces the growing hand-written parsers, generates useful
-  help and invalid-value diagnostics, and provides tool-local value enums.
-  Preserve the current `plot_responses [order] [output.svg]` form through an
-  explicit compatibility-normalization layer while named options become the
-  preferred interface. Test parsing with `try_parse_from`, including help,
-  invalid combinations, defaults, and the legacy form;
-- use [`anyhow`](https://docs.rs/anyhow/) only at executable and orchestration
-  boundaries. Add context containing the case or output path being processed,
-  while retaining typed filter, numerical, protocol, and scoring errors below
-  that boundary. Do not expose `anyhow::Error` from the library;
-- use [`csv`](https://docs.rs/csv/) without Serde when report code is next
-  changed. Its writer should replace the two hand-written quoting paths and
-  validate consistent record widths. Configure line endings explicitly and
-  compare complete report bytes before accepting the migration. Add Serde only
-  if a stable typed replay or manifest schema later makes it pay for itself;
+- use [`clap`](https://docs.rs/clap/) with its derive API for explicit options,
+  useful help, invalid-value diagnostics, and tool-local value enums. Preserve
+  the legacy `plot_responses [order] [output.svg]` form through the existing
+  compatibility normalization and test help, invalid combinations, defaults,
+  and that form with `try_parse_from`;
+- keep [`anyhow`](https://docs.rs/anyhow/) at executable and orchestration
+  boundaries, adding context for the case or output path while retaining typed
+  filter, numerical, and scoring errors below that boundary. Do not expose
+  `anyhow::Error` from the library;
+- use [`csv`](https://docs.rs/csv/) without Serde for report writing and
+  reading. Configure line endings explicitly, validate consistent record
+  widths, and compare complete report bytes when changing the report format.
+  Add Serde only if a stable typed replay or manifest schema later justifies it;
 - defer [`rayon`](https://docs.rs/rayon/) until release-mode timing shows that
   independent cases dominate a tool's runtime. Parallelism must operate on
   complete keyed cases, never on stateful updates or floating-point reductions
@@ -131,8 +180,9 @@ than mixing supply-chain configuration into a numerical feature commit.
 
 ## Analytic lines and real implementation points
 
-Frequency-domain plots draw the independent analytic response as a continuous
-line. Over it, draw conspicuous markers obtained through the public filter API:
+Frequency-domain plots draw the independent continuous-time transfer-function
+response as a continuous line. Markers are separate measurements made through
+the public streaming API, not samples taken from or resampled out of that line:
 
 1. construct a fresh filter for each measurement frequency;
 2. drive it with a settled sine wave through `update`;
@@ -167,13 +217,30 @@ phase is considered unresolved under the default `f64` integration floor: it
 is retained with its fit residual in CSV but omitted from the phase plot, and
 gain convergence uses a `1e-8` full-scale absolute floor.
 
-Run both uniform timestamps and deterministic bounded jitter. Labels and CSV
-call these **piecewise-linear sampled-sine measurements** and state input model,
-samples per cycle, maximum interval, jitter pattern, warm-up, precision, and
-fit residual. Under jitter the sine/cosine least-squares result is a fundamental
-projection at the actual timestamps, not a periodic-sample shortcut. These
-points demonstrate the implementation's achievable result; they do not replace
-the ideal continuous-time oracle.
+Run both uniform timestamps and deterministic bounded jitter. Source
+measurements use circles and phase-equalized measurements use triangles;
+filled markers denote uniform timestamps and open markers denote bounded
+jitter. Labels and CSV call these **piecewise-linear sampled-sine
+measurements** and state input model, samples per cycle, maximum interval,
+jitter pattern, warm-up, precision, and fit residual. Under jitter the
+sine/cosine least-squares result is a fundamental projection at the actual
+timestamps, not a periodic-sample shortcut. These points demonstrate the
+implementation's achievable result; they do not replace the ideal
+continuous-time oracle.
+
+When `--phase-equalized` is selected, the dashboard adds the public
+Butterworth-plus-equalizer response measured under the same schedules and
+sampling conditions as the source response. The magnitude retains the shared
+analytic response; phase shows the source and combined response measurements.
+Group delay is evaluated from the analytic pole contributions and includes the
+constant-delay target and validation-edge guide. Sparse measured phase is not
+differentiated to manufacture group-delay markers. The CSV contains the same
+measurement records represented by the plotted markers. Its `variant` and
+`measurement_pair_id` columns join source/equalized records made from the same
+timestamp stream; `equalization_scope` distinguishes validated (`f/fc <= 0.7`)
+from diagnostic points. Target delay, mean added delay, analytic group delay,
+delay residual, and analytic magnitude difference remain explicit columns
+rather than values inferred from the drawing.
 
 The fitted phase is intrinsically wrapped. The CSV preserves that wrapped
 value; for the phase panel and analytic error column, the tool selects the
@@ -196,11 +263,15 @@ Frequency selection includes:
 - calculated Chebyshev ripple extrema and ripple edge;
 - any equalizer pole frequency near the displayed range.
 
-The incremental response tool currently covers low-pass `f64` measurements at
-`0.05`, `0.1`, `0.25`, `0.5`, `0.7`, `0.8`, `0.9`, `0.95`, `1.0`, `1.05`, and
-`1.1` times cutoff. Filled dots denote uniform timestamps and open rings denote
-deterministic bounded jitter. Named options are preferred, while the positional
-order and output path remain compatible with the original development example:
+The response tool currently covers low-pass `f64` measurements at `0.05`,
+`0.1`, `0.25`, `0.5`, `0.7`, `0.8`, `0.9`, `0.95`, `1.0`, `1.05`, `1.1`,
+`1.25`, `1.5`, `2`, `3`, `5`, `10`, and `20` times cutoff. The logarithmically
+spaced stopband points extend real public-API evidence to the analytic plot's
+right edge. A single frequency/schedule measurement has a 24-million-update
+work guard; an exceptionally slow high-order response fails with a clear
+diagnostic instead of silently truncating the interval. Named options are
+preferred, while the positional order and output path remain compatible with
+the original development example:
 
 ```text
 cargo run --release --example plot_responses -- \
@@ -217,10 +288,12 @@ An explicitly requested Bessel order above its validated limit fails instead
 of silently omitting the requested trace.
 
 If `--csv` is omitted, the report is written beside the SVG with a `.csv`
-extension. The analytic curves and both marker schedules use the same stored
-measurement records as that report. Markers below the magnitude plot's visible
-floor are retained in CSV but omitted from the chart; unresolved phase markers
-below −80 dB are likewise CSV-only.
+extension. Both streamed marker schedules come directly from the measurement
+records in that report, which also stores their independent analytic reference
+columns. The dense analytic curves are rendered separately and are not
+exported as CSV rows. Markers below the magnitude plot's visible floor are
+retained in CSV but omitted from the chart; unresolved phase markers below
+−80 dB are likewise CSV-only.
 
 The nominal 256 samples per cycle is a minimum density derived from the maximum
 allowed interval, not the jitter schedule's mean density. The deterministic
@@ -228,68 +301,56 @@ jitter multipliers are `0.625|0.875|1.0|0.75|0.9375|0.6875`, whose mean is
 `0.8125`; the report exports both the exact pattern and its mean alongside the
 `f64` precision and linear input model.
 
-## Current phase-design tool
+## Phase-design reports
 
-The first analytic feasibility increment is available separately from the
-response dashboard:
+By default, `phase_design` evaluates Butterworth orders 4 and 8 over both the
+core `0..0.7 * cutoff` band and the cutoff-wide `0..1.0 * cutoff` band.
+`--order <ORDER>` selects one order from 1 through 16, and `--band <BAND>`
+selects `core` or `cutoff`. Every case other than the released order-4/order-8
+core-band designs is exploratory: its generated reports and SVG identify it as
+`streaming-not-validated / public-support-no`, and it does not extend the
+public equalizer's support.
 
-```text
-cargo run --release --example phase_design -- \
-  --output-dir target/phase-design
-```
+The tool searches the bounded one-section all-pass candidate and evaluates it
+against analytic response and holdout points. `summary.csv` contains
+coefficients, metrics, search and grid metadata, and each gate; `sweep.csv`
+contains the stored holdout points; `summary.md` presents the same case records.
+One SVG per case plots source and source-plus-candidate group delay, absolute
+delay residual and its gate, phase residual and its gate, and the candidate's
+added delay. Open rings are a sparse view of analytic holdout records, not
+measurements from `update`; the reports and every SVG label this distinction.
 
-It evaluates the mandatory Butterworth order 4 and 8 cases over both the core
-and cutoff bands. `summary.csv` contains coefficients, metrics, search and grid
-metadata, and every gate; `sweep.csv` contains the exact stored holdout points;
-`summary.md` is a readable view of the same case records. One SVG per case
-plots source and source-plus-candidate group delay, absolute delay residual and
-its gate, phase residual and its gate, and the candidate equalizer's added
-delay. Open rings are a sparse view of the exact analytic holdout records
-behind each curve; they must not be confused with public-API streaming
-measurements. Every SVG repeats that limitation in its title. Named `--order`
-and `--band` options narrow the default four-case matrix.
-
-The deterministic search passes both core-band cases and explicitly reports no
-useful cutoff-wide design. Those analytic results originally authorized the
-coupled-streaming experiment. The subsequent three-signal waveform matrix now
-passes for both precisions, uniform and irregular schedules, and 1 Hz/37 Hz
-physical scaling for Butterworth orders 4 and 8 over DC through
-`0.7 * cutoff`. Separate structural `f64` tests cover stage coupling, step
-bounds, ramp partitioning, physical scaling, and transactional failure. The
-narrow `build_phase_equalized` API is public, remains fixed-size and
-allocation-free, and exposes integration diagnostics for observing its work;
-this record does not claim a separate runtime-cost gate. Cutoff-wide claims,
-other orders, and other response families remain unsupported. This tool is
-still an analytic design record: its rings are not public-API streaming
-measurements, and the separate response dashboard must provide those
-implementation overlays.
+For supported orders 4 and 8, the deterministic search passes the core band and
+does not establish a useful cutoff-wide design. The public
+`build_phase_equalized` API remains limited to Butterworth orders 4 and 8 from
+DC through `0.7 * cutoff_hz`. Its coupled streaming behavior has separately
+passed waveform checks across both precisions, uniform and irregular schedules,
+and 1 Hz/37 Hz physical scaling. The `phase_design` holdout markers remain
+analytic; use the `plot_responses --phase-equalized` overlay to inspect public
+streaming measurements.
 
 ## Views
 
 ### Response dashboard
 
 - magnitude and unwrapped phase: analytic lines plus measured markers;
-- group delay: analytic line, optional measured markers, and cutoff guides;
-- step response: actual `update` samples shown as markers rather than an
-  unexplained smooth curve;
+- group delay: analytic curves, with the equalization target and validation
+  edge shown when the phase-equalized overlay is selected;
+- step response: a connected line through actual public `update` values; it
+  uses no point markers, and its shape-preserving SVG path does not imply an
+  analytic continuous-time step response;
 - explicit topology, response, order, precision, and timestamp schedule.
 
 ### Streaming phase-equalization dashboard
 
-This broader view follows the current analytic per-case dashboards. The public
-coupled streaming candidate now exists, but its dashboard is not implemented
-yet. Build it incrementally rather than making the response plot a second
-phase-design program.
-
-The first slice stays low-pass-only and adds named topology/response/order
-selection plus an optional Butterworth order-4/order-8 phase-equalized overlay
-to `plot_responses`. Source and equalized measurements must use the same
+The `plot_responses --phase-equalized` option adds this low-pass-only view for
+Butterworth order 4 or 8. Source and equalized measurements use the same
 timestamps, inputs, fit windows, and convergence checks. Magnitude shows their
-shared analytic curve with distinct public-API markers; phase and group delay
-show source and combined responses, the constant-delay target, and the
-`0.7 * cutoff` validation boundary. Frequencies above that boundary are
-diagnostic context, not a supported equalization claim. Sparse measured phase
-must not be differentiated into group-delay markers in this first slice.
+shared analytic curve with separate public-API markers; phase shows both
+measured responses. Group delay comes from the analytic model and includes the
+constant-delay target and the `0.7 * cutoff` validation boundary. Frequencies
+above that boundary provide context only. Sparse measured phase is not
+differentiated into group-delay markers.
 
 Later waveform views may add:
 
@@ -346,6 +407,7 @@ reference output is also supplied.
 
 ## Automated checks
 
+- formatting passes with `cargo fmt --all -- --check`;
 - analytic responses hit the public -3 dB edge convention;
 - measured low-order gain and phase match known analytic cases at `0.7`, `0.9`,
   and `1.0 * cutoff` within declared sampling/integration error;
@@ -370,10 +432,10 @@ Useful ideas from the discarded branch that may be reimplemented cleanly:
 - correctly scaled SVG legend strokes.
 
 Do not restore its permissive equalizer success criterion or couple plotting
-code to the runtime fitting algorithm. The current response example had grown
-to combine CLI parsing, analytic math, public simulations, rendering, SVG text
-rewriting, and tests in one large file; the module boundaries above are a
-prerequisite for adding more views safely.
+code to the runtime fitting algorithm. The current examples already separate
+analytic calculation, streaming measurements, reports, and rendering into
+modules. Keep future view work within those boundaries and use shared records
+for plots and exported reports.
 
 ## Other audited quality-of-life work
 
