@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use analytic::{exact_frequency_point, frequency_ratios};
 use anyhow::Context;
-use clap::{Parser, error::ErrorKind};
+use clap::{Parser, ValueEnum, error::ErrorKind};
 use measure::{
     DEFAULT_SAMPLES_PER_CYCLE, MeasuredFrequencyPoint, SampleSchedule, measure_low_pass,
 };
@@ -33,9 +33,9 @@ use simulation::measure_step_response;
 use ssfilt::{MAX_BESSEL_ORDER, Response};
 
 macro_rules! dispatch_order {
-    ($order:expr, $output:expr, $csv:expr; $($supported:literal),+ $(,)?) => {
+    ($order:expr, $output:expr, $csv:expr, $configuration:expr; $($supported:literal),+ $(,)?) => {
         match $order {
-            $($supported => plot::<$supported>($output, $csv),)+
+            $($supported => plot::<$supported>($output, $csv, $configuration),)+
             unsupported => Err(format!(
                 "order must be between 1 and {}, got {unsupported}",
                 dispatch_order!(@last $($supported),+)
@@ -48,6 +48,20 @@ macro_rules! dispatch_order {
 
 const MEASUREMENT_FREQUENCY_RATIOS: [f64; 11] =
     [0.05, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum TopologyArg {
+    LowPass,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ResponseArg {
+    All,
+    RepeatedPole,
+    Butterworth,
+    Bessel,
+    Chebyshev1,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -80,6 +94,12 @@ struct Cli {
     /// CSV measurement report path; defaults beside the SVG.
     #[arg(long, value_name = "PATH")]
     csv: Option<PathBuf>,
+    /// Filter topology to plot.
+    #[arg(long, value_enum, default_value_t = TopologyArg::LowPass)]
+    topology: TopologyArg,
+    /// Response family to plot, or all available families.
+    #[arg(long, value_enum, default_value_t = ResponseArg::All)]
+    response: ResponseArg,
 }
 
 #[derive(Debug)]
@@ -87,6 +107,8 @@ struct Arguments {
     order: usize,
     output_path: PathBuf,
     csv_path: PathBuf,
+    topology: TopologyArg,
+    response: ResponseArg,
 }
 
 fn parse_order(value: &str) -> Result<usize, String> {
@@ -134,6 +156,8 @@ impl Cli {
             order,
             output_path,
             csv_path,
+            topology: self.topology,
+            response: self.response,
         })
     }
 }
@@ -153,7 +177,11 @@ fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    dispatch_order!(arguments.order, &arguments.output_path, &arguments.csv_path;
+    let configuration = PlotConfiguration {
+        topology: arguments.topology,
+        response: arguments.response,
+    };
+    dispatch_order!(arguments.order, &arguments.output_path, &arguments.csv_path, configuration;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
@@ -185,33 +213,9 @@ fn create_parent_directory(path: &Path) -> std::io::Result<()> {
 fn plot<const N: usize>(
     output_path: &Path,
     csv_path: &Path,
+    configuration: PlotConfiguration,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut specs = vec![
-        ResponseSpec {
-            label: "Repeated pole",
-            response: Response::RepeatedPole,
-            color: RGBColor(46, 111, 214),
-        },
-        ResponseSpec {
-            label: "Butterworth",
-            response: Response::Butterworth,
-            color: RGBColor(224, 91, 74),
-        },
-        ResponseSpec {
-            label: "Bessel",
-            response: Response::Bessel,
-            color: RGBColor(135, 82, 161),
-        },
-        ResponseSpec {
-            label: "Chebyshev I, 0.5 dB ripple",
-            response: Response::Chebyshev1 { ripple_db: 0.5 },
-            color: RGBColor(36, 157, 92),
-        },
-    ];
-    if N > MAX_BESSEL_ORDER {
-        specs.retain(|spec| spec.response != Response::Bessel);
-        println!("omitting Bessel: supported through order {MAX_BESSEL_ORDER}");
-    }
+    let specs = selected_specs::<N>(configuration)?;
 
     let mut responses = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -256,13 +260,62 @@ fn plot<const N: usize>(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PlotConfiguration {
+    topology: TopologyArg,
+    response: ResponseArg,
+}
+
+fn selected_specs<const N: usize>(
+    configuration: PlotConfiguration,
+) -> Result<Vec<ResponseSpec>, Box<dyn Error + Send + Sync>> {
+    debug_assert_eq!(configuration.topology, TopologyArg::LowPass);
+    let mut specs = vec![
+        ResponseSpec {
+            label: "Repeated pole",
+            response: Response::RepeatedPole,
+            color: RGBColor(46, 111, 214),
+        },
+        ResponseSpec {
+            label: "Butterworth",
+            response: Response::Butterworth,
+            color: RGBColor(224, 91, 74),
+        },
+        ResponseSpec {
+            label: "Bessel",
+            response: Response::Bessel,
+            color: RGBColor(135, 82, 161),
+        },
+        ResponseSpec {
+            label: "Chebyshev I, 0.5 dB ripple",
+            response: Response::Chebyshev1 { ripple_db: 0.5 },
+            color: RGBColor(36, 157, 92),
+        },
+    ];
+    specs.retain(|spec| match configuration.response {
+        ResponseArg::All => true,
+        ResponseArg::RepeatedPole => spec.response == Response::RepeatedPole,
+        ResponseArg::Butterworth => spec.response == Response::Butterworth,
+        ResponseArg::Bessel => spec.response == Response::Bessel,
+        ResponseArg::Chebyshev1 => matches!(spec.response, Response::Chebyshev1 { .. }),
+    });
+    if N > MAX_BESSEL_ORDER && configuration.response == ResponseArg::Bessel {
+        return Err(format!("Bessel responses support orders through {MAX_BESSEL_ORDER}").into());
+    }
+    if N > MAX_BESSEL_ORDER {
+        specs.retain(|spec| spec.response != Response::Bessel);
+        println!("omitting Bessel: supported through order {MAX_BESSEL_ORDER}");
+    }
+    Ok(specs)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use clap::{Parser, error::ErrorKind};
 
-    use super::{Arguments, Cli};
+    use super::{Arguments, Cli, PlotConfiguration, ResponseArg, TopologyArg, selected_specs};
 
     fn args(values: &[&str]) -> Result<Arguments, String> {
         let mut argv = vec!["plot_responses"];
@@ -300,16 +353,24 @@ mod tests {
             "out/response.svg",
             "--csv",
             "reports/data.csv",
+            "--topology",
+            "low-pass",
+            "--response",
+            "butterworth",
         ])
         .unwrap();
         assert_eq!(arguments.order, 3);
         assert_eq!(arguments.output_path, path("out/response.svg"));
         assert_eq!(arguments.csv_path, path("reports/data.csv"));
+        assert_eq!(arguments.topology, TopologyArg::LowPass);
+        assert_eq!(arguments.response, ResponseArg::Butterworth);
 
         let defaults = args(&[]).unwrap();
         assert_eq!(defaults.order, 4);
         assert_eq!(defaults.output_path, path("target/filter-responses.svg"));
         assert_eq!(defaults.csv_path, path("target/filter-responses.csv"));
+        assert_eq!(defaults.topology, TopologyArg::LowPass);
+        assert_eq!(defaults.response, ResponseArg::All);
     }
 
     #[test]
@@ -330,6 +391,8 @@ mod tests {
         assert!(help.contains("--order"));
         assert!(help.contains("--output"));
         assert!(help.contains("--csv"));
+        assert!(help.contains("--topology"));
+        assert!(help.contains("--response"));
         assert!(help.contains("Filter order from 1 through 50"));
         assert!(help.contains("SVG dashboard output path"));
         assert!(help.contains("CSV measurement report path"));
@@ -368,5 +431,47 @@ mod tests {
     fn csv_cannot_overwrite_the_svg_output() {
         let error = args(&["4", "same-path", "--csv", "same-path"]).unwrap_err();
         assert!(error.contains("SVG and CSV output paths must be different"));
+    }
+
+    #[test]
+    fn response_selection_is_explicit_and_never_silently_drops_requested_bessel() {
+        let butterworth = selected_specs::<4>(PlotConfiguration {
+            topology: TopologyArg::LowPass,
+            response: ResponseArg::Butterworth,
+        })
+        .unwrap();
+        assert_eq!(butterworth.len(), 1);
+        assert_eq!(butterworth[0].response, ssfilt::Response::Butterworth);
+
+        let all_high_order = selected_specs::<26>(PlotConfiguration {
+            topology: TopologyArg::LowPass,
+            response: ResponseArg::All,
+        })
+        .unwrap();
+        assert_eq!(all_high_order.len(), 3);
+        assert!(
+            all_high_order
+                .iter()
+                .all(|spec| spec.response != ssfilt::Response::Bessel)
+        );
+
+        let requested_bessel = selected_specs::<26>(PlotConfiguration {
+            topology: TopologyArg::LowPass,
+            response: ResponseArg::Bessel,
+        })
+        .err()
+        .expect("an explicitly unsupported Bessel order must fail")
+        .to_string();
+        assert!(requested_bessel.contains("orders through 25"));
+    }
+
+    #[test]
+    fn invalid_topology_and_response_values_are_rejected_by_clap() {
+        for values in [
+            vec!["--topology", "band-pass"],
+            vec!["--response", "elliptic"],
+        ] {
+            assert!(args(&values).is_err(), "accepted {values:?}");
+        }
     }
 }

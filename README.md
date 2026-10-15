@@ -325,17 +325,21 @@ delay, and unit-step responses, run:
 
 ```text
 cargo run --release --example plot_responses -- \
-  --order 4 --output target/filter-responses.svg
+  --topology low-pass --response all --order 4 \
+  --output target/filter-responses.svg
 ```
 
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
-output path and order are optional and default to
+topology currently has the explicit `low-pass` value. `--response` selects
+`repeated-pole`, `butterworth`, `bessel`, `chebyshev1`, or the default `all`.
+The output path and order are optional and default to
 `target/filter-responses.svg` and order 4. The original positional form
 `plot_responses 4 target/filter-responses.svg` remains accepted for existing
 scripts. Frequency curves use 1,601
 logarithmically spaced points; high orders can therefore take noticeably
 longer to render. Bessel is included through its supported maximum order and
-is omitted from higher-order dashboards. Frequency-domain curves are evaluated
+is omitted from higher-order `all` dashboards; explicitly requesting an
+unsupported Bessel order reports an error. Frequency-domain curves are evaluated
 directly from the normalized continuous transfer functions. Filled dots and
 open rings overlay gain and phase measured through the public streaming API
 under uniform and deterministic bounded-jitter timestamps. A sibling CSV

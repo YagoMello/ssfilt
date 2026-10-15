@@ -204,9 +204,17 @@ order and output path remain compatible with the original development example:
 
 ```text
 cargo run --release --example plot_responses -- \
-  --order 8 --output target/order-8.svg \
+  --topology low-pass --response butterworth --order 8 \
+  --output target/order-8.svg \
   --csv target/order-8.csv
 ```
+
+`--response` accepts `all`, `repeated-pole`, `butterworth`, `bessel`, and
+`chebyshev1`. The current `--topology` value is `low-pass`; keeping it explicit
+lets later topology-specific views fail clearly rather than overloading a
+response name. The default remains the complete low-pass response dashboard.
+An explicitly requested Bessel order above its validated limit fails instead
+of silently omitting the requested trace.
 
 If `--csv` is omitted, the report is written beside the SVG with a `.csv`
 extension. The analytic curves and both marker schedules use the same stored
