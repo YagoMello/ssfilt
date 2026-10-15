@@ -123,10 +123,10 @@ const GATE_DEFINITIONS: &[(&str, &str)] = &[
     ),
 ];
 
-pub(super) fn write_reports(output_dir: &Path, results: &[CaseResult]) -> io::Result<()> {
+pub(super) fn write_reports(output_dir: &Path, results: &[CaseResult]) -> csv::Result<()> {
     fs::create_dir_all(output_dir)?;
-    fs::write(output_dir.join("summary.csv"), summary_csv(results))?;
-    fs::write(output_dir.join("sweep.csv"), sweep_csv(results))?;
+    fs::write(output_dir.join("summary.csv"), summary_csv(results)?)?;
+    fs::write(output_dir.join("sweep.csv"), sweep_csv(results)?)?;
     fs::write(output_dir.join("summary.md"), summary_markdown(results))?;
     Ok(())
 }
@@ -143,12 +143,15 @@ pub(super) fn failed_gate_names(gates: GateResults) -> Vec<&'static str> {
         .collect()
 }
 
-fn summary_csv(results: &[CaseResult]) -> String {
-    let mut output = String::new();
-    append_record(
-        &mut output,
-        SUMMARY_HEADERS.iter().map(|header| (*header).to_owned()),
-    );
+fn summary_csv(results: &[CaseResult]) -> csv::Result<Vec<u8>> {
+    csv_bytes(|writer| write_summary_records(writer, results))
+}
+
+fn write_summary_records<W: io::Write>(
+    writer: &mut csv::Writer<W>,
+    results: &[CaseResult],
+) -> csv::Result<()> {
+    writer.write_record(SUMMARY_HEADERS.iter().copied())?;
     for result in results {
         let candidate = result.candidate;
         let natural_frequency = candidate.natural_frequency();
@@ -214,45 +217,59 @@ fn summary_csv(results: &[CaseResult]) -> String {
         );
         fields.push(result.gates.passes().to_string());
         debug_assert_eq!(fields.len(), SUMMARY_HEADERS.len());
-        append_record(&mut output, fields);
+        writer.write_record(fields)?;
     }
-    output
+    Ok(())
 }
 
-fn sweep_csv(results: &[CaseResult]) -> String {
-    let mut output = String::new();
-    append_record(
-        &mut output,
-        SWEEP_HEADERS.iter().map(|header| (*header).to_owned()),
-    );
+fn sweep_csv(results: &[CaseResult]) -> csv::Result<Vec<u8>> {
+    csv_bytes(|writer| write_sweep_records(writer, results))
+}
+
+fn write_sweep_records<W: io::Write>(
+    writer: &mut csv::Writer<W>,
+    results: &[CaseResult],
+) -> csv::Result<()> {
+    writer.write_record(SWEEP_HEADERS.iter().copied())?;
     for result in results {
         let point_count = result.holdout_points.len();
         for (index, point) in result.holdout_points.iter().enumerate() {
-            append_record(
-                &mut output,
-                [
-                    result.case.response_label.to_owned(),
-                    result.case.order.to_string(),
-                    result.case.band.label().to_owned(),
-                    index.to_string(),
-                    point_count.to_string(),
-                    float(point.frequency_ratio),
-                    float(point.source_delay),
-                    float(point.source_delay - result.source_metrics.target_delay),
-                    float(point.equalizer_delay),
-                    float(point.total_delay),
-                    float(point.total_delay - result.corrected_metrics.target_delay),
-                    float(point.source_phase_radians),
-                    float(point.equalizer_phase_radians),
-                    float(point.total_phase_radians),
-                    float(point.phase_residual_radians),
-                    float(result.source_metrics.target_delay),
-                    float(result.corrected_metrics.target_delay),
-                ],
-            );
+            writer.write_record([
+                result.case.response_label.to_owned(),
+                result.case.order.to_string(),
+                result.case.band.label().to_owned(),
+                index.to_string(),
+                point_count.to_string(),
+                float(point.frequency_ratio),
+                float(point.source_delay),
+                float(point.source_delay - result.source_metrics.target_delay),
+                float(point.equalizer_delay),
+                float(point.total_delay),
+                float(point.total_delay - result.corrected_metrics.target_delay),
+                float(point.source_phase_radians),
+                float(point.equalizer_phase_radians),
+                float(point.total_phase_radians),
+                float(point.phase_residual_radians),
+                float(result.source_metrics.target_delay),
+                float(result.corrected_metrics.target_delay),
+            ])?;
         }
     }
-    output
+    Ok(())
+}
+
+fn csv_bytes(
+    write_records: impl FnOnce(&mut csv::Writer<&mut Vec<u8>>) -> csv::Result<()>,
+) -> csv::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    {
+        let mut writer = csv::WriterBuilder::new()
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_writer(&mut output);
+        write_records(&mut writer)?;
+        writer.flush()?;
+    }
+    Ok(output)
 }
 
 fn summary_markdown(results: &[CaseResult]) -> String {
@@ -493,31 +510,6 @@ fn gate_results(gates: GateResults) -> [(&'static str, bool); 8] {
     ]
 }
 
-fn append_record(output: &mut String, fields: impl IntoIterator<Item = String>) {
-    for (index, field) in fields.into_iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        append_csv_field(output, &field);
-    }
-    output.push('\n');
-}
-
-fn append_csv_field(output: &mut String, value: &str) {
-    if value.contains([',', '"', '\n', '\r']) {
-        output.push('"');
-        for character in value.chars() {
-            if character == '"' {
-                output.push('"');
-            }
-            output.push(character);
-        }
-        output.push('"');
-    } else {
-        output.push_str(value);
-    }
-}
-
 fn float(value: f64) -> String {
     format_float(value)
 }
@@ -528,8 +520,7 @@ mod tests {
     use ssfilt::Response;
 
     use super::{
-        SUMMARY_HEADERS, SWEEP_HEADERS, append_csv_field, format_float, summary_csv,
-        summary_markdown, sweep_csv,
+        SUMMARY_HEADERS, SWEEP_HEADERS, format_float, summary_csv, summary_markdown, sweep_csv,
     };
 
     fn sample_result() -> CaseResult {
@@ -611,38 +602,19 @@ mod tests {
         }
     }
 
-    fn cells(record: &str) -> Vec<String> {
-        let mut fields = Vec::new();
-        let mut current = String::new();
-        let mut quoted = false;
-        let mut characters = record.chars().peekable();
-        while let Some(character) = characters.next() {
-            match character {
-                '"' if quoted && characters.peek() == Some(&'"') => {
-                    current.push('"');
-                    characters.next();
-                }
-                '"' => quoted = !quoted,
-                ',' if !quoted => {
-                    fields.push(std::mem::take(&mut current));
-                }
-                _ => current.push(character),
-            }
-        }
-        fields.push(current);
-        fields
-    }
-
     #[test]
     fn summary_csv_maps_metrics_coefficients_metadata_and_each_gate() {
-        let csv = summary_csv(&[sample_result()]);
-        let mut lines = csv.lines();
-        let headers = cells(lines.next().unwrap());
-        let values = cells(lines.next().unwrap());
-        assert_eq!(headers, SUMMARY_HEADERS);
+        let bytes = summary_csv(&[sample_result()]).unwrap();
+        let mut reader = csv::ReaderBuilder::new().from_reader(bytes.as_slice());
+        let headers = reader.headers().unwrap().clone();
+        let values = reader.records().next().unwrap().unwrap();
+        assert_eq!(headers.iter().collect::<Vec<_>>(), SUMMARY_HEADERS.to_vec());
         assert_eq!(headers.len(), values.len());
-        let get =
-            |name: &str| values[headers.iter().position(|header| header == name).unwrap()].as_str();
+        let get = |name: &str| {
+            values
+                .get(headers.iter().position(|header| header == name).unwrap())
+                .unwrap()
+        };
 
         assert_eq!(get("response"), "Butterworth");
         assert_eq!(get("order"), "4");
@@ -698,15 +670,19 @@ mod tests {
 
     #[test]
     fn sweep_csv_uses_the_stored_point_values() {
-        let csv = sweep_csv(&[sample_result()]);
-        let mut lines = csv.lines();
-        let headers = cells(lines.next().unwrap());
-        let _first_point = lines.next().unwrap();
-        let second = cells(lines.next().unwrap());
-        assert_eq!(headers, SWEEP_HEADERS);
+        let bytes = sweep_csv(&[sample_result()]).unwrap();
+        let mut reader = csv::ReaderBuilder::new().from_reader(bytes.as_slice());
+        let headers = reader.headers().unwrap().clone();
+        let mut records = reader.records();
+        let _first_point = records.next().unwrap().unwrap();
+        let second = records.next().unwrap().unwrap();
+        assert_eq!(headers.iter().collect::<Vec<_>>(), SWEEP_HEADERS.to_vec());
         assert_eq!(headers.len(), second.len());
-        let get =
-            |name: &str| second[headers.iter().position(|header| header == name).unwrap()].as_str();
+        let get = |name: &str| {
+            second
+                .get(headers.iter().position(|header| header == name).unwrap())
+                .unwrap()
+        };
 
         assert_eq!(get("sweep_index"), "1");
         assert_eq!(get("sweep_point_count"), "2");
@@ -733,10 +709,31 @@ mod tests {
     }
 
     #[test]
-    fn csv_escapes_delimiters_quotes_and_line_breaks_and_uses_round_trip_precision() {
-        let mut escaped = String::new();
-        append_csv_field(&mut escaped, "Band, \"core\"\nnext");
-        assert_eq!(escaped, "\"Band, \"\"core\"\"\nnext\"");
+    fn csv_escapes_delimiters_quotes_and_line_breaks_and_keeps_lf_records() {
+        let mut result = sample_result();
+        result.case.response_label = "Band, \"core\"\r\nnext";
+        let bytes = summary_csv(&[result]).unwrap();
+        let expected_prefix = format!(
+            "{}\n\"Band, \"\"core\"\"\r\nnext\",4,core,",
+            SUMMARY_HEADERS.join(",")
+        );
+        assert!(bytes.starts_with(expected_prefix.as_bytes()));
+        assert!(bytes.ends_with(b"false\n"));
+
+        let mut reader = csv::ReaderBuilder::new().from_reader(bytes.as_slice());
+        let headers = reader.headers().unwrap().clone();
+        let values = reader.records().next().unwrap().unwrap();
+        assert_eq!(headers.len(), values.len());
+        assert_eq!(values.get(0), Some("Band, \"core\"\r\nnext"));
+
+        let mut empty_result = sample_result();
+        empty_result.case.response_label = "";
+        let empty_bytes = summary_csv(&[empty_result]).unwrap();
+        let empty_prefix = format!("{}\n,4,core,", SUMMARY_HEADERS.join(","));
+        assert!(empty_bytes.starts_with(empty_prefix.as_bytes()));
+        let mut reader = csv::ReaderBuilder::new().from_reader(empty_bytes.as_slice());
+        let values = reader.records().next().unwrap().unwrap();
+        assert_eq!(values.get(0), Some(""));
         assert_eq!(
             format_float(1.234_567_890_123_456_7),
             "1.2345678901234567e0"
