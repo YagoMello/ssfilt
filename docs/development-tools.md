@@ -143,7 +143,7 @@ offering switches for unimplemented products:
 | Butterworth phase equalization, orders 4 and 8 | Analytic and public streamed overlays exist | Add the pre-1.0 application/cost comparison against Bessel and repeated-pole |
 | Other Butterworth equalizer orders | Analytic candidates can be inspected for orders 1 through 16 | Add private coupled streaming validation one order at a time; do not display public measurement markers before promotion |
 | Other response families and topologies | No supported equalizer design | Define a response-specific useful band and user value first; Chebyshev must include its ripple edge |
-| Forward-backward batch filtering | Oracle and private negative-control components exist; no validated batch filter or public API exists | Implement deterministic filtered reports, then the full matrix and candidate selection before adding batch plots |
+| Forward-backward batch filtering | Oracle, private endpoint negative control, and one deterministic eight-cell filtered report exist; no validated batch filter or public API exists | Expand to the full matrix and candidate selection before adding batch plots |
 
 Batch plots will live in the isolated forward-backward oracle workflow, not in
 `plot_responses`. They must be generated from the same scored records as the

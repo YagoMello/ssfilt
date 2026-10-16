@@ -283,8 +283,8 @@ to use the public API.
 - [Phase equalization record](docs/phase-equalization.md) defines the active
   problem, evidence requirements, and current support boundary.
 - [Forward-backward batch design](docs/forward-backward.md) defines the
-  planned noncausal filtering contract and pre-implementation gates; it is not
-  a public batch API.
+  planned noncausal filtering contract and implementation gates; its private
+  filtered diagnostic is development evidence, not a public batch API.
 - [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
   freezes the stage-2 analytic signals, schedules, and refinement semantics.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps

@@ -490,7 +490,10 @@ permissive untested behavior.
 3. Implement a private endpoint-only negative-control baseline with validation,
    transactional failure tests, and no assumption that it will be selected. ✓
 4. Evaluate its oracle error and partition dependence over the frozen matrix;
-   implement one bounded trajectory-aware replay candidate if it fails.
+   implement one bounded trajectory-aware replay candidate if it fails. The
+   first eight-cell reverse-start-sentinel report is implemented and confirms
+   that the endpoint-only negative control is not selectable; full-matrix
+   coverage remains outstanding. ◐
 5. Select endpoint replay or a trajectory-aware engine from the predeclared
    gates, then independently review that numerical decision.
 6. Finalize workspace, boundary, error, and diagnostics representations.

@@ -292,10 +292,11 @@ updates preserve the preceding snapshot transactionally.
      and band-pass need independently defined useful bands and latency goals.
    - The forward-backward physical contract, multiprecision oracle, frozen
      fixtures, protocol, endpoint-replay negative control, single-cell scoring,
-     and cross-cell comparisons are implemented. The next batch package is a
-     deterministic filtered matrix/report vertical slice, followed by the full
-     acceptance matrix, a trajectory-aware candidate if required, numerical
-     selection, batch-specific plots, and only then a public `ssfilt::batch`
-     surface. See `docs/forward-backward.md`.
+     cross-cell comparisons, and the first deterministic eight-cell filtered
+     report are implemented. That report is diagnostic rather than acceptance
+     evidence and explicitly exposes the endpoint baseline's omitted physical
+     tail. Next come the full acceptance matrix, a trajectory-aware candidate
+     if required, numerical selection, batch-specific plots, and only then a
+     public `ssfilt::batch` surface. See `docs/forward-backward.md`.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

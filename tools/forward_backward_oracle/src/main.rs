@@ -1,19 +1,87 @@
 #![forbid(unsafe_code)]
 
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 use forward_backward_oracle::{ButterworthModes, RepresentedRecord, evaluate};
 use rug::Float;
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "forward-backward-oracle",
+    about = "Independent development oracle for ssfilt forward-backward filtering"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Run the compact 192/256-bit modal and convolution checks.
+    Verify,
+    /// Exercise the root protocol client and its clean shutdown.
+    SessionSmoke,
+    /// Produce the first filtered eight-cell diagnostic report.
+    Matrix {
+        /// New directory in which the report artifacts will be published.
+        #[arg(long)]
+        output: PathBuf,
+        /// This slice currently requires `right-adjacent-step`.
+        #[arg(long)]
+        fixture: String,
+        /// This slice currently requires per-pass order 8.
+        #[arg(long)]
+        order: usize,
+        /// This slice currently requires `f64`.
+        #[arg(long)]
+        scalar: String,
+        /// This slice currently requires `pi/32`.
+        #[arg(long = "q-max")]
+        q_max: String,
+        /// This slice currently requires `uneven`.
+        #[arg(long)]
+        schedule: String,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut arguments = std::env::args().skip(1);
-    match arguments.next().as_deref() {
-        None | Some("verify") => verify(),
-        Some("session-smoke") => session_smoke(),
-        Some("-h" | "--help" | "help") => {
-            print_help();
+    match Cli::parse().command.unwrap_or(Command::Verify) {
+        Command::Verify => verify(),
+        Command::SessionSmoke => session_smoke(),
+        Command::Matrix {
+            output,
+            fixture,
+            order,
+            scalar,
+            q_max,
+            schedule,
+        } => {
+            validate_filtered_selection(&fixture, order, &scalar, &q_max, &schedule)?;
+            let summary = forward_backward_oracle::run_filtered_matrix(&output)
+                .map_err(std::io::Error::other)?;
+            println!("{summary}");
             Ok(())
         }
-        Some(argument) => Err(format!("unknown command `{argument}`; use --help").into()),
     }
+}
+
+fn validate_filtered_selection(
+    fixture: &str,
+    order: usize,
+    scalar: &str,
+    q_max: &str,
+    schedule: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let actual = (fixture, order, scalar, q_max, schedule);
+    let expected = ("right-adjacent-step", 8, "f64", "pi/32", "uneven");
+    if actual == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "the complete matrix is not implemented; this diagnostic slice requires --fixture right-adjacent-step --order 8 --scalar f64 --q-max pi/32 --schedule uneven (received fixture={fixture}, order={order}, scalar={scalar}, q-max={q_max}, schedule={schedule})"
+    )
+    .into())
 }
 
 fn session_smoke() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,12 +162,18 @@ fn verify() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_help() {
-    println!(
-        "forward-backward-oracle\n\n\
-         USAGE:\n  forward-backward-oracle [verify | session-smoke]\n\n\
-         COMMANDS:\n\
-           verify         run compact 192/256-bit modal and convolution checks (default)\n\
-           session-smoke  exercise the root protocol client and its clean shutdown"
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_selection_is_exact_and_does_not_imply_a_complete_matrix() {
+        assert!(
+            validate_filtered_selection("right-adjacent-step", 8, "f64", "pi/32", "uneven").is_ok()
+        );
+        assert!(
+            validate_filtered_selection("right-adjacent-step", 4, "f64", "pi/32", "uneven")
+                .is_err()
+        );
+    }
 }

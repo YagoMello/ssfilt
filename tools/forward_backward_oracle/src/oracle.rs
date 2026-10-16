@@ -4,6 +4,8 @@ use crate::model::ButterworthModes;
 use crate::record::{NormalizedRecord, RepresentedRecord};
 use crate::segment::segment_weights;
 
+const COLLINEAR_REFINEMENT_PEAK_LIMIT: (u32, u64) = (1, 1_000_000_000_000);
+
 #[derive(Clone, Debug)]
 pub struct OracleOutput {
     precision: u32,
@@ -26,6 +28,104 @@ impl OracleOutput {
     pub const fn maximum_imaginary_residual(&self) -> &Float {
         &self.maximum_imaginary_residual
     }
+}
+
+/// Exhaustive oracle-only check that exact high-precision subdivision leaves
+/// the represented piecewise-linear signal unchanged at its original knots.
+#[derive(Clone, Debug)]
+pub(crate) struct CollinearRefinementAssessment {
+    normalized_peak: Float,
+    limit: Float,
+    passed: bool,
+}
+
+impl CollinearRefinementAssessment {
+    #[must_use]
+    pub(crate) const fn normalized_peak(&self) -> &Float {
+        &self.normalized_peak
+    }
+
+    #[must_use]
+    pub(crate) const fn limit(&self) -> &Float {
+        &self.limit
+    }
+
+    #[must_use]
+    pub(crate) const fn passed(&self) -> bool {
+        self.passed
+    }
+}
+
+/// Certify the frozen `1e-12*Q` exact-collinear oracle invariant for one base
+/// represented record.  This is deliberately independent from candidate-
+/// scalar refinement, whose inserted values are rounded back to that scalar.
+#[must_use]
+pub(crate) fn assess_exact_collinear_refinement(
+    order: usize,
+    record: &RepresentedRecord,
+) -> CollinearRefinementAssessment {
+    let precision = crate::assessment::HIGH_ORACLE_PRECISION;
+    let modes = ButterworthModes::new(order, precision);
+    let base = record.normalize(precision);
+    let refined = exact_collinear_refinement(&base, precision);
+    let base_output = evaluate_normalized(&modes, &base);
+    let refined_output = evaluate_normalized(&modes, &refined);
+
+    let mut peak = Float::new(precision);
+    for (base_value, refined_value) in base_output
+        .values()
+        .iter()
+        .zip(refined_output.values().iter().step_by(3))
+    {
+        let difference = Float::with_val(precision, base_value - refined_value).abs();
+        if difference > peak {
+            peak = difference;
+        }
+    }
+    let scale = record.scale(precision);
+    peak /= scale;
+    let mut limit = Float::with_val(precision, COLLINEAR_REFINEMENT_PEAK_LIMIT.0);
+    limit /= COLLINEAR_REFINEMENT_PEAK_LIMIT.1;
+    let passed = peak <= limit;
+
+    CollinearRefinementAssessment {
+        normalized_peak: peak,
+        limit,
+        passed,
+    }
+}
+
+fn exact_collinear_refinement(record: &NormalizedRecord, precision: u32) -> NormalizedRecord {
+    let mut intervals = Vec::with_capacity(record.intervals.len().saturating_mul(3));
+    let mut samples = Vec::with_capacity(record.samples.len().saturating_mul(3));
+    samples.push(record.samples[0].clone());
+
+    for index in 0..record.intervals.len() {
+        let third = Float::with_val(precision, &record.intervals[index] / 3);
+        let mut final_third = record.intervals[index].clone();
+        let mut first_two = third.clone();
+        first_two *= 2;
+        final_third -= first_two;
+        intervals.extend([third.clone(), third, final_third]);
+
+        let difference = Float::with_val(
+            precision,
+            &record.samples[index + 1] - &record.samples[index],
+        );
+        let mut first_offset = difference.clone();
+        first_offset /= 3;
+        let mut first = record.samples[index].clone();
+        first += first_offset;
+
+        let mut second_offset = difference;
+        second_offset *= 2;
+        second_offset /= 3;
+        let mut second = record.samples[index].clone();
+        second += second_offset;
+        samples.extend([first, second, record.samples[index + 1].clone()]);
+    }
+
+    NormalizedRecord { intervals, samples }
 }
 
 /// Evaluates the independent finite-record forward-backward convolution at
@@ -243,63 +343,19 @@ mod tests {
 
     #[test]
     fn exact_collinear_refinement_preserves_the_oracle_at_original_knots() {
-        for precision in [192, 256] {
-            let base = NormalizedRecord {
-                intervals: vec![
-                    Float::with_val(precision, 1) / 5,
-                    Float::with_val(precision, 7) / 13,
-                    Float::with_val(precision, 3) / 8,
-                ],
-                samples: vec![
-                    Float::with_val(precision, -2) / 5,
-                    Float::with_val(precision, 7) / 9,
-                    Float::with_val(precision, 6) / 5,
-                    Float::with_val(precision, -3) / 10,
-                ],
-            };
-
-            let mut refined_intervals = Vec::new();
-            let mut refined_samples = vec![base.samples[0].clone()];
-            for index in 0..base.intervals.len() {
-                let third = Float::with_val(precision, &base.intervals[index] / 3);
-                let mut final_third = base.intervals[index].clone();
-                let mut first_two = third.clone();
-                first_two *= 2;
-                final_third -= first_two;
-                refined_intervals.extend([third.clone(), third, final_third]);
-
-                let difference =
-                    Float::with_val(precision, &base.samples[index + 1] - &base.samples[index]);
-                let mut first_offset = difference.clone();
-                first_offset /= 3;
-                let mut first = base.samples[index].clone();
-                first += first_offset;
-
-                let mut second_offset = difference;
-                second_offset *= 2;
-                second_offset /= 3;
-                let mut second = base.samples[index].clone();
-                second += second_offset;
-                refined_samples.extend([first, second, base.samples[index + 1].clone()]);
-            }
-            let refined = NormalizedRecord {
-                intervals: refined_intervals,
-                samples: refined_samples,
-            };
-
-            for order in [1, 2, 4, 8] {
-                let modes = ButterworthModes::new(order, precision);
-                let base_output = evaluate_normalized(&modes, &base);
-                let refined_output = evaluate_normalized(&modes, &refined);
-                let original_knots = refined_output
-                    .values()
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let error = maximum_difference(base_output.values(), &original_knots, precision);
-                assert!(error < Float::with_val(precision, 1.0e-50));
-            }
+        let record = RepresentedRecord::from_f64(
+            37.0,
+            vec![0.031_25, 0.007_812_5, 0.023_437_5],
+            vec![-0.4, 0.7, 1.2, -0.3],
+        )
+        .unwrap();
+        for order in [1, 2, 4, 8] {
+            let assessment = assess_exact_collinear_refinement(order, &record);
+            assert!(assessment.passed());
+            let mut expected_limit = Float::with_val(256, 1);
+            expected_limit /= 1_000_000_000_000_u64;
+            assert_eq!(assessment.limit(), &expected_limit);
+            assert!(assessment.normalized_peak() < &Float::with_val(256, 1.0e-50));
         }
     }
 }

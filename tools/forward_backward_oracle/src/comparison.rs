@@ -100,10 +100,7 @@ impl PhysicalScalingComparisonMetrics {
 pub(crate) enum MemberIneligibilityReason {
     CandidateError(CandidateErrorResponse),
     NonFiniteSuccess(NonFiniteSuccess),
-    WholeRecordCandidateGatesFailed {
-        rms_passed: bool,
-        peak_passed: bool,
-    },
+    WholeRecordCandidateGatesFailed { rms_passed: bool, peak_passed: bool },
 }
 
 /// Ineligible member with the identity needed by a future typed report row.
@@ -320,7 +317,9 @@ pub(crate) fn compare_partition_candidates(
     if let Some(ineligible) = pair_ineligibility(base_cell, refined_cell) {
         return Ok(CrossCellOutcome::Ineligible(Box::new(ineligible)));
     }
-    let refined_output = refined_cell.scored_output().expect("eligible candidate output");
+    let refined_output = refined_cell
+        .scored_output()
+        .expect("eligible candidate output");
     validate_output_values(
         CrossCellComparison::PartitionInvariance,
         first_key,
@@ -329,16 +328,15 @@ pub(crate) fn compare_partition_candidates(
         refined_output,
     )?;
 
-    let original_refined_values = extract_original_knots(refinement, refined_output).map_err(
-        |error| {
+    let original_refined_values =
+        extract_original_knots(refinement, refined_output).map_err(|error| {
             comparison_error(
                 CrossCellComparison::PartitionInvariance,
                 first_key,
                 second_key,
                 CrossCellComparisonErrorKind::RefinementMapping(error),
             )
-        },
-    )?;
+        })?;
     measure_partition_pair(
         base_cell,
         base_record,
@@ -636,7 +634,13 @@ fn validate_partition_members(
         ));
     }
 
-    validate_record_shape(comparison, base_key, refined_key, ComparisonMember::Base, base_record)?;
+    validate_record_shape(
+        comparison,
+        base_key,
+        refined_key,
+        ComparisonMember::Base,
+        base_record,
+    )?;
     let refined_record = refinement.record();
     validate_record_shape(
         comparison,
@@ -694,7 +698,8 @@ fn validate_partition_members(
     }
     for (original_index, base_sample) in base_record.samples().iter().enumerate() {
         let mapped_index = refinement.refined_index_for_original(original_index);
-        let Some(refined_index) = mapped_index.filter(|index| *index < refined_record.samples().len())
+        let Some(refined_index) =
+            mapped_index.filter(|index| *index < refined_record.samples().len())
         else {
             return Err(comparison_error(
                 comparison,
@@ -815,22 +820,32 @@ fn validate_physical_scale_members(
             },
         ));
     }
-    for index in 0..one_hz_record.samples().len() {
-        let one_bits = one_hz_record.samples()[index].to_bits();
-        let thirty_seven_bits = thirty_seven_hz_record.samples()[index].to_bits();
-        if one_bits != thirty_seven_bits {
-            return Err(comparison_error(
-                comparison,
-                one_hz_key,
-                thirty_seven_hz_key,
-                CrossCellComparisonErrorKind::SampleMismatch {
-                    first_member: ComparisonMember::OneHz,
-                    second_member: ComparisonMember::ThirtySevenHz,
-                    index,
-                    first_bits: one_bits,
-                    second_bits: thirty_seven_bits,
-                },
-            ));
+    // Base samples come directly from the shared nominal record and therefore
+    // must be bit-identical across physical cutoffs. Scalar-refined samples are
+    // instead interpolated at each cutoff's represented split durations; their
+    // last-bit rounding can legitimately differ. The frozen physical-scaling
+    // metric, not an identity precondition, judges those derived variants.
+    if matches!(
+        one_hz_key.variant(),
+        CellVariant::Base | CellVariant::ReversedBase
+    ) {
+        for index in 0..one_hz_record.samples().len() {
+            let one_bits = one_hz_record.samples()[index].to_bits();
+            let thirty_seven_bits = thirty_seven_hz_record.samples()[index].to_bits();
+            if one_bits != thirty_seven_bits {
+                return Err(comparison_error(
+                    comparison,
+                    one_hz_key,
+                    thirty_seven_hz_key,
+                    CrossCellComparisonErrorKind::SampleMismatch {
+                        first_member: ComparisonMember::OneHz,
+                        second_member: ComparisonMember::ThirtySevenHz,
+                        index,
+                        first_bits: one_bits,
+                        second_bits: thirty_seven_bits,
+                    },
+                ));
+            }
         }
     }
     Ok(())
@@ -1039,7 +1054,11 @@ mod tests {
         }
     }
 
-    fn tone_case(scalar: RecordScalar, cutoff: PhysicalCutoff, schedule: ScheduleKind) -> crate::RepresentedCase {
+    fn tone_case(
+        scalar: RecordScalar,
+        cutoff: PhysicalCutoff,
+        schedule: ScheduleKind,
+    ) -> crate::RepresentedCase {
         let nominal = build_nominal_tone_record(tone_coordinate(schedule)).unwrap();
         build_represented_tone_case(&nominal, scalar, cutoff).unwrap()
     }
@@ -1059,16 +1078,17 @@ mod tests {
         )
     }
 
-    fn key_for_simple_physical(
-        scalar: RecordScalar,
-        cutoff: PhysicalCutoff,
-    ) -> ResponseCellKey {
+    fn key_for_simple_physical(scalar: RecordScalar, cutoff: PhysicalCutoff) -> ResponseCellKey {
         // The semantic coordinate is shared by both members; these compact
         // test records focus on the pairwise stored-sample normalization.
         tone_key(scalar, cutoff, CellVariant::Base, ScheduleKind::Uniform)
     }
 
-    fn success_for(key: &ResponseCellKey, record: &RepresentedRecord, bits: OutputBits) -> CaseResult {
+    fn success_for(
+        key: &ResponseCellKey,
+        record: &RepresentedRecord,
+        bits: OutputBits,
+    ) -> CaseResult {
         CaseResult::Success(SuccessResponse {
             identity: identity_for(key, record).unwrap(),
             output_bits: bits,
@@ -1109,7 +1129,12 @@ mod tests {
     fn oracle_bits(key: &ResponseCellKey, record: &RepresentedRecord) -> OutputBits {
         bits_from_values(
             record.scalar(),
-            evaluate(numeric_order(key.filter_order()), record, HIGH_ORACLE_PRECISION).values(),
+            evaluate(
+                numeric_order(key.filter_order()),
+                record,
+                HIGH_ORACLE_PRECISION,
+            )
+            .values(),
         )
     }
 
@@ -1119,12 +1144,8 @@ mod tests {
         bits: OutputBits,
         output_override: Option<Vec<Float>>,
     ) -> ResponseCellAssessment {
-        let assessment = score_response(
-            key.filter_order(),
-            record,
-            success_for(&key, record, bits),
-        )
-        .unwrap();
+        let assessment =
+            score_response(key.filter_order(), record, success_for(&key, record, bits)).unwrap();
         ResponseCellAssessment::from_test(
             key,
             identity_for(&key, record).unwrap(),
@@ -1142,11 +1163,17 @@ mod tests {
         cell
     }
 
-    fn simple_record(scalar: RecordScalar, cutoff: PhysicalCutoff, intervals: &[f64]) -> RepresentedRecord {
+    fn simple_record(
+        scalar: RecordScalar,
+        cutoff: PhysicalCutoff,
+        intervals: &[f64],
+    ) -> RepresentedRecord {
         let mut samples = vec![0.0, 1.0];
         samples.resize(intervals.len() + 1, 1.0);
         match scalar {
-            RecordScalar::F64 => RepresentedRecord::from_f64(cutoff.hz(), intervals.to_vec(), samples).unwrap(),
+            RecordScalar::F64 => {
+                RepresentedRecord::from_f64(cutoff.hz(), intervals.to_vec(), samples).unwrap()
+            }
             RecordScalar::F32 => RepresentedRecord::from_f32(
                 cutoff.hz() as f32,
                 intervals.iter().map(|value| *value as f32).collect(),
@@ -1225,13 +1252,9 @@ mod tests {
                     vec![target.clone(), Float::with_val(HIGH_ORACLE_PRECISION, 0)]
                 };
                 refined_cell.set_test_output_override(errors.clone());
-                let CrossCellOutcome::Eligible(at_limit) = measure_partition_pair(
-                    &base_cell,
-                    &base_record,
-                    &refined_cell,
-                    &errors,
-                )
-                .unwrap()
+                let CrossCellOutcome::Eligible(at_limit) =
+                    measure_partition_pair(&base_cell, &base_record, &refined_cell, &errors)
+                        .unwrap()
                 else {
                     panic!("locally passing members must be eligible");
                 };
@@ -1252,13 +1275,9 @@ mod tests {
                     vec![just_over.clone(), Float::with_val(HIGH_ORACLE_PRECISION, 0)]
                 };
                 refined_cell.set_test_output_override(errors.clone());
-                let CrossCellOutcome::Eligible(over_limit) = measure_partition_pair(
-                    &base_cell,
-                    &base_record,
-                    &refined_cell,
-                    &errors,
-                )
-                .unwrap()
+                let CrossCellOutcome::Eligible(over_limit) =
+                    measure_partition_pair(&base_cell, &base_record, &refined_cell, &errors)
+                        .unwrap()
                 else {
                     panic!("locally passing members must remain eligible");
                 };
@@ -1278,10 +1297,12 @@ mod tests {
         let (represented, refinement, mut base_cell, mut refined_cell) =
             make_partition_members(RecordScalar::F64, ScheduleKind::Uneven);
         let base_record = represented.record();
-        assert!(base_record
-            .intervals_seconds()
-            .windows(2)
-            .any(|pair| pair[0].to_bits() != pair[1].to_bits()));
+        assert!(
+            base_record
+                .intervals_seconds()
+                .windows(2)
+                .any(|pair| pair[0].to_bits() != pair[1].to_bits())
+        );
 
         let mut base_output = zeros(base_record.samples().len());
         let mut refined_output = zeros(refinement.record().samples().len());
@@ -1300,18 +1321,20 @@ mod tests {
         base_cell.set_test_output_override(base_output.clone());
         refined_cell.set_test_output_override(refined_output);
 
-        let CrossCellOutcome::Eligible(metrics) = compare_partition_candidates(
-            &base_cell,
-            base_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap()
+        let CrossCellOutcome::Eligible(metrics) =
+            compare_partition_candidates(&base_cell, base_record, &refinement, &refined_cell)
+                .unwrap()
         else {
             panic!("both local candidates pass");
         };
-        assert_eq!(metrics.normalized_rms().measured(), &Float::with_val(256, 0));
-        assert_eq!(metrics.normalized_peak().measured(), &Float::with_val(256, 0));
+        assert_eq!(
+            metrics.normalized_rms().measured(),
+            &Float::with_val(256, 0)
+        );
+        assert_eq!(
+            metrics.normalized_peak().measured(),
+            &Float::with_val(256, 0)
+        );
 
         let mut differing_originals = zeros(refinement.record().samples().len());
         differing_originals[refinement.refined_index_for_original(0).unwrap()] =
@@ -1334,17 +1357,16 @@ mod tests {
         unweighted_sum /= base_record.scale(HIGH_ORACLE_PRECISION);
         let unweighted = unweighted_sum;
         refined_cell.set_test_output_override(differing_originals);
-        let CrossCellOutcome::Eligible(weighted) = compare_partition_candidates(
-            &base_cell,
-            base_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap()
+        let CrossCellOutcome::Eligible(weighted) =
+            compare_partition_candidates(&base_cell, base_record, &refinement, &refined_cell)
+                .unwrap()
         else {
             panic!("both local candidates pass");
         };
-        assert_eq!(weighted.normalized_rms().measured(), expected.normalized_rms());
+        assert_eq!(
+            weighted.normalized_rms().measured(),
+            expected.normalized_rms()
+        );
         assert_ne!(weighted.normalized_rms().measured(), &unweighted);
     }
 
@@ -1355,7 +1377,8 @@ mod tests {
             (RecordScalar::F32, (2, 10_000)),
         ] {
             let one_record = simple_record(scalar, PhysicalCutoff::OneHz, &[0.25]);
-            let thirty_seven_record = simple_record(scalar, PhysicalCutoff::ThirtySevenHz, &[0.125]);
+            let thirty_seven_record =
+                simple_record(scalar, PhysicalCutoff::ThirtySevenHz, &[0.125]);
             let one_key = key_for_simple_physical(scalar, PhysicalCutoff::OneHz);
             let thirty_seven_key = key_for_simple_physical(scalar, PhysicalCutoff::ThirtySevenHz);
             let mut one_cell = passing_cell(one_key, &one_record);
@@ -1372,8 +1395,7 @@ mod tests {
                 &thirty_seven_cell,
                 &thirty_seven_record,
             )
-            .unwrap()
-            else {
+            .unwrap() else {
                 panic!("locally passing members must be eligible");
             };
             assert_eq!(at_limit.normalized_peak().measured(), &limit);
@@ -1391,8 +1413,7 @@ mod tests {
                 &thirty_seven_cell,
                 &thirty_seven_record,
             )
-            .unwrap()
-            else {
+            .unwrap() else {
                 panic!("locally passing members remain eligible");
             };
             assert_eq!(over_limit.normalized_peak().measured(), &just_over);
@@ -1424,13 +1445,9 @@ mod tests {
             candidate_error,
             None,
         );
-        let CrossCellOutcome::Ineligible(ineligible) = compare_partition_candidates(
-            &error_cell,
-            base_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap()
+        let CrossCellOutcome::Ineligible(ineligible) =
+            compare_partition_candidates(&error_cell, base_record, &refinement, &refined_cell)
+                .unwrap()
         else {
             panic!("candidate error excludes the pair");
         };
@@ -1456,13 +1473,9 @@ mod tests {
             nonfinite_assessment,
             None,
         );
-        let CrossCellOutcome::Ineligible(ineligible) = compare_partition_candidates(
-            &nonfinite_cell,
-            base_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap()
+        let CrossCellOutcome::Ineligible(ineligible) =
+            compare_partition_candidates(&nonfinite_cell, base_record, &refinement, &refined_cell)
+                .unwrap()
         else {
             panic!("non-finite success excludes the pair");
         };
@@ -1472,12 +1485,12 @@ mod tests {
         ));
 
         let gate_failure_bits = match base_key.scalar() {
-            RecordScalar::F32 => OutputBits::F32(
-                vec![1_000.0_f32.to_bits(); base_record.samples().len()],
-            ),
-            RecordScalar::F64 => OutputBits::F64(
-                vec![1_000.0_f64.to_bits(); base_record.samples().len()],
-            ),
+            RecordScalar::F32 => {
+                OutputBits::F32(vec![1_000.0_f32.to_bits(); base_record.samples().len()])
+            }
+            RecordScalar::F64 => {
+                OutputBits::F64(vec![1_000.0_f64.to_bits(); base_record.samples().len()])
+            }
         };
         let gate_assessment = score_response(
             base_key.filter_order(),
@@ -1491,13 +1504,9 @@ mod tests {
             gate_assessment,
             None,
         );
-        let CrossCellOutcome::Ineligible(ineligible) = compare_partition_candidates(
-            &gate_cell,
-            base_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap()
+        let CrossCellOutcome::Ineligible(ineligible) =
+            compare_partition_candidates(&gate_cell, base_record, &refinement, &refined_cell)
+                .unwrap()
         else {
             panic!("failed local gates exclude the pair");
         };
@@ -1517,13 +1526,9 @@ mod tests {
                 .collect(),
         )
         .unwrap();
-        let fatal = compare_partition_candidates(
-            &error_cell,
-            &changed_record,
-            &refinement,
-            &refined_cell,
-        )
-        .unwrap_err();
+        let fatal =
+            compare_partition_candidates(&error_cell, &changed_record, &refinement, &refined_cell)
+                .unwrap_err();
         assert!(matches!(
             fatal.kind(),
             CrossCellComparisonErrorKind::IdentityMismatch { .. }
@@ -1535,13 +1540,11 @@ mod tests {
     #[test]
     fn provenance_rejects_swapped_records_orders_and_cell_wrappers_with_context() {
         let one_record = simple_record(RecordScalar::F64, PhysicalCutoff::OneHz, &[0.25]);
-        let thirty_seven_record = simple_record(
-            RecordScalar::F64,
-            PhysicalCutoff::ThirtySevenHz,
-            &[0.125],
-        );
+        let thirty_seven_record =
+            simple_record(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz, &[0.125]);
         let one_key = key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::OneHz);
-        let thirty_seven_key = key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz);
+        let thirty_seven_key =
+            key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz);
         let one_cell = passing_cell(one_key, &one_record);
         let thirty_seven_cell = passing_cell(thirty_seven_key, &thirty_seven_record);
 
@@ -1634,16 +1637,16 @@ mod tests {
         let one_key = key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::OneHz);
         let one_cell = passing_cell(one_key, &one_record);
 
-        let long_record = simple_record(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz, &[0.125, 0.25]);
+        let long_record = simple_record(
+            RecordScalar::F64,
+            PhysicalCutoff::ThirtySevenHz,
+            &[0.125, 0.25],
+        );
         let long_key = key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz);
         let long_cell = passing_cell(long_key, &long_record);
-        let shape_error = compare_physical_scaling_candidates(
-            &one_cell,
-            &one_record,
-            &long_cell,
-            &long_record,
-        )
-        .unwrap_err();
+        let shape_error =
+            compare_physical_scaling_candidates(&one_cell, &one_record, &long_cell, &long_record)
+                .unwrap_err();
         assert!(matches!(
             shape_error.kind(),
             CrossCellComparisonErrorKind::PairShapeMismatch { .. }
@@ -1651,12 +1654,8 @@ mod tests {
         assert_eq!(shape_error.first_key(), one_key);
         assert_eq!(shape_error.second_key(), long_key);
 
-        let changed_record = RepresentedRecord::from_f64(
-            37.0,
-            vec![0.125],
-            vec![0.0, 0.75],
-        )
-        .unwrap();
+        let changed_record =
+            RepresentedRecord::from_f64(37.0, vec![0.125], vec![0.0, 0.75]).unwrap();
         let changed_cell = passing_cell(long_key, &changed_record);
         let sample_error = compare_physical_scaling_candidates(
             &one_cell,
@@ -1675,13 +1674,9 @@ mod tests {
         let f32_record = simple_record(RecordScalar::F32, PhysicalCutoff::ThirtySevenHz, &[0.125]);
         let f32_key = key_for_simple_physical(RecordScalar::F32, PhysicalCutoff::ThirtySevenHz);
         let f32_cell = passing_cell(f32_key, &f32_record);
-        let scalar_error = compare_physical_scaling_candidates(
-            &one_cell,
-            &one_record,
-            &f32_cell,
-            &f32_record,
-        )
-        .unwrap_err();
+        let scalar_error =
+            compare_physical_scaling_candidates(&one_cell, &one_record, &f32_cell, &f32_record)
+                .unwrap_err();
         assert!(matches!(
             scalar_error.kind(),
             CrossCellComparisonErrorKind::KeyMismatch {
@@ -1693,7 +1688,8 @@ mod tests {
         assert_eq!(scalar_error.first_key(), one_key);
         assert_eq!(scalar_error.second_key(), f32_key);
 
-        let wrong_cutoff_key = key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz);
+        let wrong_cutoff_key =
+            key_for_simple_physical(RecordScalar::F64, PhysicalCutoff::ThirtySevenHz);
         let wrong_cutoff_cell = passing_cell(wrong_cutoff_key, &long_record);
         let cutoff_error = compare_physical_scaling_candidates(
             &wrong_cutoff_cell,
@@ -1712,5 +1708,41 @@ mod tests {
         ));
         assert_eq!(cutoff_error.first_key(), wrong_cutoff_key);
         assert_eq!(cutoff_error.second_key(), long_key);
+    }
+
+    #[test]
+    fn physical_scaling_allows_cutoff_specific_scalar_refinement_rounding() {
+        let one_record = RepresentedRecord::from_f64(1.0, vec![0.25], vec![0.0, 0.5]).unwrap();
+        let thirty_seven_record = RepresentedRecord::from_f64(
+            37.0,
+            vec![0.125],
+            vec![0.0, f64::from_bits(0.5_f64.to_bits() + 1)],
+        )
+        .unwrap();
+        let one_key = tone_key(
+            RecordScalar::F64,
+            PhysicalCutoff::OneHz,
+            CellVariant::ScalarRefined,
+            ScheduleKind::Uniform,
+        );
+        let thirty_seven_key = tone_key(
+            RecordScalar::F64,
+            PhysicalCutoff::ThirtySevenHz,
+            CellVariant::ScalarRefined,
+            ScheduleKind::Uniform,
+        );
+        let one_cell = passing_cell(one_key, &one_record);
+        let thirty_seven_cell = passing_cell(thirty_seven_key, &thirty_seven_record);
+
+        assert!(matches!(
+            compare_physical_scaling_candidates(
+                &one_cell,
+                &one_record,
+                &thirty_seven_cell,
+                &thirty_seven_record,
+            )
+            .unwrap(),
+            CrossCellOutcome::Eligible(_)
+        ));
     }
 }
