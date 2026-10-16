@@ -11,7 +11,7 @@ use crate::scalar::{from_f64, from_usize};
 use crate::solver::{InputSegment, SolverDiagnostics, integrate};
 use crate::{InputModel, IntegrationConfig, Scalar, UpdateError};
 
-const MAX_INTERVAL_ATTEMPTS: usize = 64;
+pub(crate) const MAX_INTERVAL_ATTEMPTS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrototypePass {
@@ -46,6 +46,7 @@ pub(crate) enum PrototypeError {
         interval: usize,
         source: UpdateError,
     },
+    TailInitialization,
     WorkCounterOverflow,
 }
 
@@ -58,6 +59,14 @@ pub(crate) struct PrototypePassDiagnostics {
 
 impl PrototypePassDiagnostics {
     fn add<T>(&mut self, diagnostics: &SolverDiagnostics<T>) -> Result<(), PrototypeError> {
+        self.add_with_derivative_scale(diagnostics, 1)
+    }
+
+    pub(crate) fn add_with_derivative_scale<T>(
+        &mut self,
+        diagnostics: &SolverDiagnostics<T>,
+        derivative_scale: usize,
+    ) -> Result<(), PrototypeError> {
         self.accepted_steps = self
             .accepted_steps
             .checked_add(diagnostics.accepted_steps)
@@ -68,7 +77,12 @@ impl PrototypePassDiagnostics {
             .ok_or(PrototypeError::WorkCounterOverflow)?;
         self.derivative_evaluations = self
             .derivative_evaluations
-            .checked_add(diagnostics.derivative_evaluations)
+            .checked_add(
+                diagnostics
+                    .derivative_evaluations
+                    .checked_mul(derivative_scale)
+                    .ok_or(PrototypeError::WorkCounterOverflow)?,
+            )
             .ok_or(PrototypeError::WorkCounterOverflow)?;
         Ok(())
     }
@@ -231,7 +245,7 @@ fn endpoint_replay_with_configs<const N: usize, T: Scalar>(
     Ok(diagnostics)
 }
 
-fn maximum_normalized_step<const N: usize, T: Scalar>(
+pub(crate) fn maximum_normalized_step<const N: usize, T: Scalar>(
     model: &Butterworth<T, N>,
     time_scale: T,
     integration: IntegrationConfig<T>,
@@ -247,7 +261,7 @@ fn maximum_normalized_step<const N: usize, T: Scalar>(
     Ok(maximum)
 }
 
-fn validate<const N: usize, T: Scalar>(
+pub(crate) fn validate<const N: usize, T: Scalar>(
     cutoff_hz: T,
     intervals_seconds: &[T],
     samples: &[T],
@@ -255,6 +269,30 @@ fn validate<const N: usize, T: Scalar>(
     workspace_length: usize,
     integration: IntegrationConfig<T>,
 ) -> Result<(usize, T), PrototypeError> {
+    validate_with_workspace::<N, T, _>(
+        cutoff_hz,
+        intervals_seconds,
+        samples,
+        output_length,
+        workspace_length,
+        integration,
+        |record_length| record_length.checked_mul(2),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_with_workspace<const N: usize, T: Scalar, F>(
+    cutoff_hz: T,
+    intervals_seconds: &[T],
+    samples: &[T],
+    output_length: usize,
+    workspace_length: usize,
+    integration: IntegrationConfig<T>,
+    workspace_requirement: F,
+) -> Result<(usize, T), PrototypeError>
+where
+    F: FnOnce(usize) -> Option<usize>,
+{
     if N == 0 {
         return Err(PrototypeError::ZeroOrder);
     }
@@ -276,10 +314,8 @@ fn validate<const N: usize, T: Scalar>(
     if output_length != samples.len() {
         return Err(PrototypeError::OutputLength);
     }
-    let required_workspace = samples
-        .len()
-        .checked_mul(2)
-        .ok_or(PrototypeError::WorkspaceSizeOverflow)?;
+    let required_workspace =
+        workspace_requirement(samples.len()).ok_or(PrototypeError::WorkspaceSizeOverflow)?;
     if workspace_length < required_workspace {
         return Err(PrototypeError::WorkspaceTooSmall {
             required: required_workspace,

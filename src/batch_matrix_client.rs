@@ -370,6 +370,13 @@ fn prototype_error_result(identity: CaseIdentity, error: PrototypeError) -> Case
                 Some(update_source_category(source)),
             )
         }
+        PrototypeError::TailInitialization => candidate_error(
+            identity,
+            CandidateErrorCategory::Integration,
+            Some(Pass::Tail),
+            None,
+            Some(SourceCategory::NonFiniteState),
+        ),
         PrototypeError::WorkCounterOverflow => work_counter_overflow(identity),
         PrototypeError::ZeroOrder
         | PrototypeError::UnsupportedOrder
@@ -595,6 +602,17 @@ mod tests {
                 Some(Pass::Reverse),
                 Some(4),
                 Some(SourceCategory::InvalidDeltaTime),
+            )
+        );
+
+        assert_eq!(
+            prototype_error_result(identity(), PrototypeError::TailInitialization),
+            candidate_error(
+                identity(),
+                CandidateErrorCategory::Integration,
+                Some(Pass::Tail),
+                None,
+                Some(SourceCategory::NonFiniteState),
             )
         );
 

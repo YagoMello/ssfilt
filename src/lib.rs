@@ -16,6 +16,10 @@ mod batch_matrix_client;
 mod batch_protocol;
 #[cfg(test)]
 mod batch_prototype;
+#[cfg(test)]
+mod batch_tail;
+#[cfg(test)]
+mod batch_trajectory;
 mod config;
 mod diagnostics;
 mod error;
