@@ -125,6 +125,76 @@ error: inserting a sample that lies exactly on an existing linear input
 segment changes where output is observed, not the reconstructed input or the
 output at the original timestamps.
 
+### Bounded trajectory-replay candidate
+
+The first trajectory-aware candidate retains the complete forward state at
+each supplied knot, not a dense set of intermediate outputs. It remains an
+investigation candidate until it passes the frozen matrix; this description
+does not select it or define public workspace API.
+
+Let one compensated causal pass have the normalized realization
+
+```text
+x' = A*x + B*u
+z  = C*x
+```
+
+and let `x_i` be the stored forward state at input knot `i`. Butterworth
+low-pass has no direct feedthrough. Over interval `i`, use reverse elapsed
+coordinate `r` and integrate one coupled state from the interval's right knot
+to its left knot:
+
+```text
+dx_replay/dr = -(A*x_replay + B*u_reverse(r))
+dx_reverse/dr = A*x_reverse + B*C*x_replay
+```
+
+where `u_reverse` is the same stored linear input segment with its endpoints
+reversed. Start `x_replay` from stored `x_(i+1)`. At the left endpoint, discard
+its accumulated replay error and load stored `x_i` for the next interval;
+carry only `x_reverse` across interval boundaries. This evaluates the
+continuous forward trajectory at the reverse Runge-Kutta stages without dense
+output storage or an unbounded number of replays.
+
+For the constant continuation after the last input knot, write
+`delta = x_last - equilibrium(u_last)`. The continued forward output is
+
+```text
+z_tail(s) = u_last + C*exp(A*s)*delta,  s >= 0.
+```
+
+The exact reverse state at the last stored knot is therefore
+
+```text
+x_reverse_last = equilibrium(u_last) + M*delta
+M = integral(0..infinity, exp(A*s)*B*C*exp(A*s)) ds
+A*M + M*A = -B*C
+```
+
+There is intentionally no transpose in this Sylvester equation: both factors
+advance the same causal realization while physical time is reversed. The
+private implementation solves it from the realized stable Butterworth blocks.
+Order one has `M = 1/2`; even orders use their lower-bidiagonal real biquad
+cascade. Tests must check the Sylvester residual independently before this
+tail is reported as analytic.
+
+For `n` record samples, the candidate's caller-provided workspace requires
+`N*n` scalars for forward knot states and `n` scalars for staged output. Its
+fixed `N*N` tail-map scratch is at most `8*N` scalars for the supported orders,
+so it remains inside the existing trajectory-aware workspace ceiling. Output
+is copied from the staged buffer only after every forward and coupled-reverse
+interval succeeds. As with the endpoint prototype, this investigation ceiling
+describes caller-owned workspace rather than fixed integrator stack values.
+
+The reverse pass reports the coupled solver's actual accepted and rejected
+adaptive steps. Each coupled derivative call evaluates the Butterworth model
+twice, so its derivative-evaluation counter is charged twice per Runge-Kutta
+stage. The analytic tail reports zero adaptive work and analytic tail
+evidence. Local tests must cover the order-one closed form, Sylvester residual,
+bit-exact constants, collinear partitioning, physical scaling, workspace
+boundaries, and transactional forward/reverse failures before the candidate
+is sent through the filtered multiprecision report.
+
 ## Magnitude and cutoff contract
 
 `cutoff_hz` describes the complete forward-backward response's -3 dB point,
