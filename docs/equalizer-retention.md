@@ -140,3 +140,54 @@ latency or cost, or if the advantage disappears when the frozen workload is
 replayed unchanged. A positive synthetic result justifies retaining the narrow
 feature for early user feedback; it does not justify more orders, responses,
 topologies, or validation infrastructure.
+
+## Recorded run
+
+The frozen workload was replayed in release mode on commit `d398f53` with
+Rust 1.98.1 on an AMD Ryzen 5 2600X. The temporary evaluator used public
+filtering and diagnostics APIs; it was not retained as product tooling.
+
+The useful signal results were:
+
+| Candidate | Clean RMS / peak error | Residual RMS / peak | Alignment delay | Throughput |
+| --- | ---: | ---: | ---: | ---: |
+| repeated-pole 4 | 2.058% / 2.750% | 15.088% / 14.140% | 13.26 ms | 2.89 M updates/s |
+| Bessel 4 | 1.611% / 1.787% | 12.223% / 10.858% | 16.81 ms | 2.48 M updates/s |
+| Butterworth 4 | 6.147% / 8.007% | 4.889% / 4.143% | 24.36 ms | 3.40 M updates/s |
+| equalized Butterworth 4 | 0.135% / 0.175% | 4.889% / 4.146% | 52.65 ms | 2.56 M updates/s |
+| repeated-pole 8 | 1.889% / 2.447% | 14.334% / 13.171% | 18.75 ms | 1.51 M updates/s |
+| Bessel 8 | 1.679% / 1.851% | 12.687% / 10.910% | 25.30 ms | 1.38 M updates/s |
+| Butterworth 8 | 9.770% / 12.755% | 0.751% / 0.593% | 46.45 ms | 1.97 M updates/s |
+| equalized Butterworth 8 | 0.501% / 0.533% | 0.751% / 0.593% | 78.15 ms | 1.63 M updates/s |
+
+The interference was material at 35.88% of desired RMS. Both equalized orders
+passed the signal, latency, failure, throughput, and relative-cost gates. Their
+p99 derivative work was identical to matched plain Butterworth, host time per
+update was approximately `1.33x` and `1.21x`, and their concrete objects were
+smaller because the dedicated concrete model does not store the general
+response-model enum. All six ordinary candidates materially failed either
+waveform fidelity or interference rejection.
+
+The frozen conjunction nevertheless returned `REMOVE`: every candidate failed
+the absolute rejected-step-share gate, at roughly 27% to 31% rather than 5%.
+An independent audit reproduced the counts and found that each streaming
+update restarts adaptive step selection from the complete interval. The common
+rejections were successful controller startup work, not instability: there
+were no failed updates or non-finite outputs, and every candidate exceeded the
+absolute throughput requirement by more than 27 times. A preselected 0.5 ms
+public maximum step reduced the order-4 Butterworth shares to 1.64%, improved
+throughput by about 13%, and changed outputs by less than `6e-9`.
+
+This run is therefore recorded as **inconclusive under its frozen mechanical
+rule**, not retroactively changed to a pass. The rejected-step percentage was
+not a valid user-value gate and the binary evaluator incorrectly collapsed a
+library-wide common-gate failure into feature removal. No threshold was
+loosened and no cached-step runtime feature was added merely to satisfy the
+experiment.
+
+The product action is to retain the existing narrow order-4/order-8 equalizer
+provisionally for early user feedback. The workload demonstrates a plausible
+case where it preserves waveform shape while keeping Butterworth selectivity,
+at acceptable disclosed delay and cost. It does not establish a final 1.0
+commitment: do not add orders, responses, or topologies until an authentic
+user workload confirms that value.

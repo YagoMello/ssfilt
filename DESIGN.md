@@ -289,11 +289,15 @@ updates preserve the preceding snapshot transactionally.
    quick start, focused selection/timing/recovery/`no_std` guides, realistic
    compiled examples, curated package contents, and a lightweight cold UX
    pass. Decide the pre-1.0 default response from user expectations. ◐
-9. Decide whether to retain delayed Butterworth phase equalization. The current
-   order-4/8 implementation is frozen: one small application comparison must
-   show a named workload where its selectivity is needed and its disclosed
-   latency and cost are acceptable. Remove it before 1.0 otherwise. Do not add
-   orders, responses, or topologies before that decision. ◐
+9. Decide whether to retain delayed Butterworth phase equalization. A frozen
+   synthetic pressure-monitoring comparison found a plausible workload where
+   the order-4/8 equalizer uniquely combines waveform fidelity and Butterworth
+   selectivity at acceptable disclosed delay and relative cost. Its mechanical
+   decision was invalidated by an absolute rejected-step gate that every
+   filter failed despite zero errors and ample throughput. Retain the narrow
+   implementation provisionally for early feedback, but do not add orders,
+   responses, or topologies until an authentic user workload confirms its
+   value. ◐
 10. Prepare an early release of the streaming core: restore release metadata,
     exercise the supported `no_std + libm` build in CI, measure representative
     streaming throughput and code size, and gather real-user feedback. ◐
