@@ -78,17 +78,20 @@ Report these values for each filter:
 - concrete `f32` and `f64` object sizes;
 - host-local update throughput over the frozen schedule.
 
-Integration diagnostics cover the complete seven-second replay. Rejected-step
-share is `sum(rejected) / sum(accepted + rejected)`. Mean derivative work is
-per update and p99 is the nearest-rank percentile over per-update derivative
-evaluation counts. Any failed update makes the candidate fail.
+Integration diagnostics cover the complete seven-second contaminated-input
+replay, which represents the actual application workload. The separate clean
+replay exists only to isolate desired-waveform and residual-interference
+metrics. Rejected-step share is `sum(rejected) / sum(accepted + rejected)`.
+Mean derivative work is per update and p99 is the nearest-rank percentile over
+per-update derivative evaluation counts. Any failed update makes the candidate
+fail.
 
-Throughput uses a release build and a precomputed seven-second schedule. Each
-timed trial constructs a fresh filter outside the timer, repeatedly replays
-the periodic schedule for at least 250 ms, and reports the median of five
-trials. Record the processor, operating system, Rust version, and build
-profile. Relative time and size comparisons always use the matched-order
-plain Butterworth filter.
+Throughput uses the contaminated input, a release build, and a precomputed
+seven-second schedule. Each timed trial constructs a fresh filter outside the
+timer, repeatedly replays the periodic schedule for at least 250 ms, and
+reports the median of five trials. Record the processor, operating system,
+Rust version, and build profile. Relative time and size comparisons always use
+the matched-order plain Butterworth filter.
 
 Plots show the raw input/output timeline and the delay-aligned target/output
 over one representative pressure cycle. They support the decision but are not
