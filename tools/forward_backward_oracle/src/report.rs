@@ -9,7 +9,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use crate::{candidate::CandidateWorkCounters, provenance::SourceProvenance};
+use crate::{CandidateKind, candidate::CandidateWorkCounters, provenance::SourceProvenance};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -64,6 +64,7 @@ pub(crate) struct ComparisonReportRow {
 }
 
 pub(crate) struct ReportBundle<'a> {
+    pub candidate: CandidateKind,
     pub manifest: &'a [u8],
     pub coordinate_digest_hex: String,
     pub provenance: &'a SourceProvenance,
@@ -326,7 +327,7 @@ fn summary(bundle: &ReportBundle<'_>) -> String {
          | Protocol version | {} |\n\
          | Complete | false |\n\
          | Acceptance eligible | false |\n\
-         | Candidate | endpoint-replay negative control |\n\
+         | Candidate | {} |\n\
          | Selected cells | {} |\n\
          | Passed cells | {passed} |\n\
          | Failed cells | {failed} |\n\
@@ -335,14 +336,16 @@ fn summary(bundle: &ReportBundle<'_>) -> String {
          | Coordinate digest | `{}` |\n\
          | Source digest | `{}` |\n\
          | Observational elapsed time | {} ns |\n\n\
-         A missing physical forward tail is a local candidate failure even when whole-record RMS and peak happen to pass. Protocol v1 exposes work for each pass but not per-interval or workspace measurements, so those gates are recorded as `not_evaluated`. Edge-loss diagnostics are also `not_evaluated` in this first slice. Reversal rows are measurements only; they deliberately have no invented acceptance threshold. Elapsed time is a non-gating observation measured before artifact publication.\n",
+         {} Protocol v1 exposes work for each pass but not per-interval or workspace measurements, so those gates are recorded as `not_evaluated`. Edge-loss diagnostics are also `not_evaluated` in this first slice. Reversal rows are measurements only; they deliberately have no invented acceptance threshold. Elapsed time is a non-gating observation measured before artifact publication.\n",
         env!("CARGO_PKG_VERSION"),
         forward_backward_protocol::PROTOCOL_VERSION,
+        bundle.candidate.report_label(),
         bundle.cells.len(),
         bundle.comparisons.len(),
         bundle.coordinate_digest_hex,
         bundle.provenance.source_digest_hex(),
         bundle.observational_elapsed_ns,
+        bundle.candidate.report_note(),
     )
 }
 
@@ -455,6 +458,7 @@ mod tests {
         let manifest = b"schema_version\n1\n";
         let provenance = collect_source_provenance(manifest).unwrap();
         let bundle = ReportBundle {
+            candidate: CandidateKind::Endpoint,
             manifest,
             coordinate_digest_hex: hex(&Sha256::digest(manifest)),
             provenance: &provenance,
@@ -501,6 +505,7 @@ mod tests {
         let manifest = b"schema_version\n1\n";
         let provenance = collect_source_provenance(manifest).unwrap();
         let bundle = ReportBundle {
+            candidate: CandidateKind::Trajectory,
             manifest,
             coordinate_digest_hex: hex(&Sha256::digest(manifest)),
             provenance: &provenance,
@@ -511,6 +516,7 @@ mod tests {
         let rendered = summary(&bundle);
         assert!(rendered.contains("| Tool version | 0.1.0 |"));
         assert!(rendered.contains("| Protocol version | 1 |"));
+        assert!(rendered.contains("| Candidate | bounded trajectory replay |"));
         assert!(rendered.contains("| Observational elapsed time | 123 ns |"));
     }
 }

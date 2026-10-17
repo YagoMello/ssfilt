@@ -30,6 +30,7 @@ mod report;
 #[allow(dead_code)]
 mod score;
 mod segment;
+mod selection;
 mod session;
 mod tones;
 
@@ -56,6 +57,7 @@ pub use represented::{
     PHYSICAL_CUTOFFS, PhysicalCutoff, RepresentedBuildError, RepresentedBuildErrorKind,
     RepresentedCase, SCALAR_ORDER, ScalarBits, build_represented_case, build_represented_tone_case,
 };
+pub use selection::CandidateKind;
 pub use session::run_session_smoke;
 pub use tones::{
     NominalToneRecord, TONE_FREQUENCIES, TONE_ORDERS, TONE_PHASES, TONE_RECORD_COUNT,

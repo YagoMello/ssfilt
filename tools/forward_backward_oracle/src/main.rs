@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use forward_backward_oracle::{ButterworthModes, RepresentedRecord, evaluate};
+use forward_backward_oracle::{ButterworthModes, CandidateKind, RepresentedRecord, evaluate};
 use rug::Float;
 
 #[derive(Debug, Parser)]
@@ -42,6 +42,9 @@ enum Command {
         /// This slice currently requires `uneven`.
         #[arg(long)]
         schedule: String,
+        /// Private candidate implementation to exercise.
+        #[arg(long, value_enum)]
+        candidate: CandidateKind,
     },
 }
 
@@ -56,9 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scalar,
             q_max,
             schedule,
+            candidate,
         } => {
             validate_filtered_selection(&fixture, order, &scalar, &q_max, &schedule)?;
-            let summary = forward_backward_oracle::run_filtered_matrix(&output)
+            let summary = forward_backward_oracle::run_filtered_matrix(&output, candidate)
                 .map_err(std::io::Error::other)?;
             println!("{summary}");
             Ok(())

@@ -6,7 +6,7 @@ use forward_backward_protocol::{PassCounters, TailEvidence};
 use rug::Float;
 
 use crate::{
-    HIGH_ORACLE_PRECISION, PhysicalCutoff, RepresentedRecord, ScalarRefinement,
+    CandidateKind, HIGH_ORACLE_PRECISION, PhysicalCutoff, RepresentedRecord, ScalarRefinement,
     build_nominal_record, build_represented_case,
     candidate::CandidateWorkCounters,
     comparison::{
@@ -43,7 +43,7 @@ struct PreparedCutoff {
 /// Run the fixed eight-cell reverse-start-sentinel diagnostic and atomically
 /// publish its compact evidence. Numerical candidate failures remain report
 /// rows; provenance, transport, and oracle-integrity failures abort the run.
-pub fn run_filtered_matrix(output: &Path) -> Result<String, String> {
+pub fn run_filtered_matrix(output: &Path, candidate: CandidateKind) -> Result<String, String> {
     let started = Instant::now();
     let manifest = filtered_sentinel_manifest().map_err(|error| error.to_string())?;
     let selection = manifest.selection();
@@ -78,7 +78,7 @@ pub fn run_filtered_matrix(output: &Path) -> Result<String, String> {
         });
     }
 
-    let mut session = CandidateSession::start().map_err(|error| error.to_string())?;
+    let mut session = CandidateSession::start(candidate).map_err(|error| error.to_string())?;
     let mut cells = Vec::with_capacity(manifest.entries().len());
     for &entry in manifest.entries() {
         let record = selected_record(&prepared, entry.key())?.clone();
@@ -94,7 +94,7 @@ pub fn run_filtered_matrix(output: &Path) -> Result<String, String> {
 
     let cell_rows = cells
         .iter()
-        .map(|cell| cell_report_row(cell, &prepared))
+        .map(|cell| cell_report_row(cell, &prepared, candidate))
         .collect::<Result<Vec<_>, _>>()?;
     let comparison_rows = comparison_rows(&cells, &prepared)?;
     let manifest_bytes = manifest.canonical_bytes();
@@ -102,6 +102,7 @@ pub fn run_filtered_matrix(output: &Path) -> Result<String, String> {
         collect_source_provenance(&manifest_bytes).map_err(|error| error.to_string())?;
     let observational_elapsed_ns = started.elapsed().as_nanos();
     let bundle = ReportBundle {
+        candidate,
         manifest: &manifest_bytes,
         coordinate_digest_hex: hex(&manifest.coordinate_digest()),
         provenance: &provenance,
@@ -146,6 +147,7 @@ fn selected_record(
 fn cell_report_row(
     cell: &PreparedCell,
     prepared: &[PreparedCutoff],
+    candidate: CandidateKind,
 ) -> Result<CellReportRow, String> {
     let identity = cell.assessment.identity();
     let oracle = cell.assessment.assessment().oracle();
@@ -201,6 +203,7 @@ fn cell_report_row(
         } => {
             let (accepted, rejected, derivatives) = total_work(*work)?;
             let work_passed = aggregate_work_passes(
+                candidate,
                 cell.record.intervals_seconds().len(),
                 accepted,
                 rejected,
@@ -543,6 +546,7 @@ fn checked_sum(
 }
 
 fn aggregate_work_passes(
+    candidate: CandidateKind,
     interval_count: usize,
     accepted: u64,
     rejected: u64,
@@ -553,14 +557,16 @@ fn aggregate_work_passes(
     let attempts = accepted
         .checked_add(rejected)
         .ok_or_else(|| "candidate attempt count overflowed".to_owned())?;
-    let attempt_limit = 128_u64
+    let attempt_limit = candidate
+        .attempts_per_interval()
         .checked_mul(intervals)
         .and_then(|value| value.checked_add(512))
-        .ok_or_else(|| "endpoint attempt ceiling overflowed".to_owned())?;
-    let derivative_limit = 896_u64
+        .ok_or_else(|| "candidate attempt ceiling overflowed".to_owned())?;
+    let derivative_limit = candidate
+        .derivatives_per_interval()
         .checked_mul(intervals)
         .and_then(|value| value.checked_add(3_584))
-        .ok_or_else(|| "endpoint derivative ceiling overflowed".to_owned())?;
+        .ok_or_else(|| "candidate derivative ceiling overflowed".to_owned())?;
     Ok(attempts <= attempt_limit && derivatives <= derivative_limit)
 }
 
@@ -629,10 +635,14 @@ mod tests {
     use forward_backward_protocol::FilterOrder;
 
     #[test]
-    fn endpoint_work_ceiling_accepts_the_boundary() {
-        assert!(aggregate_work_passes(3, 896, 0, 6_272).unwrap());
-        assert!(!aggregate_work_passes(3, 897, 0, 6_272).unwrap());
-        assert!(!aggregate_work_passes(3, 896, 0, 6_273).unwrap());
+    fn candidate_work_ceilings_accept_their_boundaries() {
+        assert!(aggregate_work_passes(CandidateKind::Endpoint, 3, 896, 0, 6_272).unwrap());
+        assert!(!aggregate_work_passes(CandidateKind::Endpoint, 3, 897, 0, 6_272).unwrap());
+        assert!(!aggregate_work_passes(CandidateKind::Endpoint, 3, 896, 0, 6_273).unwrap());
+
+        assert!(aggregate_work_passes(CandidateKind::Trajectory, 3, 1_088, 0, 7_616).unwrap());
+        assert!(!aggregate_work_passes(CandidateKind::Trajectory, 3, 1_089, 0, 7_616).unwrap());
+        assert!(!aggregate_work_passes(CandidateKind::Trajectory, 3, 1_088, 0, 7_617).unwrap());
     }
 
     #[test]

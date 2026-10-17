@@ -20,11 +20,11 @@ use forward_backward_protocol::{
     validate_case_result, write_frame,
 };
 
+use crate::CandidateKind;
+
 const ADDRESS_ENV: &str = "SSFILT_BATCH_MATRIX_ADDR";
 const NONCE_ENV: &str = "SSFILT_BATCH_MATRIX_NONCE";
 const COLOR_ENV: &str = "CARGO_TERM_COLOR";
-const CLIENT_TEST_FILTER: &str = "batch_matrix_client::batch_matrix_endpoint_client";
-
 const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SAMPLES: usize = 131_072;
 const DECODE_LIMITS: DecodeLimits = DecodeLimits::new(MAX_PAYLOAD_BYTES, MAX_SAMPLES);
@@ -47,7 +47,8 @@ type SharedTail = Arc<Mutex<TailBuffer>>;
 /// Runs a compact end-to-end transport and dispatch check using the same root
 /// test client as the full matrix harness.
 pub fn run_session_smoke() -> Result<String, String> {
-    let mut session = CandidateSession::start().map_err(|error| error.to_string())?;
+    let mut session =
+        CandidateSession::start(CandidateKind::Endpoint).map_err(|error| error.to_string())?;
 
     let success_request = smoke_success_request();
     let success_result = session
@@ -104,7 +105,7 @@ pub(crate) struct CandidateSession {
 }
 
 impl CandidateSession {
-    pub(crate) fn start() -> Result<Self, SessionError> {
+    pub(crate) fn start(candidate: CandidateKind) -> Result<Self, SessionError> {
         let listener =
             TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).map_err(|error| {
                 SessionError::bare(
@@ -147,6 +148,7 @@ impl CandidateSession {
             address,
             &encoded_nonce,
             env::var_os("CARGO"),
+            candidate,
         );
         let mut command = command_spec.to_command();
         let child = command.spawn().map_err(|error| {
@@ -862,6 +864,7 @@ fn candidate_command_spec(
     address: SocketAddrV4,
     encoded_nonce: &str,
     cargo_program: Option<OsString>,
+    candidate: CandidateKind,
 ) -> ClientCommandSpec {
     let manifest = repository_root.join("Cargo.toml");
     let arguments = [
@@ -871,7 +874,7 @@ fn candidate_command_spec(
         OsString::from("--manifest-path"),
         manifest.into_os_string(),
         OsString::from("--lib"),
-        OsString::from(CLIENT_TEST_FILTER),
+        OsString::from(candidate.client_test_filter()),
         OsString::from("--"),
         OsString::from("--exact"),
         OsString::from("--ignored"),
@@ -1155,44 +1158,51 @@ mod tests {
         let root = PathBuf::from("ssfilt-command-test");
         let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42_317);
         let nonce = "00112233445566778899aabbccddeeff";
-        let spec =
-            candidate_command_spec(&root, address, nonce, Some(OsString::from("custom-cargo")));
+        for candidate in [CandidateKind::Endpoint, CandidateKind::Trajectory] {
+            let spec = candidate_command_spec(
+                &root,
+                address,
+                nonce,
+                Some(OsString::from("custom-cargo")),
+                candidate,
+            );
 
-        assert_eq!(spec.program, OsString::from("custom-cargo"));
-        assert_eq!(spec.current_dir, root);
-        assert_eq!(
-            spec.arguments,
-            vec![
-                OsString::from("test"),
-                OsString::from("--release"),
-                OsString::from("--locked"),
-                OsString::from("--manifest-path"),
-                root.join("Cargo.toml").into_os_string(),
-                OsString::from("--lib"),
-                OsString::from(CLIENT_TEST_FILTER),
-                OsString::from("--"),
-                OsString::from("--exact"),
-                OsString::from("--ignored"),
-                OsString::from("--nocapture"),
-                OsString::from("--test-threads=1"),
-            ]
-        );
-        let additions = spec
-            .environment_additions
-            .into_iter()
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(additions.len(), 3);
-        assert_eq!(
-            additions.get(OsString::from(ADDRESS_ENV).as_os_str()),
-            Some(&OsString::from(address.to_string()))
-        );
-        assert_eq!(
-            additions.get(OsString::from(NONCE_ENV).as_os_str()),
-            Some(&OsString::from(nonce))
-        );
-        assert_eq!(
-            additions.get(OsString::from(COLOR_ENV).as_os_str()),
-            Some(&OsString::from("never"))
-        );
+            assert_eq!(spec.program, OsString::from("custom-cargo"));
+            assert_eq!(spec.current_dir, root);
+            assert_eq!(
+                spec.arguments,
+                vec![
+                    OsString::from("test"),
+                    OsString::from("--release"),
+                    OsString::from("--locked"),
+                    OsString::from("--manifest-path"),
+                    root.join("Cargo.toml").into_os_string(),
+                    OsString::from("--lib"),
+                    OsString::from(candidate.client_test_filter()),
+                    OsString::from("--"),
+                    OsString::from("--exact"),
+                    OsString::from("--ignored"),
+                    OsString::from("--nocapture"),
+                    OsString::from("--test-threads=1"),
+                ]
+            );
+            let additions = spec
+                .environment_additions
+                .into_iter()
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(additions.len(), 3);
+            assert_eq!(
+                additions.get(OsString::from(ADDRESS_ENV).as_os_str()),
+                Some(&OsString::from(address.to_string()))
+            );
+            assert_eq!(
+                additions.get(OsString::from(NONCE_ENV).as_os_str()),
+                Some(&OsString::from(nonce))
+            );
+            assert_eq!(
+                additions.get(OsString::from(COLOR_ENV).as_os_str()),
+                Some(&OsString::from("never"))
+            );
+        }
     }
 }

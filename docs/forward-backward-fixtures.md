@@ -455,7 +455,8 @@ The complete matrix is a dedicated development acceptance run, not part of an
 ordinary `cargo test`. Its canonical entry point is:
 
 ```text
-cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- matrix --output target/forward-backward-matrix
+cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- \
+  matrix --output target/forward-backward-matrix --candidate trajectory
 ```
 
 The isolated multiprecision tool owns fixture construction, oracle evaluation,
@@ -498,8 +499,11 @@ the manifest proves that every required coordinate is covered exactly once.
 Unfiltered `matrix` executes every response and boundary shard. Development
 filters may select a fixture record or probe, order, scalar, cutoff, maximum
 interval, or schedule, but a filtered report is diagnostic and cannot satisfy
-the full-acceptance gate. Every report records the selected coordinate set and
-its digest so partial and complete runs cannot be confused.
+the full-acceptance gate. A development run also names the private candidate
+implementation explicitly. The checksummed summary records that choice while
+the coordinate manifest remains candidate-independent, allowing candidates to
+be compared over the same selected cells. Every report records the selected
+coordinate set and its digest so partial and complete runs cannot be confused.
 
 Full output arrays are generated and consumed during the run; they are not
 committed or cached as the reference. The committed evidence is compact:

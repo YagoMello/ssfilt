@@ -291,12 +291,13 @@ updates preserve the preceding snapshot transactionally.
      alone. Chebyshev must cover its response-specific ripple edge; high-pass
      and band-pass need independently defined useful bands and latency goals.
    - The forward-backward physical contract, multiprecision oracle, frozen
-     fixtures, protocol, endpoint-replay negative control, single-cell scoring,
-     cross-cell comparisons, and the first deterministic eight-cell filtered
-     report are implemented. That report is diagnostic rather than acceptance
-     evidence and explicitly exposes the endpoint baseline's omitted physical
-     tail. Next come the full acceptance matrix, a trajectory-aware candidate
-     if required, numerical selection, batch-specific plots, and only then a
-     public `ssfilt::batch` surface. See `docs/forward-backward.md`.
+     fixtures, protocol, endpoint-replay negative control, bounded
+     trajectory-replay candidate, scoring, and cross-cell comparisons are
+     implemented. The endpoint control fails the first deterministic eight-cell
+     filtered diagnostic as intended; the trajectory candidate passes that same
+     slice with an analytic tail. These reports are diagnostic rather than
+     acceptance evidence. Next come the full acceptance matrix, numerical
+     selection, batch-specific plots, and only then a public `ssfilt::batch`
+     surface. See `docs/forward-backward.md`.
 9. Advanced custom kernels or alternative integrators only after concrete use
    cases establish the necessary interface.

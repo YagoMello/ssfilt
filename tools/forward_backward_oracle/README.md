@@ -71,7 +71,7 @@ cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- 
 cargo run --release --manifest-path tools/forward_backward_oracle/Cargo.toml -- \
   matrix --output target/forward-backward-sentinel \
   --fixture right-adjacent-step --order 8 --scalar f64 \
-  --q-max pi/32 --schedule uneven
+  --q-max pi/32 --schedule uneven --candidate trajectory
 ```
 
 The `matrix` command currently requires that exact complete selection. Other
@@ -88,16 +88,19 @@ existing path. The six artifacts are:
 | `summary.md` | Human-readable status and coordinate/source digests |
 | `checksums.sha256` | Integrity checks for the other five artifacts |
 
-The endpoint-replay candidate deliberately omits the physical forward tail,
-so every cell is expected to fail the tail gate even if a local RMS/peak gate
-passes. A successful command means transport, oracle integrity, provenance,
-and report publication completed; it does not mean the negative-control
-candidate passed. The report is always marked `complete=false` and
-`acceptance_eligible=false`. Protocol v1 reports forward, tail, and reverse
-work separately, but cannot prove per-interval work or workspace limits, and
-this first slice does not compute edge-loss diagnostics; those gates remain
-explicit `not_evaluated` values. The summary records tool/protocol versions
-and non-gating observational elapsed time.
+`--candidate endpoint` retains the endpoint-replay negative control, which
+deliberately omits the physical forward tail. `--candidate trajectory` runs
+the bounded full-state trajectory replay with its analytic tail. The selected
+candidate is written into the checksummed summary; the coordinate manifest
+remains candidate-independent so reports can compare the same cells. A
+successful command means transport, oracle integrity, provenance, and report
+publication completed; it does not mean the candidate passed. The report is
+always marked `complete=false` and `acceptance_eligible=false`. Protocol v1
+reports forward, tail, and reverse work separately, but cannot prove
+per-interval work or workspace limits, and this first slice does not compute
+edge-loss diagnostics; those gates remain explicit `not_evaluated` values.
+The summary records tool/protocol versions and non-gating observational
+elapsed time.
 
 The `verify` command prints a compact order-1/2/4/8 report with compensated
 pole radius, complete gain at the public cutoff, fresh 192/256-bit convolution
@@ -110,7 +113,7 @@ and scalar refinement across the current time-domain fixture axes, including
 native-width rounding and original-knot preservation.
 
 The `session-smoke` command starts the exact ignored root-library endpoint
-client used by the future matrix harness. It sends a small nonconstant valid
+negative-control client used by the matrix harness. It sends a small nonconstant valid
 record, checks the client's structured non-finite-input validation response,
 then sends `Done` and requires a successful client exit. This exercises
 process startup, loopback handshake, framing, request dispatch, and shutdown;

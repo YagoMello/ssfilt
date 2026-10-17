@@ -1,4 +1,4 @@
-//! Test-only loopback client for the forward-backward endpoint-replay matrix.
+//! Test-only loopback client for the forward-backward candidate matrix.
 //!
 //! The oracle owns the listener and supplies one represented record at a time.
 //! This module is deliberately not part of the library's runtime surface.
@@ -18,6 +18,7 @@ use crate::batch_protocol::{
 use crate::batch_prototype::{
     PrototypeError, PrototypePass, PrototypePassDiagnostics, endpoint_replay,
 };
+use crate::batch_trajectory::{trajectory_replay, trajectory_workspace_len};
 use crate::{IntegrationConfig, Scalar, UpdateError};
 
 const ADDRESS_ENV: &str = "SSFILT_BATCH_MATRIX_ADDR";
@@ -36,17 +37,31 @@ const DECODE_LIMITS: DecodeLimits = DecodeLimits::new(MAX_PAYLOAD_BYTES, MAX_SAM
 
 type ClientResult<T> = Result<T, String>;
 
-/// Run one oracle-owned loopback session. This ignored test is the entry point
-/// used by the standalone matrix harness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MatrixCandidate {
+    Endpoint,
+    Trajectory,
+}
+
+/// Run the endpoint-replay candidate against the oracle-owned matrix.
 #[test]
 #[ignore = "requires SSFILT_BATCH_MATRIX_ADDR and SSFILT_BATCH_MATRIX_NONCE from the oracle"]
 fn batch_matrix_endpoint_client() {
-    if let Err(error) = run_configured_client() {
+    if let Err(error) = run_configured_client(MatrixCandidate::Endpoint) {
         panic!("forward-backward matrix client failed: {error}");
     }
 }
 
-fn run_configured_client() -> ClientResult<()> {
+/// Run the trajectory-aware candidate against the oracle-owned matrix.
+#[test]
+#[ignore = "requires SSFILT_BATCH_MATRIX_ADDR and SSFILT_BATCH_MATRIX_NONCE from the oracle"]
+fn batch_matrix_trajectory_client() {
+    if let Err(error) = run_configured_client(MatrixCandidate::Trajectory) {
+        panic!("forward-backward matrix client failed: {error}");
+    }
+}
+
+fn run_configured_client(candidate: MatrixCandidate) -> ClientResult<()> {
     let address_text = env::var(ADDRESS_ENV)
         .map_err(|_| format!("{ADDRESS_ENV} must name the oracle's loopback SocketAddr"))?;
     let address = address_text
@@ -64,7 +79,7 @@ fn run_configured_client() -> ClientResult<()> {
         .map_err(|error| format!("could not connect to {ADDRESS_ENV}: {error}"))?;
     set_stream_timeouts(&stream, STREAM_TIMEOUT)
         .map_err(|error| format!("could not configure matrix-client socket timeouts: {error}"))?;
-    run_session(&mut stream, nonce)
+    run_session(&mut stream, nonce, candidate)
 }
 
 fn parse_nonce(encoded: &str) -> ClientResult<[u8; 16]> {
@@ -109,7 +124,11 @@ fn set_stream_timeouts(stream: &TcpStream, timeout: Duration) -> std::io::Result
     stream.set_write_timeout(Some(timeout))
 }
 
-fn run_session<S: Read + Write>(stream: &mut S, nonce: [u8; 16]) -> ClientResult<()> {
+fn run_session<S: Read + Write>(
+    stream: &mut S,
+    nonce: [u8; 16],
+    candidate: MatrixCandidate,
+) -> ClientResult<()> {
     write_frame(stream, &Frame::Handshake { run_nonce: nonce })
         .map_err(|error| format!("could not write matrix handshake: {error}"))?;
 
@@ -118,7 +137,7 @@ fn run_session<S: Read + Write>(stream: &mut S, nonce: [u8; 16]) -> ClientResult
             .map_err(|error| format!("could not read matrix request: {error}"))?;
         match frame {
             Some(Frame::CaseRequest(request)) => {
-                let result = execute_request(&request)?;
+                let result = execute_request(&request, candidate)?;
                 validate_case_result(&request, &result).map_err(|error| {
                     format!("candidate produced a protocol-invalid result: {error}")
                 })?;
@@ -136,7 +155,7 @@ fn run_session<S: Read + Write>(stream: &mut S, nonce: [u8; 16]) -> ClientResult
     }
 }
 
-fn execute_request(request: &CaseRequest) -> ClientResult<CaseResult> {
+fn execute_request(request: &CaseRequest, candidate: MatrixCandidate) -> ClientResult<CaseResult> {
     match &request.record {
         RecordBits::F32 {
             cutoff_bits,
@@ -144,6 +163,7 @@ fn execute_request(request: &CaseRequest) -> ClientResult<CaseResult> {
             sample_bits,
         } => dispatch_order::<f32, u32>(
             request,
+            candidate,
             *cutoff_bits,
             interval_bits,
             sample_bits,
@@ -156,6 +176,7 @@ fn execute_request(request: &CaseRequest) -> ClientResult<CaseResult> {
             sample_bits,
         } => dispatch_order::<f64, u64>(
             request,
+            candidate,
             *cutoff_bits,
             interval_bits,
             sample_bits,
@@ -167,6 +188,7 @@ fn execute_request(request: &CaseRequest) -> ClientResult<CaseResult> {
 
 fn dispatch_order<T, Bits>(
     request: &CaseRequest,
+    candidate: MatrixCandidate,
     cutoff_bits: Bits,
     interval_bits: &[Bits],
     sample_bits: &[Bits],
@@ -181,6 +203,7 @@ where
     match request.order {
         FilterOrder::One => execute_order::<1, T, Bits>(
             request.identity,
+            candidate,
             cutoff_bits,
             interval_bits,
             sample_bits,
@@ -189,6 +212,7 @@ where
         ),
         FilterOrder::Two => execute_order::<2, T, Bits>(
             request.identity,
+            candidate,
             cutoff_bits,
             interval_bits,
             sample_bits,
@@ -197,6 +221,7 @@ where
         ),
         FilterOrder::Four => execute_order::<4, T, Bits>(
             request.identity,
+            candidate,
             cutoff_bits,
             interval_bits,
             sample_bits,
@@ -205,6 +230,7 @@ where
         ),
         FilterOrder::Eight => execute_order::<8, T, Bits>(
             request.identity,
+            candidate,
             cutoff_bits,
             interval_bits,
             sample_bits,
@@ -216,6 +242,7 @@ where
 
 fn execute_order<const N: usize, T, Bits>(
     identity: CaseIdentity,
+    candidate: MatrixCandidate,
     cutoff_bits: Bits,
     interval_bits: &[Bits],
     sample_bits: &[Bits],
@@ -230,22 +257,37 @@ where
     let cutoff_hz = from_bits(cutoff_bits);
     let intervals_seconds = decode_values(interval_bits, from_bits, "interval")?;
     let samples = decode_values(sample_bits, from_bits, "sample")?;
-    let Some(workspace_length) = samples.len().checked_mul(2) else {
-        return Ok(prototype_error_result(
-            identity,
-            PrototypeError::WorkspaceSizeOverflow,
-        ));
+    let workspace_length = match candidate {
+        MatrixCandidate::Endpoint => samples
+            .len()
+            .checked_mul(2)
+            .ok_or(PrototypeError::WorkspaceSizeOverflow),
+        MatrixCandidate::Trajectory => trajectory_workspace_len::<N>(samples.len()),
+    };
+    let workspace_length = match workspace_length {
+        Ok(workspace_length) => workspace_length,
+        Err(error) => return Ok(prototype_error_result(identity, error)),
     };
 
     let mut output = zeroed_values(samples.len(), "output")?;
     let mut workspace = zeroed_values(workspace_length, "workspace")?;
-    let diagnostics = match endpoint_replay::<N, T>(
-        cutoff_hz,
-        &intervals_seconds,
-        &samples,
-        &mut output,
-        &mut workspace,
-    ) {
+    let diagnostics = match candidate {
+        MatrixCandidate::Endpoint => endpoint_replay::<N, T>(
+            cutoff_hz,
+            &intervals_seconds,
+            &samples,
+            &mut output,
+            &mut workspace,
+        ),
+        MatrixCandidate::Trajectory => trajectory_replay::<N, T>(
+            cutoff_hz,
+            &intervals_seconds,
+            &samples,
+            &mut output,
+            &mut workspace,
+        ),
+    };
+    let diagnostics = match diagnostics {
         Ok(diagnostics) => diagnostics,
         Err(error) => return Ok(prototype_error_result(identity, error)),
     };
@@ -262,7 +304,10 @@ where
     Ok(CaseResult::Success(SuccessResponse {
         identity,
         output_bits: output_bits_for_scalar(output_bits),
-        tail_evidence: TailEvidence::Omitted,
+        tail_evidence: match candidate {
+            MatrixCandidate::Endpoint => TailEvidence::Omitted,
+            MatrixCandidate::Trajectory => TailEvidence::Analytic,
+        },
         forward,
         tail: PassCounters::default(),
         reverse,
@@ -622,7 +667,10 @@ mod tests {
         );
     }
 
-    fn assert_nonconstant_f32_dispatch<const N: usize>(order: FilterOrder) {
+    fn assert_nonconstant_dispatch_f32<const N: usize>(
+        order: FilterOrder,
+        candidate: MatrixCandidate,
+    ) {
         let cutoff_hz = 2.0_f32;
         let intervals = [0.005_f32, 0.003_f32];
         let samples = [-0.25_f32, 0.75_f32, 0.125_f32];
@@ -637,17 +685,30 @@ mod tests {
         };
 
         let mut expected = [0.0; 3];
-        let mut workspace = [0.0; 6];
-        let diagnostics = endpoint_replay::<N, f32>(
-            cutoff_hz,
-            &intervals,
-            &samples,
-            &mut expected,
-            &mut workspace,
-        )
+        let workspace_length = match candidate {
+            MatrixCandidate::Endpoint => samples.len() * 2,
+            MatrixCandidate::Trajectory => trajectory_workspace_len::<N>(samples.len()).unwrap(),
+        };
+        let mut workspace = vec![0.0; workspace_length];
+        let diagnostics = match candidate {
+            MatrixCandidate::Endpoint => endpoint_replay::<N, f32>(
+                cutoff_hz,
+                &intervals,
+                &samples,
+                &mut expected,
+                &mut workspace,
+            ),
+            MatrixCandidate::Trajectory => trajectory_replay::<N, f32>(
+                cutoff_hz,
+                &intervals,
+                &samples,
+                &mut expected,
+                &mut workspace,
+            ),
+        }
         .expect("direct f32 prototype should run");
 
-        let result = execute_request(&request).expect("f32 candidate should run");
+        let result = execute_request(&request, candidate).expect("f32 candidate should run");
         validate_case_result(&request, &result).expect("f32 result should validate");
         let CaseResult::Success(response) = result else {
             panic!("valid f32 request returned a candidate error");
@@ -664,11 +725,20 @@ mod tests {
             response.reverse,
             pass_counters(diagnostics.reverse).unwrap()
         );
-        assert_eq!(response.tail_evidence, TailEvidence::Omitted);
+        assert_eq!(
+            response.tail_evidence,
+            match candidate {
+                MatrixCandidate::Endpoint => TailEvidence::Omitted,
+                MatrixCandidate::Trajectory => TailEvidence::Analytic,
+            }
+        );
         assert_eq!(response.tail, PassCounters::default());
     }
 
-    fn assert_nonconstant_f64_dispatch<const N: usize>(order: FilterOrder) {
+    fn assert_nonconstant_dispatch_f64<const N: usize>(
+        order: FilterOrder,
+        candidate: MatrixCandidate,
+    ) {
         let cutoff_hz = 2.0_f64;
         let intervals = [0.005_f64, 0.003_f64];
         let samples = [-0.25_f64, 0.75_f64, 0.125_f64];
@@ -683,17 +753,30 @@ mod tests {
         };
 
         let mut expected = [0.0; 3];
-        let mut workspace = [0.0; 6];
-        let diagnostics = endpoint_replay::<N, f64>(
-            cutoff_hz,
-            &intervals,
-            &samples,
-            &mut expected,
-            &mut workspace,
-        )
+        let workspace_length = match candidate {
+            MatrixCandidate::Endpoint => samples.len() * 2,
+            MatrixCandidate::Trajectory => trajectory_workspace_len::<N>(samples.len()).unwrap(),
+        };
+        let mut workspace = vec![0.0; workspace_length];
+        let diagnostics = match candidate {
+            MatrixCandidate::Endpoint => endpoint_replay::<N, f64>(
+                cutoff_hz,
+                &intervals,
+                &samples,
+                &mut expected,
+                &mut workspace,
+            ),
+            MatrixCandidate::Trajectory => trajectory_replay::<N, f64>(
+                cutoff_hz,
+                &intervals,
+                &samples,
+                &mut expected,
+                &mut workspace,
+            ),
+        }
         .expect("direct f64 prototype should run");
 
-        let result = execute_request(&request).expect("f64 candidate should run");
+        let result = execute_request(&request, candidate).expect("f64 candidate should run");
         validate_case_result(&request, &result).expect("f64 result should validate");
         let CaseResult::Success(response) = result else {
             panic!("valid f64 request returned a candidate error");
@@ -710,20 +793,38 @@ mod tests {
             response.reverse,
             pass_counters(diagnostics.reverse).unwrap()
         );
-        assert_eq!(response.tail_evidence, TailEvidence::Omitted);
+        assert_eq!(
+            response.tail_evidence,
+            match candidate {
+                MatrixCandidate::Endpoint => TailEvidence::Omitted,
+                MatrixCandidate::Trajectory => TailEvidence::Analytic,
+            }
+        );
         assert_eq!(response.tail, PassCounters::default());
     }
 
     #[test]
-    fn dispatches_all_orders_and_scalars_with_exact_outputs_and_work() {
-        assert_nonconstant_f32_dispatch::<1>(FilterOrder::One);
-        assert_nonconstant_f32_dispatch::<2>(FilterOrder::Two);
-        assert_nonconstant_f32_dispatch::<4>(FilterOrder::Four);
-        assert_nonconstant_f32_dispatch::<8>(FilterOrder::Eight);
-        assert_nonconstant_f64_dispatch::<1>(FilterOrder::One);
-        assert_nonconstant_f64_dispatch::<2>(FilterOrder::Two);
-        assert_nonconstant_f64_dispatch::<4>(FilterOrder::Four);
-        assert_nonconstant_f64_dispatch::<8>(FilterOrder::Eight);
+    fn endpoint_dispatches_all_orders_and_scalars_with_exact_outputs_and_work() {
+        assert_nonconstant_dispatch_f32::<1>(FilterOrder::One, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f32::<2>(FilterOrder::Two, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f32::<4>(FilterOrder::Four, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f32::<8>(FilterOrder::Eight, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f64::<1>(FilterOrder::One, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f64::<2>(FilterOrder::Two, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f64::<4>(FilterOrder::Four, MatrixCandidate::Endpoint);
+        assert_nonconstant_dispatch_f64::<8>(FilterOrder::Eight, MatrixCandidate::Endpoint);
+    }
+
+    #[test]
+    fn trajectory_dispatches_all_orders_and_scalars_with_exact_outputs_and_work() {
+        assert_nonconstant_dispatch_f32::<1>(FilterOrder::One, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f32::<2>(FilterOrder::Two, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f32::<4>(FilterOrder::Four, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f32::<8>(FilterOrder::Eight, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f64::<1>(FilterOrder::One, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f64::<2>(FilterOrder::Two, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f64::<4>(FilterOrder::Four, MatrixCandidate::Trajectory);
+        assert_nonconstant_dispatch_f64::<8>(FilterOrder::Eight, MatrixCandidate::Trajectory);
     }
 
     #[test]
@@ -765,7 +866,7 @@ mod tests {
                 .map_err(|error| format!("smoke client could not connect: {error}"))?;
             set_stream_timeouts(&stream, SMOKE_TIMEOUT)
                 .map_err(|error| format!("could not set smoke-client timeouts: {error}"))?;
-            run_session(&mut stream, nonce)
+            run_session(&mut stream, nonce, MatrixCandidate::Endpoint)
         });
 
         let deadline = Instant::now() + SMOKE_TIMEOUT;
