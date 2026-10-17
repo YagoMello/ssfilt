@@ -80,6 +80,11 @@ example that initializes from its first sensor reading.
 ## Choose a filter
 
 Every cutoff is a frequency in hertz at which the complete response is −3 dB.
+Choose it from the boundary between signal content you want to preserve and
+frequencies you want to attenuate, not from the nominal sample rate. Lowering
+it generally produces stronger smoothing and a slower transient; order and
+response family determine the exact tradeoff. Use the response plot described
+under [Development tools](#development-tools) when that tradeoff matters.
 
 | Topology | Use it to | Frequency arguments |
 | --- | --- | --- |
@@ -206,6 +211,17 @@ values. Orders 2, 4, and 8 above are application choices, not a special
 supported set; low-pass and high-pass require a positive order, while
 band-pass requires a positive even final order. Bessel alone has the explicit
 limits described below.
+
+On an allocation-free target, store the finite concrete choices in a local
+enum and delegate `update` with a `match`. The compiled
+`examples/runtime_order.rs` demonstrates this pattern for `f32` orders 2 and 4:
+
+```text
+cargo run --example runtime_order -- 2
+```
+
+The example binary uses `std` for its command line and printing; the enum and
+filtering path use fixed inline storage and require no allocator.
 
 ## Response families
 
