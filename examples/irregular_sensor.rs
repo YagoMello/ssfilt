@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::time::Duration;
 
 use ssfilt::{InputModel, LowPass, Response};
 
@@ -43,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "sample timestamps must be strictly increasing",
                 )
             })?;
-        let dt_seconds = elapsed_ms as f64 / 1_000.0;
+        let dt_seconds = Duration::from_millis(elapsed_ms).as_secs_f64();
 
         // Each update covers the interval ending at this timestamp; Linear
         // interpolates between the preceding and current readings.
