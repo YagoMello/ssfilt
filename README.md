@@ -281,12 +281,12 @@ to use the public API.
 - [Design notes](DESIGN.md) define the numerical models, invariants, and
   milestone sequence.
 - [Phase equalization record](docs/phase-equalization.md) defines the active
-  problem, evidence requirements, and current support boundary.
+  retention decision and current narrow support boundary.
 - [Forward-backward batch design](docs/forward-backward.md) defines the
-  planned noncausal filtering contract and implementation gates; its private
-  filtered diagnostic is development evidence, not a public batch API.
+  archived noncausal-filter investigation. Batch filtering is deferred beyond
+  1.0 and is not a public API or active release milestone.
 - [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
-  freezes the stage-2 analytic signals, schedules, and refinement semantics.
+  preserves the archived experiment's signals and schedules.
 - [Baseline review](docs/baseline-review.md) records correctness and test gaps
   found before the phase work began.
 - [Development tools guide](docs/development-tools.md) explains analytic

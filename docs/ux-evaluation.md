@@ -17,6 +17,13 @@ The initial protocol version is `UX-1`. Material changes to scenario meanings,
 allowed information, or scoring create a new version so results from different
 rounds are not silently compared as if they used the same experiment.
 
+The active pre-1.0 exercise is deliberately lightweight: select three to five
+supported scenarios and one boundary control, give a fresh agent only the
+public documentation and a scratch crate, and record concrete friction. The
+snapshot digests, strict scoring, and longitudinal controls below are available
+when a genuinely comparable before/after study is useful; they are not release
+requirements and should not become another product-sized harness.
+
 ## Principles
 
 1. **Start from user goals.** Scenario briefs describe a physical problem and
@@ -148,9 +155,10 @@ copy of an existing example.
 
 ## Initial scenario bank
 
-The first baseline should select six to eight supported scenarios and at least
-two boundary controls. Rotate holdouts between rounds so documentation cannot
-be optimized only for one fixed exercise.
+An ordinary release pass should select three to five supported scenarios and
+one boundary control. Rotate holdouts between rounds so documentation cannot
+be optimized only for one fixed exercise. A formal longitudinal baseline may
+use a larger frozen set when its comparison value justifies the extra process.
 
 ### Supported scenarios
 
@@ -174,9 +182,9 @@ be optimized only for one fixed exercise.
 8. **Causal waveform preservation.** Use the supported streaming phase
    equalizer, report its validated band and added delay, and avoid claiming
    zero phase.
-9. **Recorded zero-phase processing.** Once the batch API is public, filter a
-   complete irregular record noncausally and explain its different magnitude
-   and boundary semantics. This scenario is inactive until that milestone.
+9. **Recorded zero-phase processing.** This deferred control should explain
+   that no batch API is currently offered and should not invent one. Revisit it
+   only if post-1.0 user demand starts a separate batch product.
 
 ### Boundary controls
 
@@ -380,11 +388,9 @@ user examples.
 
 Run UX reviews at these points:
 
-1. baseline against the current streaming API and current documentation;
-2. after addressing repeated baseline friction;
-3. before exposing the offline batch API;
-4. after material public API or timing/error-contract changes;
-5. during the release-readiness pass before 1.0.
+1. after the first user guides and compiled examples are ready;
+2. after material public API or timing/error-contract changes;
+3. during the release-readiness pass before 1.0.
 
 Reuse part of the scenario bank to measure regressions and rotate part as
 holdout coverage. Record documentation-only improvements separately from API
@@ -398,7 +404,7 @@ measurement pipeline whose records feed CSV, Markdown, and SVG views. Add a
 tool view only when it answers a recurring user or validation question; do not
 grow a generic signal-processing application around the library.
 
-The current tooling priorities remain topology coverage, measured streaming
-equalizer overlays, incremental named CLI options, and later CSV replay. The
-private forward-backward matrix harness is numerical acceptance infrastructure,
-not a user-facing filtering tool.
+The active tooling priority is one compact inspection workflow for shipped
+streaming behavior. Add a view or replay feature only when repeated user or
+maintenance work justifies it. The archived forward-backward harness is
+research material, not a user-facing filtering tool or an active milestone.

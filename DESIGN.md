@@ -8,6 +8,13 @@ Users construct one filter object and update it with an input and elapsed time.
 Model, interpolation, integration, and the shared streaming runtime remain
 private until a real customization requirement justifies stabilizing them.
 
+Research code does not become part of the product merely because it produces
+stronger evidence. New work must justify its public value, API cost, runtime
+cost, and long-term maintenance before its validation infrastructure is
+expanded. Representative supported cases are preferred over exhaustive
+Cartesian products; unsupported scalar types, extreme orders, and speculative
+combinations are documented or rejected rather than made roadmap obligations.
+
 ## Current normalized models
 
 For a cutoff angular frequency `omega_c` and physical time `t`, define
@@ -274,30 +281,28 @@ updates preserve the preceding snapshot transactionally.
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
 7. Refactored development measurement tools. Low-pass analytic curves,
-   public-API sample markers, machine-readable phase reports, explicit band
-   sweeps, higher-order analytic equalizer candidates, and measured order-4/8
-   equalizer overlays are implemented. Ordinary high-pass and band-pass views
-   remain to be added. Batch evidence belongs to its separate oracle tool and
-   must not be presented as a public streaming measurement. ◐
-8. Delayed group-delay equalization and offline forward-backward filtering as
-   separate phase-handling approaches. ◐
-   - The initial Butterworth order-4/8 streaming API is implemented and
-     independently reviewed. Before 1.0, a frozen application and cost matrix
-     must decide whether its Butterworth-magnitude advantage over Bessel and
-     repeated-pole filters justifies its added delay, states, API, and
-     maintenance. Remove it before 1.0 if no named use case does.
-   - Higher Butterworth orders, Chebyshev, other response families, and other
-     topologies are separate expansions. None advances from an analytic curve
-     alone. Chebyshev must cover its response-specific ripple edge; high-pass
-     and band-pass need independently defined useful bands and latency goals.
-   - The forward-backward physical contract, multiprecision oracle, frozen
-     fixtures, protocol, endpoint-replay negative control, bounded
-     trajectory-replay candidate, scoring, and cross-cell comparisons are
-     implemented. The endpoint control fails the first deterministic eight-cell
-     filtered diagnostic as intended; the trajectory candidate passes that same
-     slice with an analytic tail. These reports are diagnostic rather than
-     acceptance evidence. Next come the full acceptance matrix, numerical
-     selection, batch-specific plots, and only then a public `ssfilt::batch`
-     surface. See `docs/forward-backward.md`.
-9. Advanced custom kernels or alternative integrators only after concrete use
-   cases establish the necessary interface.
+   public-API sample markers, machine-readable reports, and measured order-4/8
+   equalizer overlays are implemented. Keep one compact response-inspection
+   workflow for shipped streaming behavior; add high-pass or band-pass views
+   only when they remain small and directly useful. ◐
+8. Complete the user-facing streaming product. Add a runnable irregular-sample
+   quick start, focused selection/timing/recovery/`no_std` guides, realistic
+   compiled examples, curated package contents, and a lightweight cold UX
+   pass. Decide the pre-1.0 default response from user expectations. ◐
+9. Decide whether to retain delayed Butterworth phase equalization. The current
+   order-4/8 implementation is frozen: one small application comparison must
+   show a named workload where its selectivity is needed and its disclosed
+   latency and cost are acceptable. Remove it before 1.0 otherwise. Do not add
+   orders, responses, or topologies before that decision. ◐
+10. Prepare an early release of the streaming core: restore release metadata,
+    exercise the supported `no_std + libm` build in CI, measure representative
+    streaming throughput and code size, and gather real-user feedback. ◐
+11. Offline forward-backward filtering is deferred beyond 1.0. The existing
+    investigation established that a faithful continuous-time operator is a
+    separate, record-sized product rather than a small streaming extension.
+    Its exhaustive matrix and protocol runner are not active milestones. If a
+    concrete workload later justifies the feature, restart it as a separate
+    experimental crate with proportionate representative validation.
+12. Advanced custom kernels, alternative integrators, new responses, or fixed
+    point support require concrete user demand and a separately reviewed
+    interface.

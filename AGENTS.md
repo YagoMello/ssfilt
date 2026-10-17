@@ -11,6 +11,33 @@ This project favors a narrow, well-tested feature over a broad interface with
 unclear numerical behavior. Do not turn an experiment into public API before
 its use case and limits are demonstrated.
 
+## Product and complexity budget
+
+The product is the irregular-time streaming filter, not its research harness.
+Every feature must begin with a named user problem and a simple public path.
+Prefer a documented limit over machinery for implausible combinations, and do
+not exhaust a Cartesian product when representative cases establish the same
+contract.
+
+Treat implementation, tests, tools, documentation, and review surface as one
+maintenance budget. If private evidence infrastructure becomes larger or more
+complicated than the feature it supports, pause and reassess the feature's
+user value before adding more. Git history can preserve a useful experiment
+without keeping it on the active product roadmap or in the release package.
+
+Use three levels of evidence:
+
+- automate public correctness contracts such as timing, cutoff, equilibrium,
+  finite-value handling, transactional failure, supported scalar types, and
+  `no_std` operation;
+- test representative numerical behavior across ordinary and demanding but
+  supported configurations;
+- use plots and application trials for qualitative tradeoffs such as ringing,
+  phase shape, and whether a response is suitable for a user's signal.
+
+Do not build support for undeclared scalar types, extreme orders, or every
+possible topology/response combination merely because they can be enumerated.
+
 ## Required reading
 
 Before changing code or tests, read the files relevant to the assignment:
@@ -132,7 +159,7 @@ Important invariants include:
 - the complete elapsed interval is integrated or rejected;
 - section ordering and state scaling avoid avoidable internal peaking;
 - streaming phase correction states its added delay and useful band;
-- a claimed improvement holds across a declared signal/filter matrix;
+- a claimed improvement holds in a named representative application;
 - runtime storage remains fixed-size and allocation-free.
 
 Never delete, skip, loosen, or mark a failing test expected without explicit
@@ -156,15 +183,13 @@ current approach and acceptance criteria have been written down independently.
 
 ## UX trials
 
-Public usability reviews follow `docs/ux-evaluation.md`. The primary agent
-freezes goal-based scenarios and the allowed user-facing material before a
-trial begins. A comparable cold-trial agent starts with no inherited project
-or conversation context, outside the repository, and works in a separate
-scratch crate. It must not receive repository agent instructions or inspect
-`src/`, tests, benchmarks, internal design records, Git history, or another
-trial's findings until its first attempt and report are frozen. If the
-execution platform cannot provide that isolation, label the trial advisory;
-do not mix it into the strict baseline.
+Public usability reviews follow `docs/ux-evaluation.md`. The default pre-1.0
+review is a lightweight goal-based pass using a fresh agent, public material,
+and a separate scratch crate. Use the document's frozen snapshots, scoring,
+and stricter isolation only when a comparable longitudinal baseline would
+change a product decision; protocol machinery is not itself a release goal.
+In either mode, the first attempt must not inspect `src/`, tests, benchmarks,
+internal design records, Git history, or another trial's findings.
 
 Prefer GPT-5.6 Terra Medium for ordinary application trials when it is
 available. Record the actual model rather than presenting another model as a

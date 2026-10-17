@@ -11,6 +11,11 @@ streaming waveform matrix now pass for both orders and scalar types. A narrow
 public API has been implemented for these two Butterworth cases and the core
 band; its independent numerical and API review is complete.
 
+Further equalizer expansion is frozen. Before 1.0, one small practical
+comparison will decide whether this narrow API delivers enough user value to
+retain. Higher orders, additional responses, topologies, and larger evidence
+matrices are not active roadmap work.
+
 The analytic tool also emits one inspectable SVG per case. These plots use the
 stored holdout records and display their actual points as rings; they do not
 claim that a streaming realization has reproduced the analytic curves.
@@ -142,41 +147,25 @@ delay is approximately `0.597 / cutoff_hz` seconds for order 4 and
 `0.686 / cutoff_hz` seconds for order 8; at a 20 Hz cutoff that is about
 29.8 ms and 34.3 ms respectively, in addition to the source-filter delay.
 
-Before the 1.0 API is frozen, retain or remove the streaming equalizer using a
-predeclared application matrix that compares matched-order plain Butterworth,
-phase-equalized Butterworth, Bessel, and repeated-pole filters. It must include:
+Before the 1.0 API is frozen, run one small, time-boxed application comparison
+between matched-order plain Butterworth, phase-equalized Butterworth, Bessel,
+and repeated-pole filters. Use one or two credible streaming workloads whose
+desired signal stays within the validated band and whose stopband rejection
+actually matters. Compare waveform error, attenuation, disclosed latency,
+state size, adaptive work, and throughput. Plots are part of the product
+judgment; this comparison is not another exhaustive numerical matrix.
 
-- desired-band multitone, pulse, and swept-frequency signals plus declared
-  stopband interference;
-- waveform error against each response's independently predeclared analytic
-  constant-delay target, without fitting delay or phase from measured output;
-  passband magnitude error and stopband rejection;
-- step undershoot, overshoot, and settling behavior;
-- total and added latency, state size, adaptive work, and measured throughput;
-- uniform and irregular schedules in the existing frozen 1 Hz and 37 Hz
-  cross-scaling cases, plus the named scenario's cutoff when different.
+Retain the equalizer only if at least one named workload needs its Butterworth
+selectivity, benefits materially from the phase correction, and can accept its
+delay and runtime cost while the simpler responses are inadequate. Remove it
+before 1.0 if a simpler response is good enough for every chosen workload. The
+existing correctness tests remain; the retention exercise must not grow them
+or broaden the support boundary.
 
-Thresholds and the named user scenario must be frozen before running this
-comparison. Retain the equalizer only if at least one frozen representative
-workload needs its magnitude selectivity, accepts its disclosed delay, and
-meets every predeclared hard application threshold only with the equalized
-filter while plain Butterworth, Bessel, and repeated-pole each fail at least
-one. The winning margins must exceed measurement uncertainty and a frozen
-minimum practical effect. Remove it before 1.0 if a simpler response satisfies
-every named workload, every target scenario requires correction beyond the
-validated band, or measured throughput exceeds the workload's frozen cost
-ceiling. This is a product retention gate, not permission to weaken any
-existing numerical test.
-
-Expansion follows an even stronger rule. A higher Butterworth order must pass
-the complete analytic and streaming matrix independently. Chebyshev is worth
-investigating only for a use case that actually values its sharper transition;
-an all-pass cannot remove its magnitude ripple, and validation must extend to
-the response-specific ripple edge rather than reusing the Butterworth core
-band. Bessel equalization remains out of scope unless a new requirement shows
-that Bessel itself is insufficient. High-pass and band-pass require their own
-useful-band and latency contracts. No expansion is justified merely because a
-bounded analytic search finds coefficients.
+Expansion is frozen until that retention decision. A higher order, Chebyshev,
+Bessel, high-pass, or band-pass equalizer requires a new named use case and its
+own useful-band and latency contract. No expansion is justified merely because
+a bounded analytic search finds coefficients.
 
 ## Problem statement
 
