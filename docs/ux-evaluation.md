@@ -406,5 +406,5 @@ grow a generic signal-processing application around the library.
 
 The active tooling priority is one compact inspection workflow for shipped
 streaming behavior. Add a view or replay feature only when repeated user or
-maintenance work justifies it. The archived forward-backward harness is
-research material, not a user-facing filtering tool or an active milestone.
+maintenance work justifies it. The forward-backward investigation is preserved
+in Git history, not as a user-facing tool or active milestone.

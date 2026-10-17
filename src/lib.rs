@@ -10,16 +10,6 @@
 compile_error!("enable either the `std` or `libm` feature");
 
 mod band_pass;
-#[cfg(test)]
-mod batch_matrix_client;
-#[cfg(test)]
-mod batch_protocol;
-#[cfg(test)]
-mod batch_prototype;
-#[cfg(test)]
-mod batch_tail;
-#[cfg(test)]
-mod batch_trajectory;
 mod config;
 mod diagnostics;
 mod error;

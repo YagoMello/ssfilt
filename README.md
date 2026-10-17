@@ -273,30 +273,6 @@ ssfilt = { path = "../ssfilt", default-features = false, features = ["libm"] }
 Replace the path source as described under [Install](#install) when consuming
 the repository remotely.
 
-## Contributor and project documents
-
-These records explain ongoing design and validation work; they are not needed
-to use the public API.
-
-- [Design notes](DESIGN.md) define the numerical models, invariants, and
-  milestone sequence.
-- [Phase equalization record](docs/phase-equalization.md) defines the active
-  retention decision and current narrow support boundary.
-- [Forward-backward batch design](docs/forward-backward.md) defines the
-  archived noncausal-filter investigation. Batch filtering is deferred beyond
-  1.0 and is not a public API or active release milestone.
-- [Forward-backward fixture specification](docs/forward-backward-fixtures.md)
-  preserves the archived experiment's signals and schedules.
-- [Baseline review](docs/baseline-review.md) records correctness and test gaps
-  found before the phase work began.
-- [Development tools guide](docs/development-tools.md) explains analytic
-  references, measured streaming overlays, reports, and plot-tool boundaries.
-- [UX evaluation and documentation plan](docs/ux-evaluation.md) defines cold
-  application trials, scenario controls, scoring, review cadence, and the
-  intended user-documentation structure.
-- [Agent collaboration guide](AGENTS.md) defines delegated work packages,
-  review independence, quality gates, and Git ownership.
-
 ## Development
 
 ```text
@@ -358,5 +334,5 @@ The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires
 SciPy, while the crate itself does not.
 
-See [DESIGN.md](DESIGN.md) for the numerical model, invariants, and planned
-development sequence.
+Contributor design and research records remain in the source repository but
+are intentionally excluded from the release package.

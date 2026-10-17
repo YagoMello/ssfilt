@@ -14,6 +14,11 @@ part of the runtime library. They should answer three different questions:
 Plots are supporting evidence. Machine-readable measurements and automated
 assertions remain the acceptance oracle.
 
+The active tooling direction is practical inspection of the shipped streaming
+responses through the existing `plot_responses` and `phase_design` examples.
+Keep those views and reports focused on behavior produced by the public
+streaming API; this scope reset adds no tool or command.
+
 User-facing friction and requests for new inspection utilities are evaluated
 under [`ux-evaluation.md`](ux-evaluation.md). A repeated UX need can justify a
 small tool extension, but does not bypass the numerical evidence requirements
@@ -37,8 +42,9 @@ This makes a suspicious marker reproducible and prevents a chart from silently
 using different math than the report.
 
 The current examples separate analytic calculation, public-API measurement,
-report generation, and rendering into development-only modules. A future shared
-tool could consolidate them along these boundaries:
+report generation, and rendering into development-only modules. An earlier
+proposal considered consolidating them into a shared CLI along these boundaries
+(not active work):
 
 ```text
 examples/filter_lab.rs              small CLI and order dispatch
@@ -55,8 +61,8 @@ The current shape-preserving SVG smoothing is visually useful, but its parser
 depends on Plotters' emitted markup and literal stroke colors. Keep it isolated
 behind rendering code with focused tests, or replace it with direct path
 drawing; do not mix SVG rewriting with filter analysis. The current focused
-examples remain the user-facing tools; add a broader shared CLI only when its
-phase and matrix workflows are ready.
+examples remain the user-facing tools. No broader shared CLI or matrix workflow
+is currently planned.
 
 ## Current command-line tools
 
@@ -131,27 +137,28 @@ Public streaming equalization remains supported only for Butterworth orders 4
 and 8. Design results for every other order are labeled exploratory and do not
 imply public support.
 
-## Tracked tooling roadmap
+## Tooling direction
 
-The development tools intentionally expose evidence in stages rather than
-offering switches for unimplemented products:
+Keep practical inspection of shipped streaming behavior active through the
+existing response dashboard and phase-design reports. Measurements should
+remain grounded in the public streaming API and reproducible from their
+underlying records.
 
-| Area | Current state | Next evidence boundary |
+| Area | Current state | Disposition |
 | --- | --- | --- |
 | Ordinary low-pass responses | Analytic curves and public streamed points for every response family and supported order | Keep as the shared numerical/style baseline |
-| Ordinary high-pass and band-pass responses | Library implementations exist; dashboard views do not | Add topology-specific analytic references, cutoff guides, streamed points, and reports without changing the public API |
-| Butterworth phase equalization, orders 4 and 8 | Analytic and public streamed overlays exist | Add the pre-1.0 application/cost comparison against Bessel and repeated-pole |
-| Other Butterworth equalizer orders | Analytic candidates can be inspected for orders 1 through 16 | Add private coupled streaming validation one order at a time; do not display public measurement markers before promotion |
-| Other response families and topologies | No supported equalizer design | Define a response-specific useful band and user value first; Chebyshev must include its ripple edge |
-| Forward-backward batch filtering | Oracle, private endpoint negative control, and one deterministic eight-cell filtered report exist; no validated batch filter or public API exists | Expand to the full matrix and candidate selection before adding batch plots |
+| Ordinary high-pass and band-pass responses | Library implementations exist; dashboard views do not | Consider a focused view only when it is directly useful and stays small |
+| Butterworth phase equalization, orders 4 and 8 | Analytic and public streamed overlays exist | Use the existing views for the pre-1.0 application/cost comparison against Bessel and repeated-pole; keep the supported design frozen |
+| Other equalizer orders, responses, or topologies | Exploratory analytic candidates or no supported design | No active design or tooling expansion |
+| Offline forward-backward filtering | Archived investigation; no supported batch API | Deferred until after 1.0 and only reconsidered for a concrete workload; any justified work would be evaluated as a separate experimental crate. The 9,792-entry matrix and protocol-v2/full runner are stopped. |
 
-Batch plots will live in the isolated forward-backward oracle workflow, not in
-`plot_responses`. They must be generated from the same scored records as the
-typed report and identify the noncausal operator, boundary continuation,
-per-pass order, complete-response cutoff, candidate status, and whether the
-run is filtered or complete. The first view should show the input, finite-record
-oracle, candidate output, signed or absolute error, edge influence, and work
-metadata. A favorable plot cannot substitute for the full acceptance matrix.
+The earlier batch-plot proposal was separate from `plot_responses` and called
+for plots generated from scored records, showing the noncausal operator,
+boundary continuation, per-pass order, complete-response cutoff, candidate
+status, input, finite-record oracle, output, error, edge influence, and work
+metadata. This remains archived research detail only: batch plots are not
+active tooling work, and a favorable plot would not replace the proposed full
+acceptance matrix.
 
 ## Tool dependency policy
 
@@ -183,8 +190,9 @@ well-tested boundary:
   complete keyed cases, never on stateful updates or floating-point reductions
   within a case. Provide a bounded job count, collect into deterministic order,
   and require byte-identical reports plus unchanged metrics between one and
-  multiple jobs. The matrix oracle should use a dedicated pool because each
-  shard owns a candidate session and high-precision records can be large;
+  multiple jobs. The stopped full-matrix proposal considered a dedicated pool
+  because each shard would own a candidate session and high-precision records
+  could be large; no matrix runner or parallel execution is currently planned;
 - reserve `thiserror` for new structured tool errors when it materially removes
   display/source boilerplate. Do not churn the existing contextual error
   families merely to replace their hand-written implementations;
@@ -374,7 +382,7 @@ constant-delay target and the `0.7 * cutoff` validation boundary. Frequencies
 above that boundary provide context only. Sparse measured phase is not
 differentiated into group-delay markers.
 
-Later waveform views may add:
+Earlier dashboard proposals (archived, not scheduled) included:
 
 - source delay, equalized delay, and best constant-delay target;
 - absolute delay residual with the acceptance threshold drawn;
@@ -385,12 +393,14 @@ Later waveform views may add:
 - a band-edge frontier showing residual error and added delay as the requested
   upper frequency moves from `0.5` to `1.0 * cutoff`.
 
-Show `0..0.7`, `0.7..1.0`, and `0..1.0` metric summaries together. This makes a
-core-band success and a near-cutoff failure equally visible.
+The earlier proposal also called for showing `0..0.7`, `0.7..1.0`, and
+`0..1.0` metric summaries together to make core-band success and near-cutoff
+failure equally visible.
 
-### Matrix report
+### Archived phase-equalization report proposal
 
-For every response/order/band/precision combination, export:
+The proposed report would have exported, for every response/order/band/precision
+combination:
 
 - fitted section parameters and pole-derived damping/Q;
 - peak and RMS delay residual before and after equalization;
@@ -400,32 +410,31 @@ For every response/order/band/precision combination, export:
 - accepted/rejected steps, derivative evaluations, and observed step sizes;
 - each limit and its explicit pass/fail result.
 
-A compact heat map may summarize the matrix, but CSV and Markdown are the
-reviewable source data.
+A compact heat map was proposed as a summary, with CSV and Markdown as the
+reviewable source data. No report matrix or heat map is currently scheduled.
 
 ### Performance and work
 
-Retain a separate host-local performance chart with clear non-portability
-wording. Add object size and integration diagnostics before adding elaborate
-microbenchmarks; they directly reveal the equalizer's memory and adaptive-work
-cost. Criterion remains the repeatable benchmark oracle.
+Earlier notes proposed a separate host-local performance chart and object-size
+report. These are not active tooling work. Criterion remains the repeatable
+benchmark oracle.
 
-## Small quality-of-life extensions
+## Archived tooling suggestions (not scheduled)
 
-After the measurement overlays work:
+Earlier suggestions included:
 
 - replay timestamp/value CSV files through a selected public filter and export
   timestamp/input/output/diagnostics rows;
 - provide a deterministic irregular-timestamp preset representative of sensor
   acquisition jitter;
-- generate all standard dashboards and reports with one `matrix` command;
 - retain topology-specific cutoff/center guides and automatic output-directory
   creation;
 - give an explicit `unsupported` or `no useful design` result instead of
   omitting a requested trace silently.
 
-CSV replay visualizes real data but is not an accuracy oracle unless a trusted
-reference output is also supplied.
+CSV replay would visualize real data but would not be an accuracy oracle unless
+a trusted reference output were supplied. These suggestions do not establish a
+current tooling roadmap.
 
 ## Automated checks
 
@@ -443,7 +452,7 @@ reference output is also supplied.
 
 ## Prior implementation inventory
 
-Useful ideas from the discarded branch that may be reimplemented cleanly:
+Ideas recorded from the discarded branch, for historical reference only:
 
 - low-pass, high-pass, band-pass, phase, and waveform views;
 - response-family selection with clear Bessel order handling;
@@ -453,11 +462,11 @@ Useful ideas from the discarded branch that may be reimplemented cleanly:
 - a separate host-local median performance chart;
 - correctly scaled SVG legend strokes.
 
-Do not restore its permissive equalizer success criterion or couple plotting
-code to the runtime fitting algorithm. The current examples already separate
-analytic calculation, streaming measurements, reports, and rendering into
-modules. Keep future view work within those boundaries and use shared records
-for plots and exported reports.
+The branch's permissive equalizer success criterion should not be restored, and
+plotting code should remain separate from runtime fitting. The current examples
+already separate analytic calculation, streaming measurements, reports, and
+rendering into modules; their shared-record structure remains useful for
+reproducible plots and reports.
 
 ## Other audited quality-of-life work
 
@@ -472,6 +481,8 @@ remain useful candidates for separate commits:
   startup equilibrium, and fixed-size runtime order selection;
 - a small public-API compile test for the documented runtime-order enum.
 
-Offline forward-backward filtering is not a QoL patch. It is a separate public
-batch feature with boundary-condition, squared-magnitude, allocation, and
-partial-output error semantics, so it stays behind its own design review.
+Offline forward-backward filtering is not a quality-of-life patch. It is a
+separate deferred investigation with boundary-condition, squared-magnitude,
+record-storage, and transactional-output semantics. It remains outside the
+1.0 streaming product and would be reconsidered only for a concrete workload;
+any justified work would be evaluated as a separate experimental crate.

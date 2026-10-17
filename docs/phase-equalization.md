@@ -517,9 +517,9 @@ section.
 6. Add the smallest self-contained public API for only the validated cases,
    then run an independent numerical and API review before declaring the
    feature. The API is implemented and independently reviewed.
-7. Treat offline forward-backward filtering as a later, separate batch
-   milestone; it does not share the streaming equalizer's contract. Its
-   investigation contract is recorded in `forward-backward.md`.
+7. Offline forward-backward filtering was investigated separately and then
+   deferred beyond 1.0. Its research harness is preserved in Git history, not
+   in the active product tree.
 
 ## Independent comparison
 

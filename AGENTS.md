@@ -244,9 +244,10 @@ repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses. Runtime
 scalars are sealed to validated `f32` and `f64` implementations. The adaptive
 Dormand-Prince integrator and continuous models remain private.
 
-Phase handling is the active design milestone. Streaming equalization must
-demonstrate useful passband waveform preservation and disclose added delay.
-Offline forward-backward filtering is a separate batch feature with different
-causality and magnitude behavior. Fixed point, custom public kernels, and
-alternative public integrators remain deferred until a measured use case
-justifies their interfaces.
+Phase handling is limited to the existing streaming equalizer retention
+decision. It must demonstrate useful passband waveform preservation and
+disclose added delay; do not expand it before that decision. Offline
+forward-backward filtering is deferred beyond 1.0 and its research harness is
+preserved only in Git history. Fixed point, custom public kernels, alternative
+public integrators, and a possible separate batch crate remain deferred until
+a measured use case justifies their interfaces.
