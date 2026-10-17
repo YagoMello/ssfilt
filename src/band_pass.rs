@@ -370,12 +370,21 @@ mod tests {
             scale in 0.1_f64..10.0,
         ) {
             let upper_hz = lower_hz * ratio;
+            // This property isolates the exact normalized-time scaling law.
+            // Use tighter local error control than the runtime default so two
+            // valid adaptive step histories cannot dominate that comparison.
+            let integration = IntegrationConfig {
+                tolerances: crate::Tolerances::new(1.0e-12, 1.0e-9),
+                ..IntegrationConfig::default()
+            };
             let mut original = BandPass::<6>::builder(lower_hz, upper_hz)
                 .response(Response::Bessel)
+                .integration(integration)
                 .build()
                 .unwrap();
             let mut scaled = BandPass::<6>::builder(lower_hz * scale, upper_hz * scale)
                 .response(Response::Bessel)
+                .integration(integration)
                 .build()
                 .unwrap();
             let angular_center = core::f64::consts::TAU * (lower_hz * upper_hz).sqrt();
