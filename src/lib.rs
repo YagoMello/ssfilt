@@ -2,6 +2,37 @@
 //!
 //! `ssfilt` advances a continuous-time filter model by the elapsed time supplied
 //! with each sample. The runtime is allocation-free and supports `no_std`.
+//!
+//! # Quick start
+//!
+//! Initialize from the first known sample, then pass the actual elapsed time
+//! between each pair of timestamps:
+//!
+//! ```
+//! use ssfilt::{LowPass, Response};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let samples = [(0.0, 22.18), (0.18, 22.12), (0.51, 22.25)];
+//! let mut filter = LowPass::<2>::builder(0.7)
+//!     .response(Response::Butterworth)
+//!     .initial_input(samples[0].1)
+//!     .build()?;
+//!
+//! let mut previous_time = samples[0].0;
+//! for &(time, input) in &samples[1..] {
+//!     let dt_seconds = time - previous_time;
+//!     let output = filter.update(input, dt_seconds)?;
+//!     assert!(output.is_finite());
+//!     previous_time = time;
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`LowPass`], [`HighPass`], and [`BandPass`] share the same builder and
+//! streaming conventions. Each cutoff denotes a complete-response −3 dB
+//! frequency. [`InputModel`] defines the signal reconstruction inside each
+//! elapsed interval; failed updates leave the filter unchanged.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

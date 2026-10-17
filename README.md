@@ -34,6 +34,13 @@ Pin a Git revision instead when consuming the repository remotely. A normal
 version dependency will replace this pre-release guidance when the crate is
 published.
 
+```toml
+[dependencies]
+ssfilt = { git = "https://github.com/YagoMello/ssfilt", rev = "<commit-sha>" }
+```
+
+Replace `<commit-sha>` with the complete revision you tested.
+
 ## Example
 
 ```rust
@@ -51,14 +58,41 @@ let value = filter.update(1.0, 0.012)?;
 ```
 
 `update(input, dt_seconds)` treats `input` as the sample at the end of the
-elapsed interval. The selected [`InputModel`](https://docs.rs/ssfilt/latest/ssfilt/enum.InputModel.html)
-defines what is assumed between that sample and the preceding one:
+elapsed interval. For timestamped samples, calculate every `dt_seconds` as
+`timestamp[n] - timestamp[n - 1]` in seconds. Pass the actual elapsed interval,
+not an absolute timestamp or nominal sample period. The selected
+[`InputModel`](https://docs.rs/ssfilt/latest/ssfilt/enum.InputModel.html) defines
+what is assumed between that sample and the preceding one:
 
 - `Linear` interpolates between the two endpoints and is the default.
 - `PreviousHold` applies the preceding input throughout the interval.
 - `CurrentHold` applies the new input throughout the interval.
 
-The first interval begins at `initial_input`, which defaults to zero.
+Construction places the filter in equilibrium at `initial_input`. Set it to
+the known signal value at the start of the first interval to avoid an
+artificial startup transient; its default is zero. The other defaults are a
+repeated-pole response, linear input reconstruction, and the scalar-specific
+`IntegrationConfig::default()`.
+
+Run `cargo run --example irregular_sensor` for a complete timestamp-to-`dt`
+example that initializes from its first sensor reading.
+
+## Choose a filter
+
+Every cutoff is a frequency in hertz at which the complete response is −3 dB.
+
+| Topology | Use it to | Frequency arguments |
+| --- | --- | --- |
+| [`LowPass`](https://docs.rs/ssfilt/latest/ssfilt/struct.LowPass.html) | Smooth high-frequency noise while retaining slower behavior | One upper cutoff |
+| [`HighPass`](https://docs.rs/ssfilt/latest/ssfilt/struct.HighPass.html) | Reject constant or slowly varying bias | One lower cutoff |
+| [`BandPass`](https://docs.rs/ssfilt/latest/ssfilt/struct.BandPass.html) | Isolate a frequency band | Lower and upper −3 dB edges; final order must be even |
+
+| Response | Main tradeoff |
+| --- | --- |
+| `RepeatedPole` | Default; simple real poles and a gentle transition |
+| `Butterworth` | Maximally flat passband magnitude |
+| `Bessel` | Flatter low-frequency delay and little ringing, with a gentler transition |
+| `Chebyshev1 { ripple_db }` | Steeper transition at the cost of passband ripple and ringing |
 
 ### Delayed phase equalization
 
@@ -168,7 +202,10 @@ let value = filter.update(1.0, 0.01)?;
 
 This approach requires an allocator and exposes the common streaming methods;
 order-specific inherent methods remain available only on concrete `LowPass`
-values.
+values. Orders 2, 4, and 8 above are application choices, not a special
+supported set; low-pass and high-pass require a positive order, while
+band-pass requires a positive even final order. Bessel alone has the explicit
+limits described below.
 
 ## Response families
 
@@ -245,6 +282,11 @@ An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
 controls numerical stability; the separate attempt budget bounds worst-case
 work. No elapsed time is silently discarded.
+
+After an update error, do not advance the caller's previous timestamp: correct
+the sample, elapsed time, or configuration and retry from the last committed
+timestamp, or deliberately call `reset()`/`reset_to_steady()` before beginning
+a new stream.
 
 `reset_to_steady` validates its finite equilibrium state and output before
 committing them. An unrepresentable equilibrium fails transactionally, leaving
