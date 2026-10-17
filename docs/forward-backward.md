@@ -567,8 +567,10 @@ permissive untested behavior.
    diagnostic, including its analytic-tail, whole-record, partition, physical
    scaling, and aggregate-work gates. Reversal rows remain measurements because
    no reversal-comparison threshold was frozen. This is promising diagnostic
-   evidence, not candidate selection; full-matrix coverage remains outstanding.
-   ◐
+   evidence, not candidate selection. The candidate-independent full response
+   manifest now enumerates 68 deterministic shards, 2,448 base cells, and
+   9,792 base/refined/reversed execution entries. Streamed shard execution and
+   the separately scoped boundary evidence remain outstanding. ◐
 5. Select endpoint replay or a trajectory-aware engine from the predeclared
    gates, then independently review that numerical decision.
 6. Finalize workspace, boundary, error, and diagnostics representations.

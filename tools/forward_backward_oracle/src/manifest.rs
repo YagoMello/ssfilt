@@ -1,9 +1,9 @@
-//! Canonical coordinate manifest for the first filtered diagnostic slice.
+//! Canonical coordinate manifests for filtered and exhaustive response runs.
 //!
-//! This is deliberately a diagnostic manifest, not evidence for the complete
-//! response matrix. Its bytes are part of the reproducibility identity, so
-//! stable tags and field order are written explicitly rather than through
-//! `Debug` formatting.
+//! The filtered sentinel manifest remains a diagnostic selection, while the
+//! exhaustive manifest records the full candidate-independent response matrix.
+//! Filtered bytes are part of the reproducibility identity, so stable tags and
+//! field order are written explicitly rather than through `Debug` formatting.
 
 use core::fmt;
 
@@ -11,8 +11,10 @@ use forward_backward_protocol::FilterOrder;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    CaseCoordinate, FixtureCoordinate, PhysicalCutoff, QMax, RecordScalar, ScheduleKind,
-    TimeDomainFixture,
+    CaseCoordinate, FixtureCoordinate, PHYSICAL_CUTOFFS, PhysicalCutoff, Q_MAXES, QMax,
+    RecordScalar, SCALAR_ORDER, SCHEDULES, ScheduleKind, TIME_DOMAIN_FIXTURES, TONE_FREQUENCIES,
+    TONE_ORDERS, TONE_PHASES, TimeDomainFixture, ToneCoordinate, ToneFrequency, ToneOrder,
+    TonePhase,
     identity::{CellVariant, IdentityError, ResponseCellKey, case_id},
 };
 
@@ -27,6 +29,19 @@ const FILTERED_VARIANTS: [CellVariant; 4] = [
     CellVariant::ReversedBase,
     CellVariant::ReversedScalarRefined,
 ];
+const RESPONSE_FILTER_ORDERS: [FilterOrder; 4] = [
+    FilterOrder::One,
+    FilterOrder::Two,
+    FilterOrder::Four,
+    FilterOrder::Eight,
+];
+const RESPONSE_RECORD_COUNT: usize =
+    TIME_DOMAIN_FIXTURES.len() + TONE_FREQUENCIES.len() * TONE_PHASES.len();
+const RESPONSE_SHARD_COUNT: usize = RESPONSE_RECORD_COUNT * RESPONSE_FILTER_ORDERS.len();
+const RESPONSE_BASE_BUNDLE_COUNT_PER_SHARD: usize =
+    SCALAR_ORDER.len() * Q_MAXES.len() * SCHEDULES.len();
+const RESPONSE_ENTRIES_PER_SHARD: usize =
+    RESPONSE_BASE_BUNDLE_COUNT_PER_SHARD * PHYSICAL_CUTOFFS.len() * FILTERED_VARIANTS.len();
 
 /// The fixed coordinates selected by the first report-producing diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,10 +154,120 @@ impl FilteredSentinelManifest {
     }
 }
 
-/// Failure while constructing a deterministic filtered coordinate manifest.
+/// One order-independent analytic record identity in the response matrix.
+///
+/// Tone frequency and phase together identify a record. Per-pass order is a
+/// separate shard coordinate because it also determines the tone's record
+/// duration and fit guard.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResponseRecord {
+    TimeDomain(TimeDomainFixture),
+    Tone {
+        frequency: ToneFrequency,
+        phase: TonePhase,
+    },
+}
+
+/// One deterministic response-matrix shard: an analytic record and pass order.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ResponseShardKey {
+    record: ResponseRecord,
+    filter_order: FilterOrder,
+}
+
+#[allow(dead_code)]
+impl ResponseShardKey {
+    #[must_use]
+    pub(crate) const fn record(self) -> ResponseRecord {
+        self.record
+    }
+
+    #[must_use]
+    pub(crate) const fn filter_order(self) -> FilterOrder {
+        self.filter_order
+    }
+
+    /// Derive one full case coordinate from the shard and schedule axes.
+    ///
+    /// For tone records, the coordinate order is deliberately copied from the
+    /// shard order so `case_id` can enforce the tone/order identity contract.
+    #[must_use]
+    pub(crate) const fn coordinate(self, q_max: QMax, schedule: ScheduleKind) -> CaseCoordinate {
+        match self.record {
+            ResponseRecord::TimeDomain(fixture) => CaseCoordinate::TimeDomain(FixtureCoordinate {
+                fixture,
+                q_max,
+                schedule,
+            }),
+            ResponseRecord::Tone { frequency, phase } => CaseCoordinate::Tone(ToneCoordinate {
+                order: tone_order_for_filter_order(self.filter_order),
+                frequency,
+                phase,
+                q_max,
+                schedule,
+            }),
+        }
+    }
+}
+
+/// All response-cell entries belonging to one deterministic shard.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResponseMatrixShard {
+    key: ResponseShardKey,
+    entries: Vec<ManifestEntry>,
+}
+
+#[allow(dead_code)]
+impl ResponseMatrixShard {
+    #[must_use]
+    pub(crate) const fn key(&self) -> ResponseShardKey {
+        self.key
+    }
+
+    /// Entries are ordered by their stable semantic case IDs.
+    #[must_use]
+    pub(crate) fn entries(&self) -> &[ManifestEntry] {
+        &self.entries
+    }
+}
+
+/// Candidate-independent enumeration of every frozen response-matrix cell.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResponseMatrixManifest {
+    shards: Vec<ResponseMatrixShard>,
+    entries: Vec<ManifestEntry>,
+}
+
+#[allow(dead_code)]
+impl ResponseMatrixManifest {
+    /// Shards follow fixture declaration order, then tone frequency/phase,
+    /// with per-pass orders `[1, 2, 4, 8]` inside each record.
+    #[must_use]
+    pub(crate) fn shards(&self) -> &[ResponseMatrixShard] {
+        &self.shards
+    }
+
+    /// All cells in ascending case-ID order, independent of shard order.
+    #[must_use]
+    pub(crate) fn entries(&self) -> &[ManifestEntry] {
+        &self.entries
+    }
+
+    #[must_use]
+    pub(crate) const fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// Failure while constructing a deterministic coordinate manifest.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ManifestError {
     Identity(IdentityError),
+    DuplicateCaseId { case_id: u64 },
     NonAscendingCaseId { previous: u64, current: u64 },
 }
 
@@ -151,6 +276,12 @@ impl fmt::Display for ManifestError {
         match self {
             Self::Identity(error) => {
                 write!(formatter, "could not derive manifest identity: {error}")
+            }
+            Self::DuplicateCaseId { case_id } => {
+                write!(
+                    formatter,
+                    "manifest contains duplicate case ID 0x{case_id:016x}"
+                )
             }
             Self::NonAscendingCaseId { previous, current } => write!(
                 formatter,
@@ -164,7 +295,7 @@ impl std::error::Error for ManifestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Identity(error) => Some(error),
-            Self::NonAscendingCaseId { .. } => None,
+            Self::DuplicateCaseId { .. } | Self::NonAscendingCaseId { .. } => None,
         }
     }
 }
@@ -212,6 +343,110 @@ pub(crate) fn filtered_sentinel_manifest() -> Result<FilteredSentinelManifest, M
     }
 
     Ok(FilteredSentinelManifest { selection, entries })
+}
+
+/// Build the complete candidate-independent response-matrix manifest.
+///
+/// The 68 shards are the 17 frozen analytic record identities crossed with
+/// four per-pass orders. Each shard contains 18 scalar/q-max/schedule bundles;
+/// each bundle expands over two physical cutoffs and four executed variants.
+#[allow(dead_code)]
+pub(crate) fn exhaustive_response_matrix_manifest() -> Result<ResponseMatrixManifest, ManifestError>
+{
+    let mut shards = Vec::with_capacity(RESPONSE_SHARD_COUNT);
+    let mut all_entries = Vec::with_capacity(RESPONSE_SHARD_COUNT * RESPONSE_ENTRIES_PER_SHARD);
+
+    for key in response_shard_keys() {
+        let mut entries = Vec::with_capacity(RESPONSE_ENTRIES_PER_SHARD);
+        for scalar in SCALAR_ORDER {
+            for q_max in Q_MAXES {
+                for schedule in SCHEDULES {
+                    let coordinate = key.coordinate(q_max, schedule);
+                    for cutoff in PHYSICAL_CUTOFFS {
+                        for &variant in &FILTERED_VARIANTS {
+                            entries.push(ManifestEntry::from_key(ResponseCellKey::new(
+                                coordinate,
+                                scalar,
+                                cutoff,
+                                key.filter_order(),
+                                variant,
+                            ))?);
+                        }
+                    }
+                }
+            }
+        }
+
+        entries.sort_unstable_by_key(|entry| entry.case_id());
+        all_entries.extend(entries.iter().copied());
+        shards.push(ResponseMatrixShard { key, entries });
+    }
+
+    all_entries.sort_unstable_by_key(|entry| entry.case_id());
+    reject_duplicate_case_ids(&all_entries)?;
+
+    Ok(ResponseMatrixManifest {
+        shards,
+        entries: all_entries,
+    })
+}
+
+fn response_shard_keys() -> Vec<ResponseShardKey> {
+    let mut keys = Vec::with_capacity(RESPONSE_SHARD_COUNT);
+    for fixture in TIME_DOMAIN_FIXTURES {
+        for filter_order in RESPONSE_FILTER_ORDERS {
+            keys.push(ResponseShardKey {
+                record: ResponseRecord::TimeDomain(fixture),
+                filter_order,
+            });
+        }
+    }
+    for frequency in TONE_FREQUENCIES {
+        for phase in TONE_PHASES {
+            for order in TONE_ORDERS {
+                keys.push(ResponseShardKey {
+                    record: ResponseRecord::Tone { frequency, phase },
+                    filter_order: filter_order_for_tone_order(order),
+                });
+            }
+        }
+    }
+    keys
+}
+
+fn reject_duplicate_case_ids(entries: &[ManifestEntry]) -> Result<(), ManifestError> {
+    for pair in entries.windows(2) {
+        if pair[0].case_id() == pair[1].case_id() {
+            return Err(ManifestError::DuplicateCaseId {
+                case_id: pair[0].case_id(),
+            });
+        }
+        if pair[0].case_id() > pair[1].case_id() {
+            return Err(ManifestError::NonAscendingCaseId {
+                previous: pair[0].case_id(),
+                current: pair[1].case_id(),
+            });
+        }
+    }
+    Ok(())
+}
+
+const fn filter_order_for_tone_order(order: ToneOrder) -> FilterOrder {
+    match order {
+        ToneOrder::One => FilterOrder::One,
+        ToneOrder::Two => FilterOrder::Two,
+        ToneOrder::Four => FilterOrder::Four,
+        ToneOrder::Eight => FilterOrder::Eight,
+    }
+}
+
+const fn tone_order_for_filter_order(order: FilterOrder) -> ToneOrder {
+    match order {
+        FilterOrder::One => ToneOrder::One,
+        FilterOrder::Two => ToneOrder::Two,
+        FilterOrder::Four => ToneOrder::Four,
+        FilterOrder::Eight => ToneOrder::Eight,
+    }
 }
 
 /// Render a manifest as canonical CSV without relying on host CSV settings.
@@ -416,6 +651,171 @@ mod tests {
         assert_eq!(
             cell_variant_tag(CellVariant::ReversedScalarRefined),
             "reversed_scalar_refined"
+        );
+    }
+
+    #[test]
+    fn exhaustive_manifest_has_the_frozen_shard_and_cell_counts() {
+        let manifest = exhaustive_response_matrix_manifest().unwrap();
+
+        assert_eq!(manifest.shards().len(), 68);
+        assert_eq!(manifest.entry_count(), 9_792);
+        assert_eq!(
+            manifest
+                .entries()
+                .iter()
+                .filter(|entry| entry.key().variant() == CellVariant::Base)
+                .count(),
+            2_448
+        );
+        for shard in manifest.shards() {
+            assert_eq!(shard.entries().len(), 144);
+            assert_eq!(
+                shard
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.key().variant() == CellVariant::Base)
+                    .count(),
+                36
+            );
+        }
+    }
+
+    #[test]
+    fn exhaustive_manifest_shards_are_unique_and_cover_record_order_axes() {
+        let manifest = exhaustive_response_matrix_manifest().unwrap();
+        let keys: Vec<_> = manifest.shards().iter().map(|shard| shard.key()).collect();
+
+        for (index, key) in keys.iter().enumerate() {
+            assert!(!keys[..index].contains(key), "duplicate shard: {key:?}");
+        }
+
+        let mut position = 0;
+        for fixture in TIME_DOMAIN_FIXTURES {
+            for filter_order in RESPONSE_FILTER_ORDERS {
+                let key = ResponseShardKey {
+                    record: ResponseRecord::TimeDomain(fixture),
+                    filter_order,
+                };
+                assert_eq!(keys[position], key);
+                position += 1;
+            }
+        }
+        for frequency in TONE_FREQUENCIES {
+            for phase in TONE_PHASES {
+                for order in TONE_ORDERS {
+                    let key = ResponseShardKey {
+                        record: ResponseRecord::Tone { frequency, phase },
+                        filter_order: filter_order_for_tone_order(order),
+                    };
+                    assert_eq!(keys[position], key);
+                    position += 1;
+                }
+            }
+        }
+        assert_eq!(position, keys.len());
+    }
+
+    #[test]
+    fn exhaustive_shards_cover_every_base_bundle_cutoff_and_variant_once() {
+        let manifest = exhaustive_response_matrix_manifest().unwrap();
+
+        for shard in manifest.shards() {
+            let mut base_bundle_count = 0;
+            for scalar in SCALAR_ORDER {
+                for q_max in Q_MAXES {
+                    for schedule in SCHEDULES {
+                        base_bundle_count += 1;
+                        let coordinate = shard.key().coordinate(q_max, schedule);
+                        for cutoff in PHYSICAL_CUTOFFS {
+                            for &variant in &FILTERED_VARIANTS {
+                                let expected_key = ResponseCellKey::new(
+                                    coordinate,
+                                    scalar,
+                                    cutoff,
+                                    shard.key().filter_order(),
+                                    variant,
+                                );
+                                assert_eq!(
+                                    shard
+                                        .entries()
+                                        .iter()
+                                        .filter(|entry| entry.key() == expected_key)
+                                        .count(),
+                                    1,
+                                    "missing or repeated response key: {expected_key:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(base_bundle_count, 18);
+        }
+    }
+
+    #[test]
+    fn exhaustive_tone_coordinates_match_their_filter_order_and_ids_are_sorted() {
+        let manifest = exhaustive_response_matrix_manifest().unwrap();
+        let entries = manifest.entries();
+
+        assert!(
+            entries
+                .windows(2)
+                .all(|pair| pair[0].case_id() < pair[1].case_id())
+        );
+        for entry in entries {
+            let key = entry.key();
+            assert_eq!(case_id(&key).unwrap(), entry.case_id());
+            if let CaseCoordinate::Tone(coordinate) = key.coordinate() {
+                assert_eq!(
+                    filter_order_for_tone_order(coordinate.order),
+                    key.filter_order()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exhaustive_manifest_is_deterministic_across_constructions() {
+        let first = exhaustive_response_matrix_manifest().unwrap();
+        let second = exhaustive_response_matrix_manifest().unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first
+                .entries()
+                .iter()
+                .map(|entry| entry.case_id())
+                .collect::<Vec<_>>(),
+            second
+                .entries()
+                .iter()
+                .map(|entry| entry.case_id())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn exhaustive_manifest_duplicate_guard_rejects_repeated_case_ids() {
+        let key = ResponseCellKey::new(
+            CaseCoordinate::TimeDomain(FixtureCoordinate {
+                fixture: TimeDomainFixture::UnequalMultitone,
+                q_max: QMax::PiOver128,
+                schedule: ScheduleKind::Uniform,
+            }),
+            RecordScalar::F32,
+            PhysicalCutoff::OneHz,
+            FilterOrder::One,
+            CellVariant::Base,
+        );
+        let entry = ManifestEntry::from_key(key).unwrap();
+
+        assert_eq!(
+            reject_duplicate_case_ids(&[entry, entry]),
+            Err(ManifestError::DuplicateCaseId {
+                case_id: entry.case_id()
+            })
         );
     }
 }

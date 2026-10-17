@@ -88,6 +88,12 @@ existing path. The six artifacts are:
 | `summary.md` | Human-readable status and coordinate/source digests |
 | `checksums.sha256` | Integrity checks for the other five artifacts |
 
+The candidate-independent full response manifest is already enumerated and
+tested as 68 deterministic shards, 2,448 base cells, and 9,792
+base/refined/reversed execution entries. The command still executes only the explicit
+eight-cell diagnostic above; exhaustive streamed shard execution is a later
+step and is not implied by the presence of that manifest.
+
 `--candidate endpoint` retains the endpoint-replay negative control, which
 deliberately omits the physical forward tail. `--candidate trajectory` runs
 the bounded full-state trajectory replay with its analytic tail. The selected
