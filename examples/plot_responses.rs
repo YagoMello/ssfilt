@@ -1,795 +1,463 @@
-//! Generates end-to-end response plots through the public streaming API.
+//! Plots analytic response curves and measurements made through the public
+//! streaming API.
 //!
-//! Usage:
-//! `cargo run --release --example plot_responses -- [order] [output.svg]`
+//! Usage: `cargo run --release --example plot_responses -- [ORDER] [OUTPUT.svg]`
+//! Use `--topology` and `--response` to select a view. The positional form is
+//! retained for existing low-pass invocations.
 
-use std::env;
-use std::error::Error;
-use std::fmt::Write as _;
+#[path = "plot_responses/analytic.rs"]
+mod analytic;
+#[path = "plot_responses/measure.rs"]
+mod measure;
+#[path = "plot_responses/render.rs"]
+mod render;
+#[path = "plot_responses/report.rs"]
+mod report;
+#[path = "plot_responses/simulation.rs"]
+mod simulation;
+#[path = "support/svg_smoothing.rs"]
+mod svg_smoothing;
+#[path = "support/transfer.rs"]
+mod transfer;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use num_traits::ToPrimitive;
-use plotters::coord::Shift;
-use plotters::prelude::*;
-use ssfilt::{InputModel, LowPass, MAX_BESSEL_ORDER, Response};
+use anyhow::{Context, Result, bail};
+use clap::{Parser, ValueEnum};
+use render::{ResponseData, ResponseSpec};
+use ssfilt::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
 
-#[path = "../src/model/bessel_table.rs"]
-mod bessel_table;
-
-const CUTOFF_HZ: f64 = 1.0;
-const FREQUENCY_POINTS: u32 = 1_601;
-const TRANSIENT_POINTS: u32 = 1_601;
-const MIN_FREQUENCY_RATIO: f64 = 0.01;
-const MAX_FREQUENCY_RATIO: f64 = 20.0;
-const MAGNITUDE_FLOOR_DB: f64 = -140.0;
-const GROUP_DELAY_HALF_WINDOW: usize = 4;
-const RESPONSE_STROKES: [&str; 4] = ["#2E6FD6", "#E05B4A", "#249D5C", "#8752A1"];
-const DISPLAY_WIDTH: u32 = 1_600;
-const DISPLAY_HEIGHT: u32 = 1_180;
-const RENDER_SCALE: u32 = 8;
-
-const fn scaled(value: u32) -> u32 {
-    value * RENDER_SCALE
-}
-
-#[derive(Clone, Copy)]
-struct ResponseSpec {
-    label: &'static str,
-    response: Response,
-    color: RGBColor,
-}
-
-struct FrequencyPoint {
-    ratio: f64,
-    gain_db: f64,
-    phase_radians: f64,
-}
-
-struct ResponseData {
-    spec: ResponseSpec,
-    frequency: Vec<FrequencyPoint>,
-    group_delay: Vec<(f64, f64)>,
-    step: Vec<(f64, f64)>,
-}
+const MEASUREMENT_FREQUENCY_RATIOS: [f64; 15] = [
+    0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0,
+];
 
 macro_rules! dispatch_order {
-    ($order:expr, $output:expr; $($supported:literal),+ $(,)?) => {
+    ($order:expr, $arguments:expr; $($supported:literal),+ $(,)?) => {
         match $order {
-            $($supported => plot::<$supported>($output),)+
-            unsupported => Err(format!(
-                "order must be between 1 and {}, got {unsupported}",
-                dispatch_order!(@last $($supported),+)
-            ).into()),
+            $($supported => plot::<$supported>($arguments),)+
+            unsupported => bail!("order must be between 1 and 50, got {unsupported}"),
         }
     };
-    (@last $single:literal) => { $single };
-    (@last $head:literal, $($tail:literal),+) => { dispatch_order!(@last $($tail),+) };
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let (order, output_path) = arguments()?;
-    if let Some(parent) = output_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
+enum Topology {
+    #[default]
+    LowPass,
+    HighPass,
+    BandPass,
+}
+
+impl Topology {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::LowPass => "low-pass",
+            Self::HighPass => "high-pass",
+            Self::BandPass => "band-pass",
+        }
     }
 
-    dispatch_order!(order, &output_path;
+    const fn prototype_order(self, final_order: usize) -> usize {
+        match self {
+            Self::LowPass | Self::HighPass => final_order,
+            Self::BandPass => final_order / 2,
+        }
+    }
+
+    const fn bessel_limit(self) -> usize {
+        match self {
+            Self::LowPass | Self::HighPass => MAX_BESSEL_ORDER,
+            Self::BandPass => MAX_BESSEL_BAND_PASS_ORDER,
+        }
+    }
+
+    const fn steady_step_value(self) -> f64 {
+        match self {
+            Self::LowPass => 1.0,
+            Self::HighPass | Self::BandPass => 0.0,
+        }
+    }
+
+    const fn minus_three_db_edges(self) -> (f64, f64) {
+        match self {
+            Self::LowPass | Self::HighPass => (1.0, 1.0),
+            Self::BandPass => (0.5, 2.0),
+        }
+    }
+
+    const fn frequency_reference(self) -> &'static str {
+        match self {
+            Self::LowPass | Self::HighPass => "whole-filter −3 dB cutoff",
+            Self::BandPass => "geometric band center",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum ResponseChoice {
+    #[default]
+    All,
+    RepeatedPole,
+    Butterworth,
+    Bessel,
+    Chebyshev1,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "plot_responses",
+    about = "Plot filter responses and measurements from the public streaming API.",
+    after_help = "Legacy positional form: [ORDER] [OUTPUT.svg]\nDefaults: order 4, low-pass, all supported response families, target/filter-responses.svg, and a sibling CSV file. Band-pass order is the final even order; its default −3 dB edges are 0.5 Hz and 2 Hz."
+)]
+struct Cli {
+    /// Legacy positional order. Prefer --order.
+    #[arg(value_name = "ORDER", conflicts_with = "order", value_parser = parse_order)]
+    legacy_order: Option<usize>,
+    /// Legacy positional SVG output path. Prefer --output.
+    #[arg(value_name = "OUTPUT.svg", conflicts_with = "output")]
+    legacy_output: Option<PathBuf>,
+    /// Final filter order from 1 through 50.
+    #[arg(long, value_name = "ORDER", conflicts_with = "legacy_order", value_parser = parse_order)]
+    order: Option<usize>,
+    /// SVG output path.
+    #[arg(long, value_name = "PATH", conflicts_with = "legacy_output")]
+    output: Option<PathBuf>,
+    /// CSV measurement output path; defaults beside the SVG.
+    #[arg(long, value_name = "PATH")]
+    csv: Option<PathBuf>,
+    /// Filter topology to inspect.
+    #[arg(long, value_enum, default_value_t = Topology::LowPass)]
+    topology: Topology,
+    /// Response family to inspect, or all supported families.
+    #[arg(long, value_enum, default_value_t = ResponseChoice::All)]
+    response: ResponseChoice,
+}
+
+#[derive(Debug)]
+struct Arguments {
+    order: usize,
+    output_path: PathBuf,
+    csv_path: PathBuf,
+    topology: Topology,
+    response: ResponseChoice,
+}
+
+fn parse_order(value: &str) -> std::result::Result<usize, String> {
+    let order = value
+        .parse::<usize>()
+        .map_err(|_| format!("order must be an integer from 1 through 50, got {value:?}"))?;
+    if (1..=50).contains(&order) {
+        Ok(order)
+    } else {
+        Err(format!("order must be between 1 and 50, got {order}"))
+    }
+}
+
+impl Cli {
+    fn normalize(self) -> Result<Arguments> {
+        let order = self.order.or(self.legacy_order).unwrap_or(4);
+        let output_path = self
+            .output
+            .or(self.legacy_output)
+            .unwrap_or_else(|| default_output_path(self.topology));
+        let csv_path = self
+            .csv
+            .unwrap_or_else(|| output_path.with_extension("csv"));
+
+        if csv_path == output_path {
+            bail!("SVG and CSV output paths must be different");
+        }
+        if self.topology == Topology::BandPass && !order.is_multiple_of(2) {
+            bail!("band-pass final order must be positive and even, got {order}");
+        }
+        if self.response == ResponseChoice::Bessel && order > self.topology.bessel_limit() {
+            bail!(
+                "Bessel for {} supports final order up to {}; requested {order}",
+                self.topology.label(),
+                self.topology.bessel_limit()
+            );
+        }
+
+        Ok(Arguments {
+            order,
+            output_path,
+            csv_path,
+            topology: self.topology,
+            response: self.response,
+        })
+    }
+}
+
+fn default_output_path(topology: Topology) -> PathBuf {
+    match topology {
+        Topology::LowPass => PathBuf::from("target/filter-responses.svg"),
+        Topology::HighPass | Topology::BandPass => {
+            PathBuf::from(format!("target/{}-responses.svg", topology.label()))
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let arguments = Cli::parse().normalize()?;
+    create_parent_directory(&arguments.output_path).with_context(|| {
+        format!(
+            "creating the parent directory for SVG output {}",
+            arguments.output_path.display()
+        )
+    })?;
+    create_parent_directory(&arguments.csv_path).with_context(|| {
+        format!(
+            "creating the parent directory for CSV output {}",
+            arguments.csv_path.display()
+        )
+    })?;
+
+    dispatch_order!(arguments.order, &arguments;
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
         31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
         41, 42, 43, 44, 45, 46, 47, 48, 49, 50
-    )?;
+    )
+    .with_context(|| {
+        format!(
+            "generating order {} {} response plots",
+            arguments.order,
+            arguments.topology.label()
+        )
+    })?;
 
-    println!("wrote {}", output_path.display());
+    println!("wrote {}", arguments.output_path.display());
+    println!("wrote {}", arguments.csv_path.display());
     Ok(())
 }
 
-fn arguments() -> Result<(usize, PathBuf), Box<dyn Error>> {
-    let mut arguments = env::args().skip(1);
-    let order = arguments.next().map_or(Ok(4), |value| value.parse())?;
-    let output = arguments.next().map_or_else(
-        || PathBuf::from("target/filter-responses.svg"),
-        PathBuf::from,
-    );
-    if let Some(argument) = arguments.next() {
-        return Err(format!("unexpected argument: {argument}").into());
+fn create_parent_directory(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
     }
-    Ok((order, output))
+    Ok(())
 }
 
-fn plot<const N: usize>(output_path: &Path) -> Result<(), Box<dyn Error>> {
-    let mut specs = vec![
-        ResponseSpec {
-            label: "Repeated pole",
-            response: Response::RepeatedPole,
-            color: RGBColor(46, 111, 214),
-        },
-        ResponseSpec {
-            label: "Butterworth",
-            response: Response::Butterworth,
-            color: RGBColor(224, 91, 74),
-        },
-        ResponseSpec {
-            label: "Bessel",
-            response: Response::Bessel,
-            color: RGBColor(135, 82, 161),
-        },
-        ResponseSpec {
-            label: "Chebyshev I, 0.5 dB ripple",
-            response: Response::Chebyshev1 { ripple_db: 0.5 },
-            color: RGBColor(36, 157, 92),
-        },
+fn response_specs(
+    choice: ResponseChoice,
+    topology: Topology,
+    final_order: usize,
+) -> Vec<ResponseSpec> {
+    let choices = [
+        ResponseChoice::RepeatedPole,
+        ResponseChoice::Butterworth,
+        ResponseChoice::Bessel,
+        ResponseChoice::Chebyshev1,
     ];
-    if N > MAX_BESSEL_ORDER {
-        specs.retain(|spec| spec.response != Response::Bessel);
-        println!("omitting Bessel: supported through order {MAX_BESSEL_ORDER}");
+    let mut specs = Vec::with_capacity(choices.len());
+    for selected in choices {
+        if choice != ResponseChoice::All && selected != choice {
+            continue;
+        }
+        if selected == ResponseChoice::Bessel && final_order > topology.bessel_limit() {
+            eprintln!(
+                "omitting Bessel: {} supports final order up to {}",
+                topology.label(),
+                topology.bessel_limit()
+            );
+            continue;
+        }
+        specs.push(match selected {
+            ResponseChoice::RepeatedPole => ResponseSpec::new(
+                "Repeated pole",
+                Response::RepeatedPole,
+                plotters::prelude::RGBColor(46, 111, 214),
+            ),
+            ResponseChoice::Butterworth => ResponseSpec::new(
+                "Butterworth",
+                Response::Butterworth,
+                plotters::prelude::RGBColor(224, 91, 74),
+            ),
+            ResponseChoice::Bessel => ResponseSpec::new(
+                "Bessel",
+                Response::Bessel,
+                plotters::prelude::RGBColor(135, 82, 161),
+            ),
+            ResponseChoice::Chebyshev1 => ResponseSpec::new(
+                "Chebyshev I, 0.5 dB ripple",
+                Response::Chebyshev1 { ripple_db: 0.5 },
+                plotters::prelude::RGBColor(36, 157, 92),
+            ),
+            ResponseChoice::All => unreachable!("all expands to its concrete response choices"),
+        });
     }
+    specs
+}
 
+fn plot<const N: usize>(arguments: &Arguments) -> Result<()> {
+    let specs = response_specs(arguments.response, arguments.topology, N);
     let mut responses = Vec::with_capacity(specs.len());
     for spec in specs {
-        println!("evaluating {}", spec.label);
-        let frequency = frequency_ratios()
-            .map(|ratio| exact_frequency_point::<N>(spec.response, ratio))
-            .collect::<Result<Vec<_>, _>>()?;
-        let group_delay = group_delay(&frequency);
-        let step = measure_step_response::<N>(spec.response)?;
+        println!("evaluating {} {}", spec.label, arguments.topology.label());
+        let frequency = analytic::frequency_ratios(arguments.topology)
+            .map(|ratio| analytic::frequency_point(arguments.topology, spec.response, N, ratio))
+            .collect::<Result<Vec<_>>>()?;
+        let mut measurements = Vec::with_capacity(MEASUREMENT_FREQUENCY_RATIOS.len());
+        for ratio in MEASUREMENT_FREQUENCY_RATIOS {
+            let analytic = analytic::frequency_point(arguments.topology, spec.response, N, ratio)?;
+            let (measured, public_update_count, status) = match measure::measure::<N>(
+                arguments.topology,
+                spec.response,
+                ratio,
+                analytic,
+            )? {
+                measure::MeasurementResult::Measured {
+                    point,
+                    public_update_count,
+                } => (
+                    Some(point),
+                    public_update_count,
+                    measure::InspectionStatus::Measured,
+                ),
+                measure::MeasurementResult::WorkLimitExceeded {
+                    public_update_count,
+                    limit,
+                    minimum_work_exceeds_limit,
+                } => {
+                    let (status, reason) = if minimum_work_exceeds_limit {
+                        (
+                            measure::InspectionStatus::WorkLimitEstimate,
+                            "minimum warm-up and fit work exceeds the limit",
+                        )
+                    } else {
+                        (
+                            measure::InspectionStatus::WorkLimitReached,
+                            "the public-update limit was reached",
+                        )
+                    };
+                    eprintln!(
+                        "skipping {} {} order {N} stream-inspection point at {ratio}× {}: {reason} ({limit} public updates)",
+                        arguments.topology.label(),
+                        spec.label,
+                        arguments.topology.frequency_reference(),
+                    );
+                    (None, public_update_count, status)
+                }
+            };
+            measurements.push(measure::InspectionPoint {
+                ratio,
+                analytic,
+                measured,
+                public_update_count,
+                status,
+            });
+        }
+        let step = simulation::measure_step_response::<N>(arguments.topology, spec.response)?;
         responses.push(ResponseData {
             spec,
             frequency,
-            group_delay,
+            measurements,
             step,
         });
     }
 
-    let root = SVGBackend::new(output_path, (scaled(DISPLAY_WIDTH), scaled(DISPLAY_HEIGHT)))
-        .into_drawing_area();
-    root.fill(&WHITE)?;
-    let root = root.titled(
-        &format!("ssfilt order {N} low-pass responses"),
-        ("sans-serif", scaled(30)),
-    )?;
-    let panels = root.split_evenly((2, 2));
-    draw_magnitude(&panels[0], &responses)?;
-    draw_phase::<N>(&panels[1], &responses)?;
-    draw_group_delay(&panels[2], &responses)?;
-    draw_step(&panels[3], &responses)?;
-    root.present()?;
-    drop(panels);
-    drop(root);
-    smooth_svg_response_curves(output_path)?;
-    Ok(())
-}
-
-fn draw_magnitude(
-    area: &DrawingArea<SVGBackend<'_>, Shift>,
-    responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
-    let mut chart = ChartBuilder::on(area)
-        .caption("Magnitude response", ("sans-serif", scaled(22)))
-        .margin(scaled(16))
-        .x_label_area_size(scaled(46))
-        .y_label_area_size(scaled(62))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            MAGNITUDE_FLOOR_DB..5.0_f64,
-        )?;
-    chart
-        .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
-        .y_desc("gain relative to DC (dB)")
-        .x_labels(9)
-        .y_labels(10)
-        .label_style(("sans-serif", scaled(12)))
-        .axis_desc_style(("sans-serif", scaled(15)))
-        .axis_style(BLACK.stroke_width(RENDER_SCALE))
-        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
-        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
-        .draw()?;
-    chart.draw_series(LineSeries::new(
-        [(MIN_FREQUENCY_RATIO, -3.0), (MAX_FREQUENCY_RATIO, -3.0)],
-        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
-    ))?;
-    chart.draw_series(LineSeries::new(
-        [(1.0, MAGNITUDE_FLOOR_DB), (1.0, 5.0)],
-        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
-    ))?;
-    for response in responses {
-        chart
-            .draw_series(LineSeries::new(
-                visible_magnitude_points(&response.frequency),
-                response.spec.color.stroke_width(scaled(2)),
-            ))?
-            .label(response.spec.label)
-            .legend(move |(x, y)| {
-                PathElement::new(
-                    [(x, y), (x + i32::try_from(scaled(24)).unwrap(), y)],
-                    response.spec.color.stroke_width(scaled(2)),
-                )
-            });
-    }
-    chart
-        .configure_series_labels()
-        .label_font(("sans-serif", scaled(12)))
-        .margin(scaled(5))
-        .legend_area_size(scaled(30))
-        .background_style(WHITE)
-        .border_style(BLACK.mix(0.35).stroke_width(RENDER_SCALE))
-        .position(SeriesLabelPosition::LowerLeft)
-        .draw()?;
-    Ok(())
-}
-
-fn draw_phase<const N: usize>(
-    area: &DrawingArea<SVGBackend<'_>, Shift>,
-    responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
-    let phase_floor = -90.0 * N.to_f64().ok_or("order does not fit in f64")?;
-    let mut chart = ChartBuilder::on(area)
-        .caption("Unwrapped phase response", ("sans-serif", scaled(22)))
-        .margin(scaled(16))
-        .x_label_area_size(scaled(46))
-        .y_label_area_size(scaled(68))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            phase_floor..5.0_f64,
-        )?;
-    chart
-        .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
-        .y_desc("phase (degrees)")
-        .x_labels(9)
-        .y_labels(10)
-        .label_style(("sans-serif", scaled(12)))
-        .axis_desc_style(("sans-serif", scaled(15)))
-        .axis_style(BLACK.stroke_width(RENDER_SCALE))
-        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
-        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
-        .draw()?;
-    chart.draw_series(LineSeries::new(
-        [(1.0, phase_floor), (1.0, 5.0)],
-        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
-    ))?;
-    for response in responses {
-        chart.draw_series(LineSeries::new(
-            response
-                .frequency
-                .iter()
-                .map(|point| (point.ratio, point.phase_radians.to_degrees())),
-            response.spec.color.stroke_width(scaled(2)),
-        ))?;
-    }
-    Ok(())
-}
-
-fn draw_group_delay(
-    area: &DrawingArea<SVGBackend<'_>, Shift>,
-    responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
-    let maximum = responses
-        .iter()
-        .flat_map(|response| response.group_delay.iter().map(|(_, delay)| *delay))
-        .filter(|delay| delay.is_finite() && *delay >= 0.0)
-        .fold(1.0_f64, f64::max);
-    let upper = maximum.mul_add(1.05, 0.05);
-    let mut chart = ChartBuilder::on(area)
-        .caption("Group delay", ("sans-serif", scaled(22)))
-        .margin(scaled(16))
-        .x_label_area_size(scaled(46))
-        .y_label_area_size(scaled(68))
-        .build_cartesian_2d(
-            (MIN_FREQUENCY_RATIO..MAX_FREQUENCY_RATIO).log_scale(),
-            0.0_f64..upper,
-        )?;
-    chart
-        .configure_mesh()
-        .x_desc("frequency / −3 dB cutoff")
-        .y_desc("normalized group delay (ωc τg)")
-        .x_labels(9)
-        .y_labels(10)
-        .label_style(("sans-serif", scaled(12)))
-        .axis_desc_style(("sans-serif", scaled(15)))
-        .axis_style(BLACK.stroke_width(RENDER_SCALE))
-        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
-        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
-        .draw()?;
-    chart.draw_series(LineSeries::new(
-        [(1.0, 0.0), (1.0, upper)],
-        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
-    ))?;
-    for response in responses {
-        chart.draw_series(LineSeries::new(
-            response.group_delay.iter().copied(),
-            response.spec.color.stroke_width(scaled(2)),
-        ))?;
-    }
-    Ok(())
-}
-
-fn draw_step(
-    area: &DrawingArea<SVGBackend<'_>, Shift>,
-    responses: &[ResponseData],
-) -> Result<(), Box<dyn Error>> {
-    let end = responses
-        .first()
-        .and_then(|response| response.step.last())
-        .map_or(4.0, |(time, _)| *time);
-    let maximum = responses
-        .iter()
-        .flat_map(|response| response.step.iter().map(|(_, value)| *value))
-        .filter(|value| value.is_finite())
-        .fold(1.0_f64, f64::max);
-    let mut chart = ChartBuilder::on(area)
-        .caption("Unit-step response", ("sans-serif", scaled(22)))
-        .margin(scaled(16))
-        .x_label_area_size(scaled(46))
-        .y_label_area_size(scaled(62))
-        .build_cartesian_2d(0.0_f64..end, -0.1_f64..maximum.mul_add(1.05, 0.05))?;
-    chart
-        .configure_mesh()
-        .x_desc("time × cutoff frequency")
-        .y_desc("output")
-        .x_labels(9)
-        .y_labels(10)
-        .label_style(("sans-serif", scaled(12)))
-        .axis_desc_style(("sans-serif", scaled(15)))
-        .axis_style(BLACK.stroke_width(RENDER_SCALE))
-        .bold_line_style(RGBColor(174, 181, 190).stroke_width(RENDER_SCALE))
-        .light_line_style(RGBColor(225, 229, 235).stroke_width(RENDER_SCALE))
-        .draw()?;
-    chart.draw_series(LineSeries::new(
-        [(0.0, 1.0), (end, 1.0)],
-        BLACK.mix(0.25).stroke_width(RENDER_SCALE),
-    ))?;
-    for response in responses {
-        chart.draw_series(LineSeries::new(
-            response.step.iter().copied(),
-            response.spec.color.stroke_width(scaled(2)),
-        ))?;
-    }
-    Ok(())
-}
-
-fn frequency_ratios() -> impl Iterator<Item = f64> {
-    let start = MIN_FREQUENCY_RATIO.log10();
-    let end = MAX_FREQUENCY_RATIO.log10();
-    (0..FREQUENCY_POINTS).map(move |index| {
-        let fraction = f64::from(index) / f64::from(FREQUENCY_POINTS - 1);
-        10.0_f64.powf(start + fraction * (end - start))
-    })
-}
-
-fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
-    let mut visible = Vec::with_capacity(points.len());
-    for point in points {
-        if point.gain_db >= MAGNITUDE_FLOOR_DB {
-            visible.push((point.ratio, point.gain_db));
-            continue;
-        }
-        if let Some(&(preceding_ratio, preceding_gain)) = visible.last() {
-            let fraction = (MAGNITUDE_FLOOR_DB - preceding_gain) / (point.gain_db - preceding_gain);
-            let log_ratio = fraction.mul_add(
-                point.ratio.ln() - preceding_ratio.ln(),
-                preceding_ratio.ln(),
-            );
-            visible.push((log_ratio.exp(), MAGNITUDE_FLOOR_DB));
-        }
-        break;
-    }
-    visible
-}
-
-fn exact_frequency_point<const N: usize>(
-    response: Response,
-    frequency_ratio: f64,
-) -> Result<FrequencyPoint, Box<dyn Error>> {
-    let order = N.to_f64().ok_or("order does not fit in f64")?;
-    let mut log_magnitude = 0.0;
-    let mut phase_radians = 0.0;
-    match response {
-        Response::RepeatedPole => {
-            let rate = 1.0 / (core::f64::consts::LN_2 / order).exp_m1().sqrt();
-            for _ in 0..N {
-                accumulate_first_order(
-                    rate,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-        }
-        Response::Butterworth => {
-            if N % 2 == 1 {
-                accumulate_first_order(
-                    1.0,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-            for index in 0..N / 2 {
-                let angle =
-                    core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
-                accumulate_second_order(
-                    2.0 * angle.sin(),
-                    1.0,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-        }
-        Response::Bessel => {
-            let prototype = bessel_table::prototype(N)
-                .ok_or("Bessel response order exceeds the supported table")?;
-            if N % 2 == 1 {
-                accumulate_first_order(
-                    prototype.real_rate,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-            for (&damping, &frequency_squared) in
-                prototype.damping.iter().zip(prototype.frequency_squared)
-            {
-                accumulate_second_order(
-                    damping,
-                    frequency_squared,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-        }
-        Response::Chebyshev1 { ripple_db } => {
-            let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
-            let epsilon = epsilon_squared.sqrt();
-            let mu = (1.0 / epsilon).asinh() / order;
-            let cutoff_target = if N % 2 == 0 {
-                (1.0 / epsilon_squared + 2.0).sqrt()
-            } else {
-                1.0 / epsilon
-            };
-            let cutoff_scale = (cutoff_target.acosh() / order).cosh();
-            if N % 2 == 1 {
-                accumulate_first_order(
-                    mu.sinh() / cutoff_scale,
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-            for index in 0..N / 2 {
-                let angle =
-                    core::f64::consts::PI * (2 * index + 1).to_f64().unwrap() / (2.0 * order);
-                let real = mu.sinh() * angle.sin() / cutoff_scale;
-                let imaginary = mu.cosh() * angle.cos() / cutoff_scale;
-                accumulate_second_order(
-                    2.0 * real,
-                    real.mul_add(real, imaginary * imaginary),
-                    frequency_ratio,
-                    &mut log_magnitude,
-                    &mut phase_radians,
-                );
-            }
-        }
-        _ => return Err("response is not supported by this development plot".into()),
-    }
-
-    Ok(FrequencyPoint {
-        ratio: frequency_ratio,
-        gain_db: 20.0 / core::f64::consts::LN_10 * log_magnitude,
-        phase_radians,
-    })
-}
-
-fn accumulate_first_order(rate: f64, frequency: f64, log_magnitude: &mut f64, phase: &mut f64) {
-    *log_magnitude += rate.ln() - rate.hypot(frequency).ln();
-    *phase -= frequency.atan2(rate);
-}
-
-fn accumulate_second_order(
-    damping: f64,
-    natural_frequency_squared: f64,
-    frequency: f64,
-    log_magnitude: &mut f64,
-    phase: &mut f64,
-) {
-    let denominator_real = natural_frequency_squared - frequency * frequency;
-    let denominator_imaginary = damping * frequency;
-    *log_magnitude +=
-        natural_frequency_squared.ln() - denominator_real.hypot(denominator_imaginary).ln();
-    *phase -= denominator_imaginary.atan2(denominator_real);
-}
-
-fn group_delay(points: &[FrequencyPoint]) -> Vec<(f64, f64)> {
-    let width = 2 * GROUP_DELAY_HALF_WINDOW + 1;
-    points
-        .windows(width)
-        .filter_map(|window| {
-            let center = &window[GROUP_DELAY_HALF_WINDOW];
-            let mean_ratio = window.iter().map(|point| point.ratio).sum::<f64>()
-                / width.to_f64().expect("small constant fits in f64");
-            let mean_phase = window.iter().map(|point| point.phase_radians).sum::<f64>()
-                / width.to_f64().expect("small constant fits in f64");
-            let (covariance, variance) = window.iter().fold((0.0, 0.0), |acc, point| {
-                let ratio_offset = point.ratio - mean_ratio;
-                (
-                    (point.phase_radians - mean_phase).mul_add(ratio_offset, acc.0),
-                    ratio_offset.mul_add(ratio_offset, acc.1),
-                )
-            });
-            let delay = -covariance / variance;
-            (delay.is_finite() && delay >= 0.0).then_some((center.ratio, delay))
-        })
-        .collect()
-}
-
-fn measure_step_response<const N: usize>(
-    response: Response,
-) -> Result<Vec<(f64, f64)>, Box<dyn Error>> {
-    let order = N.to_f64().ok_or("order does not fit in f64")?;
-    let duration = 4.0_f64.max(order);
-    let dt = duration / (CUTOFF_HZ * f64::from(TRANSIENT_POINTS - 1));
-    let mut filter = LowPass::<N>::builder(CUTOFF_HZ)
-        .response(response)
-        .input_model(InputModel::CurrentHold)
-        .build()?;
-    let mut points = Vec::with_capacity(TRANSIENT_POINTS as usize);
-    points.push((0.0, filter.output()));
-    for index in 1..TRANSIENT_POINTS {
-        let output = filter.update(1.0, dt)?;
-        points.push((f64::from(index) * dt * CUTOFF_HZ, output));
-    }
-    Ok(points)
-}
-
-fn smooth_svg_response_curves(output_path: &Path) -> Result<(), Box<dyn Error>> {
-    // Plotters maps chart coordinates to integer backend pixels and emits
-    // polylines. Replacing only the response curves with shape-preserving
-    // cubic paths removes visible quantization at high SVG zoom levels.
-    let svg = fs::read_to_string(output_path)?;
-    let mut smoothed = String::with_capacity(svg.len());
-    for line in svg.lines() {
-        let resized_line;
-        let line = if line.starts_with("<svg ") {
-            let rendered_size = format!(
-                "width=\"{}\" height=\"{}\"",
-                scaled(DISPLAY_WIDTH),
-                scaled(DISPLAY_HEIGHT)
-            );
-            let display_size = format!("width=\"{DISPLAY_WIDTH}\" height=\"{DISPLAY_HEIGHT}\"");
-            resized_line = line.replacen(&rendered_size, &display_size, 1);
-            resized_line.as_str()
-        } else {
-            line
-        };
-        let replacement = RESPONSE_STROKES
-            .iter()
-            .any(|color| line.contains(color))
-            .then(|| smooth_polyline(line))
-            .flatten();
-        smoothed.push_str(replacement.as_deref().unwrap_or(line));
-        smoothed.push('\n');
-    }
-    fs::write(output_path, smoothed)?;
-    Ok(())
-}
-
-fn smooth_polyline(line: &str) -> Option<String> {
-    let points_start = line.find(" points=\"")?;
-    let values_start = points_start + " points=\"".len();
-    let values_end = values_start + line[values_start..].find('"')?;
-    let points = collapse_vertical_pixels(parse_svg_points(&line[values_start..values_end])?);
-    if points.len() < 3 {
-        return None;
-    }
-
-    let prefix = line[..points_start].replacen("<polyline", "<path", 1);
-    let suffix = &line[values_end + 1..];
-    Some(format!(
-        "{prefix} stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"{}\"{suffix}",
-        pchip_path(&points)?
-    ))
-}
-
-fn parse_svg_points(values: &str) -> Option<Vec<(i32, i32)>> {
-    values
-        .split_ascii_whitespace()
-        .map(|point| {
-            let (x, y) = point.split_once(',')?;
-            Some((x.parse().ok()?, y.parse().ok()?))
-        })
-        .collect()
-}
-
-fn collapse_vertical_pixels(points: Vec<(i32, i32)>) -> Vec<(f64, f64)> {
-    let mut collapsed: Vec<(i32, f64, u32)> = Vec::with_capacity(points.len());
-    for (x, y) in points {
-        if let Some((last_x, y_sum, count)) = collapsed.last_mut() {
-            if *last_x == x {
-                *y_sum += f64::from(y);
-                *count += 1;
-                continue;
-            }
-        }
-        collapsed.push((x, f64::from(y), 1));
-    }
-    collapsed
-        .into_iter()
-        .map(|(x, y_sum, count)| (f64::from(x), y_sum / f64::from(count)))
-        .collect()
-}
-
-fn pchip_path(points: &[(f64, f64)]) -> Option<String> {
-    let intervals = points
-        .windows(2)
-        .map(|pair| pair[1].0 - pair[0].0)
-        .collect::<Vec<_>>();
-    if intervals.iter().any(|interval| *interval <= 0.0) {
-        return None;
-    }
-    let secants = points
-        .windows(2)
-        .zip(&intervals)
-        .map(|(pair, interval)| (pair[1].1 - pair[0].1) / interval)
-        .collect::<Vec<_>>();
-    let slopes = pchip_slopes(&intervals, &secants);
-
-    let mut path = String::with_capacity(points.len() * 64);
-    write!(path, "M {:.3},{:.3}", points[0].0, points[0].1).ok()?;
-    for (index, pair) in points.windows(2).enumerate() {
-        let interval = intervals[index];
-        let control_1 = (
-            pair[0].0 + interval / 3.0,
-            slopes[index].mul_add(interval / 3.0, pair[0].1),
-        );
-        let control_2 = (
-            pair[1].0 - interval / 3.0,
-            (-slopes[index + 1]).mul_add(interval / 3.0, pair[1].1),
-        );
-        write!(
-            path,
-            " C {:.3},{:.3} {:.3},{:.3} {:.3},{:.3}",
-            control_1.0, control_1.1, control_2.0, control_2.1, pair[1].0, pair[1].1
+    render::draw::<N>(
+        arguments.output_path.as_path(),
+        arguments.topology,
+        &responses,
+    )
+    .with_context(|| format!("rendering SVG {}", arguments.output_path.display()))?;
+    svg_smoothing::smooth_svg_curves(arguments.output_path.as_path()).with_context(|| {
+        format!(
+            "smoothing SVG curves in {}",
+            arguments.output_path.display()
         )
-        .ok()?;
-    }
-    Some(path)
-}
-
-fn pchip_slopes(intervals: &[f64], secants: &[f64]) -> Vec<f64> {
-    if secants.len() == 1 {
-        return vec![secants[0], secants[0]];
-    }
-
-    let mut slopes = vec![0.0; secants.len() + 1];
-    slopes[0] = endpoint_slope(intervals[0], intervals[1], secants[0], secants[1]);
-    let last = secants.len() - 1;
-    slopes[last + 1] = endpoint_slope(
-        intervals[last],
-        intervals[last - 1],
-        secants[last],
-        secants[last - 1],
-    );
-    for index in 1..=last {
-        let preceding = secants[index - 1];
-        let following = secants[index];
-        if preceding * following <= 0.0 {
-            continue;
-        }
-        let weight_1 = 2.0 * intervals[index] + intervals[index - 1];
-        let weight_2 = intervals[index] + 2.0 * intervals[index - 1];
-        slopes[index] = (weight_1 + weight_2) / (weight_1 / preceding + weight_2 / following);
-    }
-    slopes
-}
-
-fn endpoint_slope(
-    endpoint_interval: f64,
-    adjacent_interval: f64,
-    endpoint_secant: f64,
-    adjacent_secant: f64,
-) -> f64 {
-    let mut slope = ((2.0 * endpoint_interval + adjacent_interval) * endpoint_secant
-        - endpoint_interval * adjacent_secant)
-        / (endpoint_interval + adjacent_interval);
-    if slope * endpoint_secant <= 0.0 {
-        slope = 0.0;
-    } else if endpoint_secant * adjacent_secant < 0.0 && slope.abs() > 3.0 * endpoint_secant.abs() {
-        slope = 3.0 * endpoint_secant;
-    }
-    slope
+    })?;
+    report::write_csv(
+        arguments.csv_path.as_path(),
+        arguments.topology,
+        N,
+        &responses,
+    )
+    .with_context(|| format!("writing measurement CSV {}", arguments.csv_path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
-mod svg_tests {
-    use approx::assert_relative_eq;
+mod tests {
+    use std::path::Path;
 
-    use super::{
-        MAGNITUDE_FLOOR_DB, collapse_vertical_pixels, exact_frequency_point, frequency_ratios,
-        pchip_path, smooth_polyline, visible_magnitude_points,
-    };
-    use ssfilt::Response;
+    use clap::Parser;
+
+    use super::{Cli, ResponseChoice, Topology, default_output_path, response_specs};
 
     #[test]
-    fn frequency_grid_is_logarithmically_spaced() {
-        let ratios = frequency_ratios().collect::<Vec<_>>();
-        let expected_ratio = ratios[1] / ratios[0];
-        for pair in ratios.windows(2) {
-            assert_relative_eq!(pair[1] / pair[0], expected_ratio, epsilon = 2.0e-15);
-        }
-    }
-
-    #[test]
-    fn exact_responses_share_the_minus_three_db_cutoff() {
-        for response in [
-            Response::RepeatedPole,
-            Response::Butterworth,
-            Response::Chebyshev1 { ripple_db: 0.5 },
-        ] {
-            let point = exact_frequency_point::<36>(response, 1.0).unwrap();
-            assert_relative_eq!(point.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
-            assert!(point.phase_radians.is_finite());
-        }
-
-        let bessel = exact_frequency_point::<25>(Response::Bessel, 1.0).unwrap();
-        assert_relative_eq!(bessel.gain_db, -3.010_299_956_639_812, epsilon = 2.0e-11);
-        assert!(bessel.phase_radians.is_finite());
-    }
-
-    #[test]
-    fn exact_high_order_stopbands_reach_the_plot_floor() {
-        for response in [
-            Response::Butterworth,
-            Response::Chebyshev1 { ripple_db: 0.5 },
-        ] {
-            let point = exact_frequency_point::<36>(response, 20.0).unwrap();
-            assert!(point.gain_db < MAGNITUDE_FLOOR_DB);
-        }
-    }
-
-    #[test]
-    fn magnitude_curve_ends_at_the_visible_floor() {
-        let points = frequency_ratios()
-            .map(|ratio| {
-                exact_frequency_point::<36>(Response::Chebyshev1 { ripple_db: 0.5 }, ratio)
-            })
-            .collect::<Result<Vec<_>, _>>()
+    fn defaults_keep_the_legacy_low_pass_output_location() {
+        let arguments = Cli::try_parse_from(["plot_responses"])
+            .unwrap()
+            .normalize()
             .unwrap();
-        let visible = visible_magnitude_points(&points);
-        assert_eq!(visible.last().unwrap().1, MAGNITUDE_FLOOR_DB);
-        assert!(visible.len() < points.len());
-    }
-
-    #[test]
-    fn vertical_pixel_runs_are_averaged() {
-        let points = collapse_vertical_pixels(vec![(1, 2), (1, 4), (2, 5)]);
-        assert_eq!(points, vec![(1.0, 3.0), (2.0, 5.0)]);
-    }
-
-    #[test]
-    fn pchip_emits_cubic_segments_through_each_point() {
-        let path = pchip_path(&[(0.0, 0.0), (1.0, 1.0), (2.0, 0.0)]).unwrap();
-        assert!(path.starts_with("M 0.000,0.000 C "));
-        assert!(path.contains(" 1.000,1.000 C "));
-        assert!(path.ends_with(" 2.000,0.000"));
-    }
-
-    #[test]
-    fn response_polyline_becomes_a_rounded_path() {
-        let line = concat!(
-            "<polyline fill=\"none\" stroke=\"#2E6FD6\" ",
-            "points=\"0,0 1,1 2,0 \"/>"
+        assert_eq!(arguments.order, 4);
+        assert_eq!(arguments.topology, Topology::LowPass);
+        assert_eq!(arguments.response, ResponseChoice::All);
+        assert_eq!(
+            arguments.output_path,
+            default_output_path(Topology::LowPass)
         );
-        let path = smooth_polyline(line).unwrap();
-        assert!(path.starts_with("<path "));
-        assert!(path.contains("stroke-linecap=\"round\""));
-        assert!(path.contains(" d=\"M "));
-        assert!(!path.contains(" points="));
+        assert_eq!(arguments.csv_path, Path::new("target/filter-responses.csv"));
+    }
+
+    #[test]
+    fn positional_order_and_svg_path_remain_supported() {
+        let arguments = Cli::try_parse_from(["plot_responses", "8", "target/custom.svg"])
+            .unwrap()
+            .normalize()
+            .unwrap();
+        assert_eq!(arguments.order, 8);
+        assert_eq!(arguments.output_path, Path::new("target/custom.svg"));
+        assert_eq!(arguments.csv_path, Path::new("target/custom.csv"));
+    }
+
+    #[test]
+    fn band_pass_requires_an_even_final_order() {
+        let error =
+            Cli::try_parse_from(["plot_responses", "--topology", "band-pass", "--order", "5"])
+                .unwrap()
+                .normalize()
+                .unwrap_err();
+        assert!(error.to_string().contains("positive and even"));
+    }
+
+    #[test]
+    fn explicitly_selected_bessel_reports_the_topology_limit() {
+        let error = Cli::try_parse_from([
+            "plot_responses",
+            "--topology",
+            "high-pass",
+            "--response",
+            "bessel",
+            "--order",
+            "26",
+        ])
+        .unwrap()
+        .normalize()
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Bessel for high-pass supports final order up to 25")
+        );
+    }
+
+    #[test]
+    fn all_responses_keep_bessel_at_the_final_band_pass_limit() {
+        let specs = response_specs(ResponseChoice::All, Topology::BandPass, 50);
+        assert_eq!(specs.len(), 4);
+        assert_eq!(specs[2].label, "Bessel");
+    }
+
+    #[test]
+    fn all_low_pass_responses_omit_only_bessel_above_its_limit() {
+        let specs = response_specs(ResponseChoice::All, Topology::LowPass, 50);
+        assert_eq!(specs.len(), 3);
+        assert!(specs.iter().all(|spec| spec.label != "Bessel"));
     }
 }

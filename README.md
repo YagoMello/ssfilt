@@ -16,7 +16,20 @@ band-pass filters with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Phase handling is planned, but is not yet part of the API.
+Phase correction and offline batch filtering are deferred and are not part of
+the API. They will be reconsidered only for a demonstrated use case.
+
+## Installation
+
+Add the crate to your application:
+
+```toml
+[dependencies]
+ssfilt = "0.1"
+```
+
+For embedded use without `std`, see the [`no_std`](#no_std) configuration
+below.
 
 ## Example
 
@@ -43,6 +56,19 @@ defines what is assumed between that sample and the preceding one:
 - `CurrentHold` applies the new input throughout the interval.
 
 The first interval begins at `initial_input`, which defaults to zero.
+
+### Runnable examples
+
+| Goal | Command |
+| --- | --- |
+| Smooth timestamped sensor readings | `cargo run --example irregular_sensor` |
+| Inspect high-pass endpoint timing | `cargo run --example high_pass_endpoint` |
+| Select order 2 or 4 without allocating | `cargo run --example runtime_order -- 2` |
+
+The corresponding sources are
+[`irregular_sensor.rs`](examples/irregular_sensor.rs),
+[`high_pass_endpoint.rs`](examples/high_pass_endpoint.rs), and
+[`runtime_order.rs`](examples/runtime_order.rs).
 
 ### Choosing a starting point
 
@@ -307,40 +333,66 @@ The Criterion benchmarks cover order, response and topology scaling, input
 reconstruction policies, and increasingly large normalized sample intervals.
 Benchmark dependencies are development-only and do not affect library users.
 
-To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
-delay, and unit-step responses, run:
+To generate an SVG dashboard and a sibling CSV report with magnitude,
+unwrapped phase, normalized group delay, unit-step response, and measurements
+made through the public streaming API, run:
 
 ```text
 cargo run --release --example plot_responses -- 4 target/filter-responses.svg
 ```
 
-Select a focused view without adding panels to the same SVG:
+Select a topology, response family, or order with named options:
 
 ```text
-cargo run --release --example plot_responses -- high-pass 4 target/high-pass-responses.svg
-cargo run --release --example plot_responses -- band-pass 4 target/band-pass-responses.svg
+cargo run --release --example plot_responses -- --topology high-pass --order 4 --output target/high-pass-responses.svg
+cargo run --release --example plot_responses -- --topology band-pass --response bessel --order 8 --output target/band-pass-bessel.svg
+cargo run --release --example plot_responses -- --response chebyshev1 --order 12 --output target/chebyshev-12.svg --csv target/chebyshev-12.csv
 cargo run --release --example plot_performance -- target/filter-performance.svg
 ```
 
-The first command above remains the default low-pass view. Band-pass orders
-must be even; its plot uses cutoff edges at 0.5 and 2 times the geometric
-center. The performance SVG is intentionally separate: it shows indicative
-median host timings for order-four response families/topologies and RK45
-tolerance, step-cap, and input-reconstruction settings. There is no second
-production integrator to compare yet. Timings depend on the host and load and
-should not be treated as portable benchmarks.
+`cargo run --release --example plot_responses -- --help` lists every option.
+The commonly used flags are:
+
+| Flag | Values and behavior |
+| --- | --- |
+| `--topology` | `low-pass` (default), `high-pass`, or `band-pass` |
+| `--response` | `all` (default), `repeated-pole`, `butterworth`, `bessel`, or `chebyshev1` |
+| `--order` | Final order 1–50; band-pass orders must be even |
+| `--output` | SVG path; parent directories are created |
+| `--csv` | Measurement report path; defaults beside the SVG |
+
+The legacy low-pass form `[ORDER] [OUTPUT.svg]` remains available. Band-pass
+uses −3 dB edges at 0.5 and 2 times the geometric center. Explicit Bessel
+orders above the supported limit fail clearly; `--response all` omits Bessel
+when the selected order exceeds its limit.
+
+Analytic lines represent ideal continuous-time sine responses. Circular
+markers are inspection measurements using the public filter,
+`InputModel::Linear`, and 256 samples per cycle. The SVG title and CSV record
+that reconstruction policy. In a very deep stopband, piecewise-linear
+reconstruction error can dominate the ideal sine response, so a marker may
+legitimately sit above the analytic line; this shows what that sampling setup
+actually achieves. A two-million-update limit prevents one expensive
+high-order marker from blocking the plot. Such points remain in CSV with an
+explicit work-limit status and no fabricated measurement.
+
+The performance SVG is intentionally separate: it shows indicative median
+host timings for order-four response families/topologies and RK45 tolerance,
+step-cap, and input-reconstruction settings. There is no second production
+integrator to compare yet. Timings depend on the host and load and should not
+be treated as portable benchmarks.
 
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to
 `target/filter-responses.svg` and order 4. Frequency curves use 1,601
 logarithmically spaced points; high orders can therefore take noticeably
 longer to render. Bessel is included through its supported maximum order and
-is omitted from higher-order dashboards. Frequency-domain curves are evaluated
-directly from the normalized continuous transfer functions, avoiding settling
-artifacts in deep high-order stopbands. The unit-step panel still drives the
-public streaming API end to end. Curves are written as shape-preserving cubic
-SVG paths from an oversampled internal canvas, so subpixel detail remains
-smooth when zoomed without introducing spline overshoot.
+is omitted from higher-order `all` dashboards. Frequency-domain curves are
+evaluated directly from normalized continuous transfer functions. Sparse
+gain and phase markers and the unit-step panel drive the public streaming API
+end to end. Curves are written as shape-preserving cubic SVG paths from an
+oversampled internal canvas, so subpixel detail remains smooth when zoomed
+without introducing spline overshoot.
 
 The Bessel prototype table can be regenerated separately from the Rust build
 with `scripts/generate_bessel_table.py`; that development helper requires

@@ -236,7 +236,7 @@ updates preserve the preceding snapshot transactionally.
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
 7. Practical response-inspection tools and user-facing examples for irregular
-   sampling, recovery, runtime order selection, and embedded use.
+   sampling, recovery, runtime order selection, and embedded use. ✓
 8. Prepare an early release of the focused streaming core and gather real-user
    feedback before adding new filter categories.
 9. Phase correction, offline batch filtering, custom kernels, and alternative

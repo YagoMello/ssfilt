@@ -29,7 +29,10 @@ libm = ["num-traits/libm"]
 num-traits = { version = "0.2.19", default-features = false }
 
 [dev-dependencies]
+anyhow = "1.0.104"
 approx = "0.5.1"
+clap = { version = "4.6.7", features = ["derive"] }
+csv = "1.4.0"
 criterion = { version = "0.7.0", default-features = false }
 plotters = { version = "0.3.7", default-features = false, features = ["line_series", "svg_backend"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
