@@ -16,15 +16,7 @@ band-pass filters with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
-Offline forward-backward filtering is available for signals that can be held
-as a complete batch. It removes phase delay in the interior of the record at
-the cost of applying the magnitude response twice. The endpoints depend on
-the chosen boundary condition and can retain transients.
-
-An optional streaming phase equalizer is available for low-pass filters whose
-group-delay variation can be reduced by one to four first-order all-pass
-sections. It adds latency over a selected passband while retaining the
-underlying continuous-time magnitude response.
+Phase handling is planned, but is not yet part of the API.
 
 ## Example
 
@@ -185,61 +177,6 @@ The final `Ok` line is only an example harness; `SensorFilter` itself never
 allocates. On a `no_std` target, use a concrete error type in the surrounding
 application instead.
 
-### Offline forward-backward filtering
-
-`forward_backward_into` accepts one elapsed interval for each gap between
-samples, so irregularly timed data can be processed without resampling:
-
-```rust
-use ssfilt::{LowPass, Response, forward_backward_into};
-
-let filter = LowPass::<4>::builder(20.0)
-    .response(Response::Butterworth)
-    .build()?;
-let samples = [0.0, 1.0, 0.5, 0.0];
-let intervals_seconds = [0.010, 0.012, 0.009];
-let mut output = [0.0; 4];
-forward_backward_into(&filter, &samples, &intervals_seconds, &mut output)?;
-# assert!(output.iter().all(|sample| sample.is_finite()));
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-For equal spacing, use `forward_backward_uniform_into(&filter, &samples,
-dt_seconds, &mut output)`. Both functions work without allocation and leave
-the supplied filter and input unchanged. Each pass begins at the steady state
-of its first sample. The method needs the whole record, and the magnitude
-response is squared; a single-pass −3 dB edge becomes approximately −6 dB
-away from boundaries.
-
-### Delayed streaming phase equalization
-
-To reduce delay variation across a low-pass filter's passband, attach an
-equalizer to a configured filter:
-
-```rust
-use ssfilt::{LowPass, Response};
-
-let filter = LowPass::<4>::builder(20.0)
-    .response(Response::Butterworth)
-    .build()?;
-let mut equalized = filter.equalize_phase::<2>(0.0, 20.0)?;
-let value = equalized.update(1.0, 0.01)?;
-let delay_at_10_hz = equalized.group_delay_seconds(10.0)?;
-# assert!(value.is_finite() && delay_at_10_hz > 0.0);
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-The original filter remains available. The equalizer integrates its state
-together with the low-pass state at every internal solver stage, including for
-irregular sample intervals. Its continuous-time all-pass sections preserve
-magnitude and add frequency-dependent delay; `group_delay_seconds` reports
-the total modeled delay at a frequency in the designed band. The output is
-**not zero phase**; the equalizer adds positive group delay. Construction
-returns `PhaseEqualizationError::NoImprovement` when
-these sections cannot appreciably flatten the chosen band. Equalization is
-currently limited to low-pass filters and bands from 0 Hz up to their −3 dB
-cutoff; other topologies remain ordinary streaming filters.
-
 ## Response families
 
 `Response::RepeatedPole` is the default and preserves the library's original
@@ -357,9 +294,8 @@ and shrinking property tests for numerical invariants such as partition and
 frequency-scaling independence. Explicit non-finite and transactional failures
 remain ordinary regression tests so their contracts stay easy to read.
 
-The Criterion benchmarks cover order, response and topology scaling, phase
-equalization, input reconstruction policies, and increasingly large normalized
-sample intervals.
+The Criterion benchmarks cover order, response and topology scaling, input
+reconstruction policies, and increasingly large normalized sample intervals.
 Benchmark dependencies are development-only and do not affect library users.
 
 To generate an SVG dashboard with magnitude, unwrapped phase, normalized group
@@ -374,31 +310,16 @@ Select a focused view without adding panels to the same SVG:
 ```text
 cargo run --release --example plot_responses -- high-pass 4 target/high-pass-responses.svg
 cargo run --release --example plot_responses -- band-pass 4 target/band-pass-responses.svg
-cargo run --release --example plot_responses -- phase 4 target/phase-responses.svg
-cargo run --release --example plot_responses -- phase chebyshev 4 target/phase-chebyshev.svg
-cargo run --release --example plot_responses -- waveform butterworth 4 target/phase-waveform.svg
 cargo run --release --example plot_performance -- target/filter-performance.svg
 ```
 
-The original `plot_responses -- 4 ...` command remains the default low-pass view. Band-pass orders
+The first command above remains the default low-pass view. Band-pass orders
 must be even; its plot uses cutoff edges at 0.5 and 2 times the geometric
-center. The `phase` and `waveform` views accept `repeated`, `butterworth`,
-`bessel`, or `chebyshev` as an optional response model before the order;
-Butterworth remains the default, and Chebyshev I uses 0.5 dB ripple. The phase
-view compares an ordinary low-pass with the same filter plus two all-pass
-sections designed over 0 to its cutoff. Their magnitude traces coincide,
-while phase, group delay, and step response show the added delay. The waveform
-view uses a Gaussian-windowed four-tone burst at 0.12, 0.31, 0.57, and 0.88
-times cutoff. Its upper panel shows actual streaming timing; the lower panel
-shifts each output by one fitted constant delay solely to reveal residual
-waveform distortion. This display shift does not remove real latency. If no
-all-pass design improves the selected response, the plots show the ordinary
-filter alone and say so explicitly. The performance SVG is intentionally
-separate: it shows
-indicative median host timings for order-four kernels/topologies, equalization,
-and RK45 tolerance, step-cap, and input-reconstruction settings. There is no
-second production integrator to compare yet. Timings depend on the host and
-load and should not be treated as portable benchmarks.
+center. The performance SVG is intentionally separate: it shows indicative
+median host timings for order-four response families/topologies and RK45
+tolerance, step-cap, and input-reconstruction settings. There is no second
+production integrator to compare yet. Timings depend on the host and load and
+should not be treated as portable benchmarks.
 
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to

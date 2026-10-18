@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let panels = root.margin(120, 100, 45, 45).split_evenly((1, 2));
     draw_panel(
         &panels[0],
-        "Kernel, topology & all-pass",
+        "Response family & topology",
         &kernel_cases,
         RGBColor(46, 111, 214),
     )?;
@@ -118,10 +118,6 @@ fn kernel_cases() -> Result<Vec<Timing>, Box<dyn Error>> {
             BandPass::<4>::builder(CUTOFF_HZ / 2.0, CUTOFF_HZ * 2.0)
                 .response(Response::Butterworth)
                 .build()?,
-        )?,
-        timing(
-            "Butter LP + AP(2)",
-            base.equalize_phase::<2>(0.0, CUTOFF_HZ)?,
         )?,
     ];
     Ok(kernel_cases)

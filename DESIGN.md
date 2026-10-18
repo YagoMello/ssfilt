@@ -181,52 +181,6 @@ integrator subdivides it. An endpoint discontinuity in `PreviousHold` is not
 fed into endpoint Runge-Kutta stages; `u_new` becomes `u_old` only after a
 successful update.
 
-## Offline forward-backward filtering
-
-The batch functions clone a configured streaming filter, initialize it to the
-first input sample's equilibrium, run the forward pass, then initialize a
-second pass to the final forward value's equilibrium and traverse the result
-backward. A gap between samples `i` and `i + 1` is used in both directions.
-The caller supplies an output slice, so the library performs no allocation.
-
-The interior response of a uniformly sampled linear filter has transfer
-function `H(z) H(z^-1)`, with zero phase and magnitude `|H(z)|^2`. Unequal
-sample gaps have no single global frequency response, but the reverse pass
-still uses the same physical intervals. Finite-record endpoint transients
-depend on the steady-state boundary condition. Validation of lengths, input,
-and intervals finishes before the output is written; an integration failure
-may leave a partial output.
-
-## Streaming phase equalization
-
-For low-pass filters, a phase-equalized wrapper can add 1–4 first-order
-continuous-time all-pass sections. Each section has transfer function and
-group delay, expressed in the same normalized time as its low-pass model:
-
-```text
-A(s)      = (a - s) / (a + s),  a > 0
-|A(j*w)|  = 1
-delay(w)  = 2*a / (a^2 + w^2)
-```
-
-The designer searches logarithmically spaced positive rates and minimizes
-the variance of total group delay at 33 frequencies in the selected passband.
-It rejects designs that fail to reduce that variance by at least five percent.
-First-order all-pass delay falls with frequency, so this family cannot flatten
-every low-pass response; for example, a single-pole low-pass already has
-falling group delay. The supported band is within 0 Hz through the filter's
-−3 dB cutoff. Construction is bounded, deterministic, and allocation-free.
-
-The solver stores the low-pass and all-pass states in two fixed arrays but
-advances them at the same internal Runge–Kutta stages. At each stage, the
-equalizer reads the low-pass model's continuous output, so irregular sample
-intervals do not require a second interpolation of that output. The coupled
-update remains transactional. An analytic group-delay query reports the
-continuous-time design; finite integration tolerance and sampled input
-reconstruction can still affect measured discrete traces. The equalizer adds
-latency and does not yield zero phase. Other topologies do not yet expose
-automatic equalization.
-
 ## Integration policy
 
 Dormand-Prince 5(4) supplies a fifth-order candidate and a fourth-order local
@@ -278,8 +232,9 @@ updates preserve the preceding snapshot transactionally.
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
 6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
-7. Optional delayed group-delay equalization and offline forward-backward
-   filtering as separate phase-handling approaches. ✓ (automatic streaming
-   equalization currently covers low-pass filters)
-8. Advanced custom kernels or alternative integrators only after concrete use
-   cases establish the necessary interface.
+7. Practical response-inspection tools and user-facing examples for irregular
+   sampling, recovery, runtime order selection, and embedded use.
+8. Prepare an early release of the focused streaming core and gather real-user
+   feedback before adding new filter categories.
+9. Phase correction, offline batch filtering, custom kernels, and alternative
+   integrators require a separately demonstrated use case and interface.
