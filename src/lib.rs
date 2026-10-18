@@ -1,7 +1,53 @@
 //! Continuous-time filters for irregularly sampled signals.
 //!
 //! `ssfilt` advances a continuous-time filter model by the elapsed time supplied
-//! with each sample. The runtime is allocation-free and supports `no_std`.
+//! with each sample. It provides allocation-free [`LowPass`], [`HighPass`], and
+//! [`BandPass`] filters and supports `no_std`. This prerelease API is intended
+//! for field testing rather than a production-readiness claim.
+//!
+//! # Quick start
+//!
+//! The new input is the sample at the end of `dt_seconds`:
+//!
+//! ```
+//! use ssfilt::{InputModel, LowPass, Response};
+//!
+//! let mut filter = LowPass::<4>::builder(20.0)
+//!     .response(Response::Butterworth)
+//!     .input_model(InputModel::Linear)
+//!     .initial_input(0.0)
+//!     .build()?;
+//!
+//! let output = filter.update(1.0, 0.012)?;
+//! assert!(output.is_finite());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`InputModel`] defines what is assumed between the preceding and new
+//! endpoints. Supply the complete measured interval; updates integrate all of
+//! it or fail transactionally without changing the filter.
+//!
+//! # Choosing a filter
+//!
+//! - [`LowPass`] smooths high-frequency variation.
+//! - [`HighPass`] removes slow baseline drift and has endpoint direct
+//!   feedthrough.
+//! - [`BandPass`] keeps a range between two complete-response −3 dB edges. Its
+//!   final order must be positive and even.
+//!
+//! Every public cutoff denotes the complete filter's −3 dB frequency. The
+//! [`Response`] selects repeated-pole, Butterworth, Bessel, or Chebyshev Type I
+//! behavior without changing that convention.
+//!
+//! # Embedded use
+//!
+//! Disable default features and enable `libm` for an allocation-free `no_std`
+//! build. Validated scalar types are `f32` and `f64`.
+//!
+//! Streaming phase correction and offline zero-phase filtering are not part of
+//! this release. Exact zero-phase streaming would require future samples or
+//! added latency; recorded data can instead use a separate offline
+//! forward-backward or frequency-domain workflow.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

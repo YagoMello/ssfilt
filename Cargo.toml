@@ -5,6 +5,8 @@ edition = "2024"
 description = "Continuous-time state-space filters for irregularly sampled signals"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/yagomello/ssfilt"
+documentation = "https://docs.rs/ssfilt"
+readme = "README.md"
 keywords = ["filter", "signal-processing", "state-space", "no-std"]
 categories = ["no-std", "science", "embedded"]
 include = [
@@ -17,7 +19,6 @@ include = [
     "/tests/**",
     "/examples/**",
     "/benches/**",
-    "/docs/**",
     "/proptest-regressions/**",
 ]
 

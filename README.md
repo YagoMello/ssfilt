@@ -17,7 +17,10 @@ band-pass filters with four response families:
 - per-update integration diagnostics for observing adaptive work.
 
 Phase correction and offline batch filtering are deferred and are not part of
-the API. They will be reconsidered only for a demonstrated use case.
+the API. Exact zero-phase streaming would require future samples or added
+latency; for recorded data, forward-backward or frequency-domain processing is
+a different offline solution. These features will be reconsidered only for a
+demonstrated use case.
 
 ## Installation
 
