@@ -7,6 +7,18 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/yagomello/ssfilt"
 keywords = ["filter", "signal-processing", "state-space", "no-std"]
 categories = ["no-std", "science", "embedded"]
+include = [
+    "/README.md",
+    "/DESIGN.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/src/**",
+    "/tests/**",
+    "/examples/**",
+    "/benches/**",
+    "/docs/**",
+    "/proptest-regressions/**",
+]
 
 [features]
 default = ["std"]
