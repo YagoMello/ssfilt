@@ -1,6 +1,6 @@
 [package]
 name = "ssfilt"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2024"
 description = "Continuous-time state-space filters for irregularly sampled signals"
 license = "MIT OR Apache-2.0"
@@ -9,6 +9,7 @@ keywords = ["filter", "signal-processing", "state-space", "no-std"]
 categories = ["no-std", "science", "embedded"]
 include = [
     "/README.md",
+    "/CHANGELOG.md",
     "/DESIGN.md",
     "/LICENSE-MIT",
     "/LICENSE-APACHE",

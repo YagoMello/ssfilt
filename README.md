@@ -25,7 +25,7 @@ Add the crate to your application:
 
 ```toml
 [dependencies]
-ssfilt = "0.1"
+ssfilt = "0.1.0-beta.1"
 ```
 
 For embedded use without `std`, see the [`no_std`](#no_std) configuration
@@ -300,7 +300,7 @@ the pure-Rust math backend:
 
 ```toml
 [dependencies]
-ssfilt = { version = "0.1", default-features = false, features = ["libm"] }
+ssfilt = { version = "0.1.0-beta.1", default-features = false, features = ["libm"] }
 ```
 
 Use `LowPass::<N, f32>` (or `HighPass`/`BandPass`) when `f32` is appropriate for
