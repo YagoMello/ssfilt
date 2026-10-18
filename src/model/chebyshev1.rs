@@ -33,7 +33,7 @@ impl<T: Scalar, const N: usize> Chebyshev1<T, N> {
         // The textbook prototype uses its ripple boundary as frequency one.
         // Find that prototype's frequency whose unity-DC-normalized gain is
         // −3 dB, then divide every pole by it.
-        let chebyshev_at_cutoff = if N % 2 == 0 {
+        let chebyshev_at_cutoff = if N.is_multiple_of(2) {
             (T::one() / epsilon_squared + from_f64(2.0)).sqrt()
         } else {
             T::one() / epsilon
@@ -200,7 +200,7 @@ mod tests {
         let actual = cascade_magnitude(&model, frequency);
 
         let epsilon_squared = (core::f64::consts::LN_10 * ripple_db / 10.0).exp_m1();
-        let dc_chebyshev_squared = if ORDER % 2 == 0 { 1.0 } else { 0.0 };
+        let dc_chebyshev_squared = if ORDER.is_multiple_of(2) { 1.0 } else { 0.0 };
         let cutoff_scale = cutoff_scale::<ORDER>(epsilon_squared);
         let prototype_frequency = frequency * cutoff_scale;
         let chebyshev = if prototype_frequency <= 1.0 {
@@ -238,7 +238,7 @@ mod tests {
 
     fn cutoff_scale<const ORDER: usize>(epsilon_squared: f64) -> f64 {
         let epsilon = epsilon_squared.sqrt();
-        let target = if ORDER % 2 == 0 {
+        let target = if ORDER.is_multiple_of(2) {
             (1.0 / epsilon_squared + 2.0).sqrt()
         } else {
             1.0 / epsilon
