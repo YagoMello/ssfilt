@@ -1,7 +1,8 @@
 use crate::model::ContinuousModel;
 use crate::solver::{InputSegment, integrate};
 use crate::{
-    InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Scalar, UpdateError,
+    BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Scalar,
+    UpdateError,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -24,10 +25,13 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         time_scale: T,
         input_model: InputModel,
         integration: IntegrationConfig<T>,
-    ) -> Self {
+    ) -> Result<Self, BuildError> {
         let state = model.equilibrium(initial_input);
         let output = model.output(&state, initial_input);
-        Self {
+        if !state.iter().all(|value| value.is_finite()) || !output.is_finite() {
+            return Err(BuildError::UnrepresentableInitialEquilibrium);
+        }
+        Ok(Self {
             model,
             state,
             previous_input: initial_input,
@@ -37,7 +41,7 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
             integration,
             last_diagnostics: IntegrationDiagnostics::empty(),
             at_equilibrium: true,
-        }
+        })
     }
 
     pub(crate) fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
@@ -115,9 +119,15 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         if !input.is_finite() {
             return Err(ResetError::NonFiniteInput);
         }
-        self.state = self.model.equilibrium(input);
+        let state = self.model.equilibrium(input);
+        let output = self.model.output(&state, input);
+        if !state.iter().all(|value| value.is_finite()) || !output.is_finite() {
+            return Err(ResetError::UnrepresentableSteadyState);
+        }
+
+        self.state = state;
         self.previous_input = input;
-        self.output = self.model.output(&self.state, input);
+        self.output = output;
         self.last_diagnostics = IntegrationDiagnostics::empty();
         self.at_equilibrium = true;
         Ok(())

@@ -89,7 +89,7 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
             angular_cutoff,
             self.input_model,
             self.integration,
-        );
+        )?;
         Ok(HighPass {
             runtime,
             cutoff_hz: self.cutoff_hz,
@@ -171,7 +171,9 @@ impl<const N: usize, T: Scalar> HighPass<N, T> {
     ///
     /// # Errors
     ///
-    /// Returns [`ResetError::NonFiniteInput`] if `input` is NaN or infinite.
+    /// Returns [`ResetError::NonFiniteInput`] if `input` is NaN or infinite,
+    /// or [`ResetError::UnrepresentableSteadyState`] if its equilibrium cannot
+    /// be represented.
     pub fn reset_to_steady(&mut self, input: T) -> Result<(), ResetError> {
         <Self as StreamingFilter>::reset_to_steady(self, input)
     }

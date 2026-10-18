@@ -1,7 +1,8 @@
 use approx::assert_relative_eq;
 use ssfilt::{
     BandPass, BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass,
-    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response, StreamingFilter, UpdateError,
+    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, ResetError, Response, StreamingFilter,
+    UpdateError,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -212,4 +213,85 @@ fn band_pass_rejects_odd_order_and_invalid_edges() {
         BandPass::<4>::builder(40.0, 10.0).build(),
         Err(BuildError::InvalidBandPassEdges)
     ));
+}
+
+#[test]
+fn band_pass_rejects_unrepresentable_initial_equilibrium_for_each_scalar() {
+    for response in [
+        Response::Butterworth,
+        Response::Bessel,
+        Response::Chebyshev1 { ripple_db: 0.5 },
+    ] {
+        assert!(matches!(
+            BandPass::<4, f32>::builder(1.0, 2.0)
+                .response(response)
+                .initial_input(f32::MAX)
+                .build(),
+            Err(BuildError::UnrepresentableInitialEquilibrium)
+        ));
+    }
+    for response in [
+        Response::Butterworth,
+        Response::Bessel,
+        Response::Chebyshev1 { ripple_db: 0.5 },
+    ] {
+        assert!(matches!(
+            BandPass::<4, f64>::builder(1.0, 2.0)
+                .response(response)
+                .initial_input(f64::MAX)
+                .build(),
+            Err(BuildError::UnrepresentableInitialEquilibrium)
+        ));
+    }
+}
+
+#[test]
+fn band_pass_rejects_unrepresentable_steady_state_transactionally_for_each_scalar() {
+    macro_rules! assert_transactional_reset {
+        ($scalar:ty, $maximum:expr, $response:expr) => {{
+            let mut tested = BandPass::<4, $scalar>::builder(1.0, 2.0)
+                .response($response)
+                .build()
+                .unwrap();
+            tested.update(0.75, 0.04).unwrap();
+            let mut untouched = tested;
+            let output_before_failure = tested.output();
+            let diagnostics_before_failure = tested.last_diagnostics();
+
+            assert_eq!(
+                tested.reset_to_steady($maximum),
+                Err(ResetError::UnrepresentableSteadyState)
+            );
+            assert_relative_eq!(tested.output(), output_before_failure, epsilon = 0.0);
+            assert_eq!(tested.last_diagnostics(), diagnostics_before_failure);
+
+            assert_relative_eq!(
+                tested.update(0.75, 0.04).unwrap(),
+                untouched.update(0.75, 0.04).unwrap(),
+                epsilon = 0.0
+            );
+            assert_eq!(tested.last_diagnostics(), untouched.last_diagnostics());
+            assert_relative_eq!(
+                tested.update(0.5, 0.04).unwrap(),
+                untouched.update(0.5, 0.04).unwrap(),
+                epsilon = 0.0
+            );
+            assert_eq!(tested.last_diagnostics(), untouched.last_diagnostics());
+        }};
+    }
+
+    for response in [
+        Response::Butterworth,
+        Response::Bessel,
+        Response::Chebyshev1 { ripple_db: 0.5 },
+    ] {
+        assert_transactional_reset!(f32, f32::MAX, response);
+    }
+    for response in [
+        Response::Butterworth,
+        Response::Bessel,
+        Response::Chebyshev1 { ripple_db: 0.5 },
+    ] {
+        assert_transactional_reset!(f64, f64::MAX, response);
+    }
 }

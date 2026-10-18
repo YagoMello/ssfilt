@@ -244,13 +244,19 @@ validated. Precision-specific integration defaults live in
 Construction rejects zero order, non-positive or non-finite cutoff, odd
 band-pass order, invalid or reversed band-pass edges, invalid Chebyshev ripple,
 unsupported Bessel order, non-finite initial input, and invalid integration
-controls. Updates reject non-finite input and non-positive or non-finite
-elapsed time.
+controls. It also rejects a finite initial input when its equilibrium state or
+output cannot be represented. Updates reject non-finite input and non-positive
+or non-finite elapsed time.
 
 An update is transactional: if adaptive integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
 controls numerical stability; the separate attempt budget bounds worst-case
 work. No elapsed time is silently discarded.
+
+`reset_to_steady` validates its finite equilibrium state and output before
+committing them. An unrepresentable equilibrium fails transactionally, leaving
+the existing state, output, preceding input, diagnostics, and equilibrium
+tracking unchanged.
 
 ## Integration diagnostics
 

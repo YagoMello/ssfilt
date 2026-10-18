@@ -219,6 +219,9 @@ updates preserve the preceding snapshot transactionally.
   sealed `Scalar` trait. Precision-specific defaults remain configuration
   concerns rather than scalar operations.
 - A failed update changes no observable or internal filter state.
+- Construction accepts a finite initial input only when every equilibrium state
+  component and the output are representable; a failed steady reset preserves
+  all state, output, preceding input, diagnostics, and equilibrium tracking.
 - Steady initialization remains exactly steady for constant input.
 - Absolute cutoff scaling changes only the mapping between physical and
   normalized time.
