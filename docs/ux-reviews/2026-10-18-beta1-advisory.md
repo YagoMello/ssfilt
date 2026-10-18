@@ -47,15 +47,14 @@ the rubric. Future scenario cards must include it directly.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | S1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| S3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| S3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | S4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | B1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 
 Scores use 0 for no material friction and 3 for blocking or dangerous
-friction. S3 did not need phase information to complete its task; its minor
-score records only that delay was not quantified. B1 found the product boundary
-immediately but supplied the causality explanation and offline alternatives
-from general knowledge rather than the README.
+friction. Phase information was not applicable to S3's requested behavior. B1
+found the product boundary immediately but supplied the causality explanation
+and offline alternatives from general knowledge rather than the README.
 
 ## Representative source evidence
 
