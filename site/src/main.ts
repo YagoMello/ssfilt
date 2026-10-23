@@ -827,10 +827,11 @@ function showFilterPlaceholder(title: string, copy: string): void {
 }
 
 function showFilterResult(): void {
+  const firstReveal = ui.filteredContent.hidden;
   ui.filteredPlaceholder.hidden = true;
   ui.filteredContent.hidden = false;
   ui.downloadCsv.hidden = false;
-  replayReveal(ui.filteredContent);
+  if (firstReveal) replayReveal(ui.filteredContent);
 }
 
 function showCsvError(message: string): void {
@@ -862,13 +863,18 @@ function loadCsvText(text: string): void {
   updateCsvLineNumbers();
   try {
     const parsed = parseCsv(text);
+    const preservesDisplayedResult = filterResult !== undefined
+      && filterPlot !== undefined
+      && !ui.filteredContent.hidden;
     loadedCsv = parsed;
-    filterResult = undefined;
-    filterPlot?.destroy();
-    filterPlot = undefined;
-    ui.filterChart.replaceChildren();
     ui.csvStatus.textContent = `${parsed.rowCount.toLocaleString()} samples ready · ${shortNumber(parsed.times[0] ?? 0, 5)} to ${shortNumber(parsed.times.at(-1) ?? 0, 5)} seconds`;
-    showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
+    if (!preservesDisplayedResult) {
+      filterResult = undefined;
+      filterPlot?.destroy();
+      filterPlot = undefined;
+      ui.filterChart.replaceChildren();
+      showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
+    }
     if (appliedConfig) updateDataFilterContext(appliedConfig);
     renderCode();
     if (appliedConfig) void runFilter(appliedConfig);
@@ -947,7 +953,12 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     showFilterPlaceholder("The startup state needs attention", "Correct the initial condition to filter these samples.");
     return;
   }
-  showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
+  const preservesDisplayedResult = filterResult !== undefined
+    && filterPlot !== undefined
+    && !ui.filteredContent.hidden;
+  if (!preservesDisplayedResult) {
+    showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
+  }
   ui.csvStatus.textContent = "Filtering every elapsed interval…";
 
   try {
@@ -984,31 +995,36 @@ function showDiagnostics(result: FilterResult): void {
 }
 
 function drawFilterChart(result: FilterResult): void {
-  filterPlot?.destroy();
-  filterPlot = undefined;
-  ui.filterChart.replaceChildren();
   const time = numericSeries(result.time);
   const input = numericSeries(result.input);
   const output = numericSeries(result.output);
   const width = Math.max(220, Math.floor(ui.filterChart.getBoundingClientRect().width || 700));
   const height = Math.max(230, Math.min(380, Math.round(width * 0.4)));
-  filterPlot = new uPlot({
-    width,
-    height,
-    class: "ssfilt-plot",
-    cursor: { drag: { x: false, y: false, setScale: false } },
-    legend: { show: true, live: false },
-    scales: { x: { time: false } },
-    axes: [
-      { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
-      { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
-    ],
-    series: [
-      {},
-      { label: "Input", stroke: "#89979d", width: 1.5, points: { show: true, size: 3, fill: "#f8faf7", stroke: "#89979d" } },
-      { label: "Output", stroke: "#168779", width: 2.5, points: { show: false } },
-    ],
-  }, [time, input, output], ui.filterChart);
+  const existingPlot = filterPlot;
+  if (existingPlot) {
+    existingPlot.batch(() => {
+      if (existingPlot.width !== width || existingPlot.height !== height) existingPlot.setSize({ width, height });
+      existingPlot.setData([time, input, output]);
+    });
+  } else {
+    filterPlot = new uPlot({
+      width,
+      height,
+      class: "ssfilt-plot",
+      cursor: { drag: { x: false, y: false, setScale: false } },
+      legend: { show: true, live: false },
+      scales: { x: { time: false } },
+      axes: [
+        { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
+        { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
+      ],
+      series: [
+        {},
+        { label: "Input", stroke: "#89979d", width: 1.5, points: { show: true, size: 3, fill: "#f8faf7", stroke: "#89979d" } },
+        { label: "Output", stroke: "#168779", width: 2.5, points: { show: false } },
+      ],
+    }, [time, input, output], ui.filterChart);
+  }
   const first = time[0] ?? 0;
   const last = time.at(-1) ?? first;
   ui.filterChart.setAttribute("aria-label", `Input and filter output across ${result.time.length} irregularly timed samples from ${shortNumber(first, 5)} to ${shortNumber(last, 5)} seconds.`);
