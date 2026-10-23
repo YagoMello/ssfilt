@@ -384,7 +384,9 @@ function drawResponseChart(): void {
     cursor: { drag: { x: false, y: false, setScale: false } },
     legend: { show: false },
     scales: {
-      x: { time: false, distr: activeChart === "step" ? 1 : 3 },
+      x: activeChart === "step"
+        ? { time: false, distr: 1 }
+        : { time: false, distr: 3, range: [values.x[0], values.x[values.x.length - 1]] },
       y: activeChart === "magnitude" ? { range: [MAGNITUDE_DISPLAY_FLOOR_DB, 5] } : {},
     },
     axes: [
