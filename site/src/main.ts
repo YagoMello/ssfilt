@@ -42,7 +42,10 @@ const ui = {
   validation: getElement<HTMLDivElement>("validation-message"),
   responseTitle: getElement<HTMLHeadingElement>("response-card-title"),
   responseSummary: getElement<HTMLDivElement>("response-summary"),
+  responseCard: document.querySelector<HTMLDivElement>(".response-card")!,
   chartHost: getElement<HTMLDivElement>("response-chart"),
+  frequencyChartHost: getElement<HTMLDivElement>("response-frequency-chart"),
+  stepChartHost: getElement<HTMLDivElement>("response-step-chart"),
   chartPanel: getElement<HTMLDivElement>("response-chart-panel"),
   chartTitle: getElement<HTMLHeadingElement>("chart-title"),
   chartSubtitle: getElement<HTMLParagraphElement>("chart-subtitle"),
@@ -71,6 +74,7 @@ const ui = {
   filteredPlaceholder: getElement<HTMLDivElement>("filtered-placeholder"),
   filteredPlaceholderTitle: getElement<HTMLElement>("filtered-placeholder-title"),
   filteredPlaceholderCopy: getElement<HTMLElement>("filtered-placeholder-copy"),
+  filteredResult: getElement<HTMLDivElement>("filtered-result"),
   filteredContent: getElement<HTMLDivElement>("filtered-content"),
   downloadCsv: getElement<HTMLButtonElement>("download-csv"),
   filterChart: getElement<HTMLDivElement>("filter-chart"),
@@ -91,14 +95,17 @@ let adapter: SsfiltWasmModule | undefined;
 let responseResult: ResponseResult | undefined;
 let loadedCsv: ParsedCsv | undefined;
 let filterResult: FilterResult | undefined;
-let responsePlot: uPlot | undefined;
+let frequencyPlot: uPlot | undefined;
+let stepPlot: uPlot | undefined;
 let filterPlot: uPlot | undefined;
 let appliedConfig: ResponseConfig | undefined;
 let toastTimer = 0;
 let responseDebounceTimer = 0;
 let responseRequestId = 0;
 let filterRequestId = 0;
-let resizeObserver: ResizeObserver | undefined;
+let resizeFrame = 0;
+let responseContainerWidth = 0;
+let filterContainerWidth = 0;
 
 function getElement<T extends Element>(id: string): T {
   const element = document.getElementById(id);
@@ -231,13 +238,16 @@ function showError(message: string): void {
   ui.responseSummary.textContent = displayedMessage;
   ui.responseSummary.classList.add("is-error");
   if (!preservesResponse) {
-    ui.chartHost.replaceChildren();
+    frequencyPlot?.destroy();
+    stepPlot?.destroy();
+    frequencyPlot = undefined;
+    stepPlot = undefined;
+    ui.frequencyChartHost.replaceChildren();
+    ui.stepChartHost.replaceChildren();
     ui.chartHost.setAttribute("aria-label", "Response chart unavailable.");
     ui.responseChartSummary.textContent = message;
     if (loadedCsv) showFilterPlaceholder("The filter setup needs attention", "Correct the highlighted setting above to re-filter these samples.");
     filterRequestId += 1;
-    responsePlot?.destroy();
-    responsePlot = undefined;
     responseResult = undefined;
   }
 }
@@ -410,14 +420,15 @@ function displayChartData(result: ResponseResult): { x: number[]; y: number[]; x
   return { ...data, xLabel: meta.x, yLabel: meta.y };
 }
 
-function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
-  const cutoffs = config.topology === "band-pass"
-    ? [config.lower_cutoff_hz, config.upper_cutoff_hz]
-    : [config.cutoff_hz];
-  const finiteCutoffs = cutoffs.filter((value): value is number => value !== undefined && Number.isFinite(value));
+function cutoffMarkerPlugin(): uPlot.Plugin {
   return {
     hooks: {
       draw: (plot) => {
+        if (!appliedConfig || activeChart === "step") return;
+        const cutoffs = appliedConfig.topology === "band-pass"
+          ? [appliedConfig.lower_cutoff_hz, appliedConfig.upper_cutoff_hz]
+          : [appliedConfig.cutoff_hz];
+        const finiteCutoffs = cutoffs.filter((value): value is number => value !== undefined && Number.isFinite(value));
         const pixelRatio = window.devicePixelRatio || 1;
         const { ctx, bbox } = plot;
         ctx.save();
@@ -502,6 +513,23 @@ function alignChartLabels(plot: uPlot): void {
   ui.chartPanel.style.setProperty("--chart-plot-right", `${Math.max(0, right)}px`);
 }
 
+function frequencyYRange(_plot: uPlot, minimum: number, maximum: number): [number, number] {
+  if (activeChart === "magnitude") return [MAGNITUDE_DISPLAY_FLOOR_DB, 5];
+  const span = maximum - minimum;
+  const padding = span > 0 ? span * 0.06 : Math.max(1, Math.abs(maximum) * 0.06);
+  return [minimum - padding, maximum + padding];
+}
+
+function stableLogRange(values: number[]): { min: number; max: number } {
+  // uPlot's log tick splitter can fail on a few exact decimal endpoints
+  // (for example 0.095–950). Reciprocal padding preserves the geometric center.
+  const expansion = 1 + 1e-6;
+  return {
+    min: (values[0] ?? 1) / expansion,
+    max: (values[values.length - 1] ?? 1) * expansion,
+  };
+}
+
 function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult): void {
   const frequencyChart = activeChart !== "step";
   ui.chartReferenceKey.hidden = !frequencyChart;
@@ -517,9 +545,6 @@ function drawResponseChart(): void {
   const meta = chartMeta[activeChart];
   const values = displayChartData(responseResult);
   if (values.x.length !== values.y.length || values.x.length === 0) return;
-  responsePlot?.destroy();
-  responsePlot = undefined;
-  ui.chartHost.replaceChildren();
   ui.chartTitle.textContent = meta.title;
   ui.chartSubtitle.textContent = meta.subtitle;
   updateChartReferenceKey(appliedConfig, responseResult);
@@ -532,19 +557,33 @@ function drawResponseChart(): void {
   const rect = ui.chartHost.getBoundingClientRect();
   const width = Math.max(220, Math.floor(rect.width || 660));
   const height = Math.max(230, Math.min(340, Math.round(width * 0.45)));
-  const plugins = activeChart === "step" ? [] : [cutoffMarkerPlugin(appliedConfig)];
-  responsePlot = new uPlot({
+  const stepChart = activeChart === "step";
+  const frequencyRange = stableLogRange(values.x);
+  ui.frequencyChartHost.hidden = stepChart;
+  ui.stepChartHost.hidden = !stepChart;
+  const existingPlot = stepChart ? stepPlot : frequencyPlot;
+  if (existingPlot) {
+    existingPlot.setSize({ width, height });
+    existingPlot.setData([values.x, values.y]);
+    existingPlot.setScale("x", stepChart
+      ? { min: values.x[0], max: values.x[values.x.length - 1] }
+      : frequencyRange);
+    alignChartLabels(existingPlot);
+    return;
+  }
+
+  const plot = new uPlot({
     width,
     height,
     class: "ssfilt-plot",
     cursor: { drag: { x: false, y: false, setScale: false } },
     legend: { show: false },
-    plugins,
+    plugins: [cutoffMarkerPlugin()],
     scales: {
-      x: activeChart === "step"
+      x: stepChart
         ? { time: false, distr: 1 }
-        : { time: false, distr: 3, range: [values.x[0], values.x[values.x.length - 1]] },
-      y: activeChart === "magnitude" ? { range: [MAGNITUDE_DISPLAY_FLOOR_DB, 5] } : {},
+        : { time: false, distr: 3, range: [frequencyRange.min, frequencyRange.max] },
+      y: stepChart ? {} : { range: frequencyYRange },
     },
     axes: [
       { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
@@ -552,10 +591,12 @@ function drawResponseChart(): void {
     ],
     series: [
       {},
-      { label: meta.y, stroke: activeChart === "step" ? "#bfed4b" : "#168779", width: 2.5, points: { show: false } },
+      { label: meta.y, stroke: stepChart ? "#bfed4b" : "#168779", width: 2.5, points: { show: false } },
     ],
-  }, [values.x, values.y], ui.chartHost);
-  alignChartLabels(responsePlot);
+  }, [values.x, values.y], stepChart ? ui.stepChartHost : ui.frequencyChartHost);
+  if (stepChart) stepPlot = plot;
+  else frequencyPlot = plot;
+  alignChartLabels(plot);
 }
 
 function renderCode(config = validateConfiguration()): void {
@@ -955,16 +996,27 @@ function setUpTabs(): void {
   });
 }
 
-function watchResize(): void {
-  if (typeof ResizeObserver === "undefined") return;
-  resizeObserver = new ResizeObserver(() => {
-    window.requestAnimationFrame(() => {
+function redrawChartsAfterResize(): void {
+  if (resizeFrame !== 0) return;
+  resizeFrame = window.requestAnimationFrame(() => {
+    resizeFrame = 0;
+    const nextResponseWidth = Math.floor(ui.responseCard.getBoundingClientRect().width);
+    const nextFilterWidth = Math.floor(ui.filteredResult.getBoundingClientRect().width);
+    if (nextResponseWidth !== responseContainerWidth) {
+      responseContainerWidth = nextResponseWidth;
       if (responseResult) drawResponseChart();
+    }
+    if (nextFilterWidth !== filterContainerWidth) {
+      filterContainerWidth = nextFilterWidth;
       if (filterResult && !ui.filteredContent.hidden) drawFilterChart(filterResult);
-    });
+    }
   });
-  resizeObserver.observe(ui.chartHost);
-  resizeObserver.observe(ui.filterChart);
+}
+
+function watchResize(): void {
+  responseContainerWidth = Math.floor(ui.responseCard.getBoundingClientRect().width);
+  filterContainerWidth = Math.floor(ui.filteredResult.getBoundingClientRect().width);
+  window.addEventListener("resize", redrawChartsAfterResize, { passive: true });
 }
 
 ui.topology.addEventListener("change", () => {
@@ -1023,7 +1075,9 @@ renderCode();
 void updateResponse();
 
 window.addEventListener("beforeunload", () => {
-  responsePlot?.destroy();
+  frequencyPlot?.destroy();
+  stepPlot?.destroy();
   filterPlot?.destroy();
-  resizeObserver?.disconnect();
+  window.removeEventListener("resize", redrawChartsAfterResize);
+  if (resizeFrame !== 0) window.cancelAnimationFrame(resizeFrame);
 });

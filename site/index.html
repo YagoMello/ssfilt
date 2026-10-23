@@ -164,7 +164,10 @@
                 </div>
               </div>
               <figure class="chart-figure">
-                <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary"></div>
+                <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary">
+                  <div id="response-frequency-chart" class="uplot-layer"></div>
+                  <div id="response-step-chart" class="uplot-layer" hidden></div>
+                </div>
                 <figcaption class="sr-only" id="response-chart-summary">Response chart is loading.</figcaption>
               </figure>
               <div class="chart-axis-labels" aria-hidden="true"><span id="x-axis-label">Frequency · Hz</span><span id="y-axis-label">Gain · dB</span></div>

@@ -1066,7 +1066,12 @@ p {
   overflow: hidden;
 }
 
-.uplot-host > .uplot {
+.uplot-layer {
+  width: 100%;
+  min-width: 0;
+}
+
+.uplot-layer > .uplot {
   max-width: 100%;
   font-family: var(--mono);
 }
