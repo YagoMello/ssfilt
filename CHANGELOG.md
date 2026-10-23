@@ -21,6 +21,8 @@ The first public field-test release.
   `libm` feature.
 - Runnable examples and development tools for inspecting frequency, phase,
   group-delay, transient, and performance behavior.
+- A browser playground for response inspection, shareable configurations,
+  Rust setup snippets, and local filtering of timestamped CSV samples.
 
 ### Known limitations
 

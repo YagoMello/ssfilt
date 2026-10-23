@@ -16,6 +16,15 @@ band-pass filters with four response families:
 - transactional errors and explicit steady-state reset;
 - per-update integration diagnostics for observing adaptive work.
 
+Explore the filters in the
+[interactive browser playground](https://yagomello.github.io/ssfilt/), or use
+the native plotting example to generate publication-quality SVG and CSV
+reports locally.
+
+<a href="https://yagomello.github.io/ssfilt/">
+  <img src="https://raw.githubusercontent.com/YagoMello/ssfilt/main/docs/assets/low-pass-response.svg" alt="Magnitude, phase, group-delay, and unit-step responses for ssfilt order-four low-pass filters" width="900">
+</a>
+
 Phase correction and offline batch filtering are deferred and are not part of
 the API. Exact zero-phase streaming would require future samples or added
 latency; for recorded data, forward-backward or frequency-domain processing is
@@ -384,6 +393,19 @@ host timings for order-four response families/topologies and RK45 tolerance,
 step-cap, and input-reconstruction settings. There is no second production
 integrator to compare yet. Timings depend on the host and load and should not
 be treated as portable benchmarks.
+
+The GitHub Pages playground is built from `site/`. To run the same WebAssembly
+adapter and uPlot interface locally:
+
+```text
+cd site
+npm ci
+npm run dev
+```
+
+Uploaded CSV data is parsed and filtered entirely in the browser. See
+the [site plan](https://github.com/YagoMello/ssfilt/blob/main/docs/site-plan.md)
+for its deliberately narrow input and performance contracts.
 
 Orders 1 through 50 are accepted through a compile-time dispatch macro. The
 output path and order are optional and default to
