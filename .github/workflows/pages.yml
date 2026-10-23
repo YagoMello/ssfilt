@@ -1,0 +1,76 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pages.yml"
+      - "site/**"
+      - "src/**"
+      - "examples/support/transfer.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - ".github/workflows/pages.yml"
+      - "site/**"
+      - "src/**"
+      - "examples/support/transfer.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+      - name: Install site dependencies
+        run: npm ci
+        working-directory: site
+      - name: Test browser adapter
+        run: cargo test --manifest-path site/wasm/Cargo.toml --locked
+      - name: Lint browser adapter
+        run: cargo clippy --manifest-path site/wasm/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Type-check site
+        run: npm run typecheck
+        working-directory: site
+      - name: Build site
+        run: npm run build
+        working-directory: site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

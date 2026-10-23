@@ -1,0 +1,29 @@
+[package]
+name = "ssfilt-web-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0.104"
+js-sys = "0.3.86"
+num-traits = "0.2.19"
+serde = { version = "1.0.228", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+ssfilt = { path = "../.." }
+wasm-bindgen = "0.2.129"
+
+[dev-dependencies]
+approx = "0.5.1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[workspace]

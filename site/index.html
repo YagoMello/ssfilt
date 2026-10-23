@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Explore continuous-time filters for irregularly sampled signals with the ssfilt response playground."
+    />
+    <meta name="theme-color" content="#101e26" />
+    <title>ssfilt — filters for signals off the clock</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#playground">Skip to the filter playground</a>
+    <header class="site-header">
+      <a class="wordmark" href="#top" aria-label="ssfilt home">
+        <span class="wordmark-mark" aria-hidden="true">s<span>f</span></span>
+        <span>ssfilt</span>
+      </a>
+      <nav aria-label="Main navigation" class="main-nav">
+        <a href="#playground">Playground</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="https://docs.rs/ssfilt" target="_blank" rel="noreferrer">Rust docs <span aria-hidden="true">↗</span></a>
+      </nav>
+      <a class="header-github" href="https://github.com/YagoMello/ssfilt" target="_blank" rel="noreferrer" aria-label="Explore ssfilt on GitHub">
+        <span aria-hidden="true">⌘</span><span class="github-label">Source</span>
+      </a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-content">
+          <p class="eyebrow"><span class="pulse-dot"></span> Continuous-time. Irregular-time.</p>
+          <h1 id="hero-title">Signals don’t<br />arrive on a <em>clock.</em></h1>
+          <p class="hero-copy">
+            Explore filters built for the real gaps between your samples. Shape a response,
+            replay your own timestamped data, and see exactly what the filter does.
+          </p>
+          <a class="button button-lime" href="#playground">Open the playground <span aria-hidden="true">↓</span></a>
+          <div class="hero-note"><span class="hero-note-line"></span> Built for unevenly sampled signals</div>
+        </div>
+        <div class="hero-art" role="img" aria-label="An irregular signal passing through a smooth filter response">
+          <div class="hero-art-topline"><span>INPUT → OUTPUT</span><span class="art-live"><i></i> LIVE MODEL</span></div>
+          <svg class="signal-art" viewBox="0 0 600 330" fill="none" aria-hidden="true">
+            <path class="grid-line" d="M0 66H600M0 132H600M0 198H600M0 264H600M75 0V330M150 0V330M225 0V330M300 0V330M375 0V330M450 0V330M525 0V330" />
+            <path class="axis-line" d="M0 165H600" />
+            <path class="raw-wave" d="M0 176L26 176L45 84L71 225L99 155L121 176L142 269L166 108L188 153L212 176L234 110L255 214L278 161L302 176L320 74L345 223L369 150L394 176L416 265L440 108L463 154L486 176L508 112L533 219L557 158L580 176L600 102" />
+            <path class="smooth-wave" d="M0 178C42 177 48 147 77 146C103 145 119 167 144 170C170 173 175 145 205 143C233 140 243 167 275 169C306 171 307 142 337 141C367 140 378 165 405 169C433 174 442 145 472 143C502 141 515 166 541 168C565 170 575 151 600 148" />
+            <circle class="signal-point" cx="45" cy="84" r="4"/><circle class="signal-point" cx="99" cy="155" r="4"/><circle class="signal-point" cx="142" cy="269" r="4"/><circle class="signal-point" cx="188" cy="153" r="4"/><circle class="signal-point" cx="234" cy="110" r="4"/><circle class="signal-point" cx="278" cy="161" r="4"/><circle class="signal-point" cx="320" cy="74" r="4"/><circle class="signal-point" cx="369" cy="150" r="4"/><circle class="signal-point" cx="416" cy="265" r="4"/><circle class="signal-point" cx="463" cy="154" r="4"/><circle class="signal-point" cx="508" cy="112" r="4"/><circle class="signal-point" cx="557" cy="158" r="4"/>
+          </svg>
+          <div class="signal-legend"><span><i class="legend-raw"></i> sampled input</span><span><i class="legend-smooth"></i> filter output</span></div>
+          <div class="hero-art-label label-samples"><span>01</span> real timestamps</div>
+          <div class="hero-art-label label-state"><span>02</span> continuous state</div>
+        </div>
+        <div class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE <span>⌄</span></div>
+      </section>
+
+      <section class="intro-band" id="how-it-works" aria-label="About ssfilt">
+        <div class="intro-mark" aria-hidden="true">∿</div>
+        <p>
+          <strong>Most filters assume every sample is evenly spaced.</strong>
+          ssfilt advances a continuous model by the actual elapsed time—so the filter can follow
+          the timestamps your sensor really produced.
+        </p>
+        <a href="https://docs.rs/ssfilt" target="_blank" rel="noreferrer">Read the model notes <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <section class="playground-section" id="playground" aria-labelledby="playground-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow eyebrow-dark"><span class="section-number">01</span> Response lab</p>
+            <h2 id="playground-title">Tune a filter.<br /><em>See the shape.</em></h2>
+          </div>
+          <p class="section-intro">Choose a topology and response to inspect magnitude, phase, group delay, and a streamed step trace. Every cutoff is the complete filter’s −3 dB point.</p>
+        </div>
+
+        <div class="playground-layout">
+          <aside class="controls-card" aria-labelledby="controls-title">
+            <div class="card-heading"><div><span class="card-kicker">CONFIGURATION</span><h3 id="controls-title">Filter setup</h3></div><span class="settings-icon" aria-hidden="true">⌘</span></div>
+            <div class="control-stack">
+              <div class="field-group">
+                <label for="topology">Topology</label>
+                <select id="topology" name="topology">
+                  <option value="low-pass">Low-pass</option>
+                  <option value="high-pass">High-pass</option>
+                  <option value="band-pass">Band-pass</option>
+                </select>
+                <p class="field-hint" id="topology-hint">Smooths high-frequency variation.</p>
+              </div>
+              <div class="field-row">
+                <div class="field-group">
+                  <label for="response">Response</label>
+                  <select id="response" name="response">
+                    <option value="repeated-pole">Repeated-pole</option>
+                    <option value="butterworth">Butterworth</option>
+                    <option value="bessel">Bessel</option>
+                    <option value="chebyshev1">Chebyshev I</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="order">Final order</label>
+                  <select id="order" name="order" aria-describedby="order-hint"></select>
+                </div>
+              </div>
+              <p class="field-hint order-hint" id="order-hint">Band-pass order is even; Bessel is limited to validated orders.</p>
+              <div class="field-row cutoff-row" id="single-cutoff-field">
+                <div class="field-group field-wide">
+                  <label for="cutoff">Cutoff frequency</label>
+                  <div class="unit-input"><input id="cutoff" name="cutoff_hz" type="number" min="0" step="any" value="8" inputmode="decimal" /><span>Hz</span></div>
+                  <p class="field-hint">Whole-filter −3 dB point</p>
+                </div>
+              </div>
+              <div class="field-row cutoff-row" id="band-cutoff-fields" hidden>
+                <div class="field-group">
+                  <label for="lower-cutoff">Lower edge</label>
+                  <div class="unit-input"><input id="lower-cutoff" type="number" min="0" step="any" value="4" inputmode="decimal" /><span>Hz</span></div>
+                </div>
+                <div class="field-group">
+                  <label for="upper-cutoff">Upper edge</label>
+                  <div class="unit-input"><input id="upper-cutoff" type="number" min="0" step="any" value="16" inputmode="decimal" /><span>Hz</span></div>
+                </div>
+              </div>
+              <div class="field-group" id="ripple-field" hidden>
+                <label for="ripple">Passband ripple</label>
+                <div class="unit-input"><input id="ripple" type="number" min="0" max="3.01029" step="any" value="0.5" inputmode="decimal" /><span>dB</span></div>
+                <p class="field-hint">Peak-to-peak ripple; must be below 3.0103 dB.</p>
+              </div>
+              <div class="field-group">
+                <label for="input-model">Between-sample assumption</label>
+                <select id="input-model" name="input_model">
+                  <option value="linear">Linear interpolation</option>
+                  <option value="previous-hold">Previous value held</option>
+                  <option value="current-hold">Current value held</option>
+                </select>
+                <p class="field-hint" id="input-model-hint">The new sample is the interval endpoint.</p>
+              </div>
+              <div id="validation-message" class="validation-message" role="alert" hidden></div>
+              <button class="button button-dark run-response" id="apply-config" type="button">
+                <span>Update response</span><span aria-hidden="true">↗</span>
+              </button>
+            </div>
+            <div class="url-control">
+              <span class="url-dot" aria-hidden="true"></span>
+              <span>Configuration saved in this page’s URL</span>
+              <button id="copy-link" type="button" class="text-button">Copy link</button>
+            </div>
+          </aside>
+
+          <div class="response-card">
+            <div class="response-card-head">
+              <div><span class="card-kicker">RESPONSE PROFILE</span><h3 id="response-card-title">Low-pass · Butterworth · order 4</h3></div>
+              <span class="response-chip" id="response-chip">whole-filter −3 dB</span>
+            </div>
+            <div class="chart-tabs" role="tablist" aria-label="Response chart">
+              <button id="tab-magnitude" type="button" role="tab" aria-selected="true" aria-controls="response-chart-panel" data-chart="magnitude">Magnitude</button>
+              <button id="tab-phase" type="button" role="tab" aria-selected="false" aria-controls="response-chart-panel" data-chart="phase" tabindex="-1">Phase</button>
+              <button id="tab-delay" type="button" role="tab" aria-selected="false" aria-controls="response-chart-panel" data-chart="delay" tabindex="-1">Group delay</button>
+              <button id="tab-step" type="button" role="tab" aria-selected="false" aria-controls="response-chart-panel" data-chart="step" tabindex="-1">Step trace</button>
+            </div>
+            <div class="response-chart-panel" id="response-chart-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-magnitude">
+              <div class="chart-title-row"><div><h4 id="chart-title">Magnitude response</h4><p id="chart-subtitle">Gain across frequency</p></div><span id="chart-unit" class="chart-unit">dB</span></div>
+              <figure class="chart-figure">
+                <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary"></div>
+                <figcaption class="sr-only" id="response-chart-summary">Response chart is loading.</figcaption>
+              </figure>
+              <div class="chart-axis-labels" aria-hidden="true"><span id="x-axis-label">Frequency · Hz</span><span id="y-axis-label">Gain · dB</span></div>
+            </div>
+            <div class="response-summary" id="response-summary" role="status" aria-live="polite">Loading the Rust response model…</div>
+            <div class="response-footnote"><span class="mini-info" aria-hidden="true">i</span><span>Phase and group delay show the natural response of this causal filter. No phase correction is applied.</span></div>
+          </div>
+        </div>
+
+        <section class="code-card" aria-labelledby="code-title">
+          <div class="code-card-heading"><div><span class="card-kicker">FROM EXPLORATION TO RUST</span><h3 id="code-title">Start with the same setup</h3></div><button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button></div>
+          <pre><code id="rust-code"></code></pre>
+          <p class="code-note">The example uses the public streaming API. Replace the example values with your application’s samples and elapsed intervals.</p>
+        </section>
+      </section>
+
+      <section class="data-section" id="data-playground" aria-labelledby="data-title">
+        <div class="section-heading data-heading">
+          <div>
+            <p class="eyebrow eyebrow-dark"><span class="section-number">02</span> Your signal</p>
+            <h2 id="data-title">Bring your <em>timestamps.</em></h2>
+          </div>
+          <p class="section-intro">Paste a two-column CSV or choose a file. The first column is time in seconds; the second is the sample value. Processing stays in your browser.</p>
+        </div>
+        <div class="data-layout">
+          <div class="csv-card">
+            <div class="csv-card-head"><div><span class="card-kicker">CSV INPUT</span><h3>Replay a signal</h3></div><span class="csv-file-mark" aria-hidden="true">.csv</span></div>
+            <div class="csv-format"><code>time,value</code><span>optional header · finite values · strictly increasing time · max 2 MB / 50,000 rows</span></div>
+            <label for="csv-text" class="sr-only">CSV signal data with time and value columns</label>
+            <textarea id="csv-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="time,value&#10;0.000,0.12&#10;0.017,0.35&#10;0.046,0.28"></textarea>
+            <div class="csv-actions"><label class="button button-outline file-button" for="csv-file">Choose CSV<input id="csv-file" type="file" accept=".csv,text/csv" /></label><button class="button button-dark" id="load-csv" type="button">Filter these samples <span aria-hidden="true">→</span></button></div>
+            <div id="csv-status" class="csv-status" role="status" aria-live="polite">No sample data loaded yet.</div>
+            <div id="csv-error" class="validation-message" role="alert" hidden></div>
+          </div>
+          <div class="initial-card">
+            <div class="csv-card-head"><div><span class="card-kicker">STARTUP STATE</span><h3>Choose an initial condition</h3></div><span class="initial-mark" aria-hidden="true">↗</span></div>
+            <div class="field-group">
+              <label for="initial-mode">Before the first timestamp</label>
+              <select id="initial-mode">
+                <option value="sample0">Start at sample 0</option>
+                <option value="custom">Set a custom state</option>
+              </select>
+              <p class="field-hint" id="initial-mode-description">Row 1 establishes the steady-state output; integration begins with row 2.</p>
+            </div>
+            <div id="custom-initial-fields" class="custom-initial-fields" hidden>
+              <div class="field-group">
+                <label for="initial-value">Initial constant input <span class="required-marker">Required</span></label>
+                <input id="initial-value" type="number" step="any" value="0" inputmode="decimal" />
+              </div>
+              <div class="field-group">
+                <label for="first-interval">First interval <span class="required-marker">Required</span></label>
+                <div class="unit-input"><input id="first-interval" type="number" min="0.000000001" step="any" value="0.01" inputmode="decimal" required /><span>s</span></div>
+              </div>
+              <p class="field-hint">The custom state is treated as constant before sample 0. This required interval advances the filter to the first timestamp.</p>
+            </div>
+            <div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. A high-pass or band-pass starts with zero output at equilibrium.</p></div>
+          </div>
+        </div>
+        <div class="filtered-result" id="filtered-result" hidden>
+          <div class="filtered-head"><div><span class="card-kicker">FILTERED SIGNAL</span><h3>Input and output</h3></div><button class="button button-outline download-button" id="download-csv" type="button"><span aria-hidden="true">↓</span> Download CSV</button></div>
+          <div class="filter-chart-wrap"><div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div><p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p></div>
+          <div class="diagnostics-grid" aria-label="Integration diagnostics">
+            <div class="diagnostic-item"><span class="diagnostic-label">Accepted steps</span><strong id="diag-accepted">—</strong></div>
+            <div class="diagnostic-item"><span class="diagnostic-label">Rejected steps</span><strong id="diag-rejected">—</strong></div>
+            <div class="diagnostic-item"><span class="diagnostic-label">Derivative evaluations</span><strong id="diag-derivatives">—</strong></div>
+            <div class="diagnostic-item"><span class="diagnostic-label">Equilibrium shortcuts</span><strong id="diag-equilibrium">—</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="how-section" aria-labelledby="principle-title">
+        <div class="how-number" aria-hidden="true">03</div>
+        <div class="how-copy"><p class="eyebrow eyebrow-dark">A different clock</p><h2 id="principle-title">Real time.<br /><em>Real response.</em></h2></div>
+        <div class="how-details"><p>Each update advances the filter through the complete elapsed interval. Choose how the input behaved between its two endpoints: interpolate it, hold the previous value, or hold the current value.</p><div class="mini-diagram" aria-label="Two uneven sample intervals, with the longer interval integrated for longer"><span class="diagram-point"></span><span class="diagram-bar short"></span><span class="diagram-point"></span><span class="diagram-bar long"></span><span class="diagram-point"></span><span class="diagram-time">elapsed time</span></div><a href="https://docs.rs/ssfilt" target="_blank" rel="noreferrer">Explore ssfilt’s public API <span aria-hidden="true">↗</span></a></div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><a class="wordmark footer-wordmark" href="#top"><span class="wordmark-mark" aria-hidden="true">s<span>f</span></span><span>ssfilt</span></a><p>Continuous-time filters for the samples you actually have.</p><span class="footer-license">Rust · no_std ready · allocation-free core</span></footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
