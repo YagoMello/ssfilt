@@ -47,6 +47,9 @@ const ui = {
   chartTitle: getElement<HTMLHeadingElement>("chart-title"),
   chartSubtitle: getElement<HTMLParagraphElement>("chart-subtitle"),
   chartUnit: getElement<HTMLSpanElement>("chart-unit"),
+  chartReferenceKey: getElement<HTMLDivElement>("chart-reference-key"),
+  cutoffReferenceLabel: getElement<HTMLSpanElement>("cutoff-reference-label"),
+  magnitudeFloorKey: getElement<HTMLSpanElement>("magnitude-floor-key"),
   xAxisLabel: getElement<HTMLSpanElement>("x-axis-label"),
   yAxisLabel: getElement<HTMLSpanElement>("y-axis-label"),
   responseChartSummary: getElement<HTMLElement>("response-chart-summary"),
@@ -398,34 +401,6 @@ function displayChartData(result: ResponseResult): { x: number[]; y: number[]; x
   return { ...data, xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
 }
 
-function drawCanvasLabel(
-  ctx: CanvasRenderingContext2D,
-  bbox: uPlot.BBox,
-  text: string,
-  anchorX: number,
-  centerY: number,
-  pixelRatio: number,
-  colors: { background: string; border: string; text: string },
-): void {
-  const paddingX = 5 * pixelRatio;
-  const height = 16 * pixelRatio;
-  const width = ctx.measureText(text).width + 2 * paddingX;
-  const left = Math.max(
-    bbox.left + 2 * pixelRatio,
-    Math.min(anchorX - width / 2, bbox.left + bbox.width - width - 2 * pixelRatio),
-  );
-  const top = centerY - height / 2;
-  ctx.fillStyle = colors.background;
-  ctx.fillRect(left, top, width, height);
-  ctx.strokeStyle = colors.border;
-  ctx.lineWidth = Math.max(1, pixelRatio * 0.75);
-  ctx.strokeRect(left, top, width, height);
-  ctx.fillStyle = colors.text;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, left + paddingX, centerY);
-}
-
 function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
   const cutoffs = config.topology === "band-pass"
     ? [config.lower_cutoff_hz, config.upper_cutoff_hz]
@@ -437,26 +412,15 @@ function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
         const pixelRatio = window.devicePixelRatio || 1;
         const { ctx, bbox } = plot;
         ctx.save();
-        ctx.font = `${9 * pixelRatio}px "DM Mono", monospace`;
-        finiteCutoffs.forEach((cutoff, index) => {
+        finiteCutoffs.forEach((cutoff) => {
           const x = Math.round(plot.valToPos(cutoff, "x", true));
-          ctx.strokeStyle = "rgba(187, 112, 42, 0.82)";
+          ctx.strokeStyle = "rgba(187, 112, 42, 0.72)";
           ctx.lineWidth = Math.max(1, pixelRatio);
           ctx.setLineDash([4 * pixelRatio, 4 * pixelRatio]);
           ctx.beginPath();
           ctx.moveTo(x, bbox.top);
           ctx.lineTo(x, bbox.top + bbox.height);
           ctx.stroke();
-          ctx.setLineDash([]);
-          drawCanvasLabel(
-            ctx,
-            bbox,
-            "−3 dB",
-            x,
-            bbox.top + (11 + index % 2 * 19) * pixelRatio,
-            pixelRatio,
-            { background: "rgba(255, 252, 247, 0.96)", border: "rgba(207, 148, 91, 0.72)", text: "rgba(126, 67, 20, 0.98)" },
-          );
         });
         ctx.restore();
       },
@@ -492,8 +456,7 @@ function magnitudeFloorPlugin(result: ResponseResult): uPlot.Plugin {
         const pixelRatio = window.devicePixelRatio || 1;
         const { ctx, bbox } = plot;
         ctx.save();
-        ctx.font = `${9 * pixelRatio}px "DM Mono", monospace`;
-        crossings.forEach((frequency, index) => {
+        crossings.forEach((frequency) => {
           const x = Math.round(plot.valToPos(frequency, "x", true));
           const bottom = bbox.top + bbox.height;
           ctx.fillStyle = "rgba(22, 135, 121, 0.95)";
@@ -503,15 +466,6 @@ function magnitudeFloorPlugin(result: ResponseResult): uPlot.Plugin {
           ctx.lineTo(x, bottom - pixelRatio);
           ctx.closePath();
           ctx.fill();
-          drawCanvasLabel(
-            ctx,
-            bbox,
-            "below view",
-            x,
-            bottom - (17 + index % 2 * 19) * pixelRatio,
-            pixelRatio,
-            { background: "rgba(247, 251, 248, 0.96)", border: "rgba(116, 166, 151, 0.62)", text: "rgba(45, 104, 91, 0.98)" },
-          );
         });
         ctx.restore();
       },
@@ -550,6 +504,23 @@ function nearestIndex(values: number[], target: number): number {
   return nearest;
 }
 
+function replayReveal(element: HTMLElement): void {
+  element.classList.remove("is-revealing");
+  // Restart the short transition for a newly selected response view.
+  void element.offsetWidth;
+  element.classList.add("is-revealing");
+}
+
+function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult): void {
+  const frequencyChart = activeChart !== "step";
+  ui.chartReferenceKey.hidden = !frequencyChart;
+  if (!frequencyChart) return;
+  ui.cutoffReferenceLabel.textContent = config.topology === "band-pass"
+    ? "−3 dB edges"
+    : "−3 dB cutoff";
+  ui.magnitudeFloorKey.hidden = activeChart !== "magnitude" || magnitudeFloorCrossings(result).length === 0;
+}
+
 function drawResponseChart(): void {
   if (!responseResult || !appliedConfig) return;
   const meta = chartMeta[activeChart];
@@ -561,6 +532,7 @@ function drawResponseChart(): void {
   ui.chartTitle.textContent = meta.title;
   ui.chartSubtitle.textContent = meta.subtitle;
   ui.chartUnit.textContent = values.unit;
+  updateChartReferenceKey(appliedConfig, responseResult);
   ui.xAxisLabel.textContent = values.xLabel;
   ui.yAxisLabel.textContent = values.yLabel;
   ui.chartPanel.setAttribute("aria-labelledby", `tab-${activeChart}`);
@@ -594,6 +566,7 @@ function drawResponseChart(): void {
       { label: meta.y, stroke: activeChart === "step" ? "#bfed4b" : "#168779", width: 2.5, points: { show: false } },
     ],
   }, [values.x, values.y], ui.chartHost);
+  replayReveal(ui.chartPanel);
 }
 
 function renderCode(config = validateConfiguration()): void {
@@ -766,6 +739,7 @@ function showFilterResult(): void {
   ui.filteredPlaceholder.hidden = true;
   ui.filteredContent.hidden = false;
   ui.downloadCsv.hidden = false;
+  replayReveal(ui.filteredContent);
 }
 
 function showCsvError(message: string): void {

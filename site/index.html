@@ -156,7 +156,16 @@
               <button id="tab-step" type="button" role="tab" aria-selected="false" aria-controls="response-chart-panel" data-chart="step" tabindex="-1">Step trace</button>
             </div>
             <div class="response-chart-panel" id="response-chart-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-magnitude">
-              <div class="chart-title-row"><div><h4 id="chart-title">Magnitude response</h4><p id="chart-subtitle">Gain across frequency</p></div><span id="chart-unit" class="chart-unit">dB</span></div>
+              <div class="chart-title-row">
+                <div><h4 id="chart-title">Magnitude response</h4><p id="chart-subtitle">Gain across frequency</p></div>
+                <div class="chart-context">
+                  <div class="chart-reference-key" id="chart-reference-key" aria-hidden="true">
+                    <span><i class="cutoff-reference-mark"></i><span id="cutoff-reference-label">−3 dB cutoff</span></span>
+                    <span id="magnitude-floor-key"><i class="floor-reference-mark"></i>continues below view</span>
+                  </div>
+                  <span id="chart-unit" class="chart-unit">dB</span>
+                </div>
+              </div>
               <figure class="chart-figure">
                 <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary"></div>
                 <figcaption class="sr-only" id="response-chart-summary">Response chart is loading.</figcaption>
