@@ -711,8 +711,7 @@ p {
   font-size: 11px;
 }
 
-.settings-icon svg,
-.initial-mark svg {
+.settings-icon svg {
   display: block;
   width: 17px;
   height: 17px;
@@ -1044,12 +1043,16 @@ p {
   border-top: 2px dashed #b66525;
 }
 
-.magnitude-floor-key::before {
-  color: #168779;
-  content: "\2193";
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
+.magnitude-floor-key svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: #168779;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
 }
 
 .chart-figure {
@@ -1346,6 +1349,21 @@ p {
 
 .initial-mark {
   color: #3f806f;
+}
+
+.initial-symbol {
+  display: inline-block;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1;
+}
+
+.initial-symbol sub {
+  font-family: var(--mono);
+  font-size: 7px;
+  font-style: normal;
+  line-height: 1;
 }
 
 .csv-format {
@@ -1694,8 +1712,17 @@ p {
   border: 1px solid #cedfd5;
   border-radius: 50%;
   background: #f5faf5;
-  font-family: var(--mono);
-  font-size: 18px;
+}
+
+.placeholder-mark svg {
+  display: block;
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
 .filtered-placeholder strong {
