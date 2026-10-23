@@ -1,5 +1,7 @@
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
+import hljs from "highlight.js/lib/core";
+import rust from "highlight.js/lib/languages/rust";
 import "./style.css";
 import {
   loadAdapter,
@@ -17,11 +19,16 @@ import {
 import { MAX_CSV_BYTES, parseCsv, type ParsedCsv } from "./csv";
 
 type ChartKind = "magnitude" | "phase" | "delay" | "step";
+type ExampleSignal = "noisy-sine" | "step-drift" | "motion-pulses";
+
+const MAGNITUDE_DISPLAY_FLOOR_DB = -140;
+
+hljs.registerLanguage("rust", rust);
 
 const ui = {
   topology: getElement<HTMLSelectElement>("topology"),
   response: getElement<HTMLSelectElement>("response"),
-  order: getElement<HTMLSelectElement>("order"),
+  order: getElement<HTMLInputElement>("order"),
   cutoff: getElement<HTMLInputElement>("cutoff"),
   lowerCutoff: getElement<HTMLInputElement>("lower-cutoff"),
   upperCutoff: getElement<HTMLInputElement>("upper-cutoff"),
@@ -51,6 +58,7 @@ const ui = {
   firstInterval: getElement<HTMLInputElement>("first-interval"),
   csvText: getElement<HTMLTextAreaElement>("csv-text"),
   csvFile: getElement<HTMLInputElement>("csv-file"),
+  exampleSignal: getElement<HTMLSelectElement>("example-signal"),
   csvStatus: getElement<HTMLDivElement>("csv-status"),
   csvError: getElement<HTMLDivElement>("csv-error"),
   filteredResult: getElement<HTMLDivElement>("filtered-result"),
@@ -61,7 +69,7 @@ const ui = {
 
 const chartTabs = [...document.querySelectorAll<HTMLButtonElement>("[role=tab][data-chart]")];
 const chartMeta: Record<ChartKind, { title: string; subtitle: string; unit: string; x: string; y: string }> = {
-  magnitude: { title: "Magnitude response", subtitle: "Gain across frequency", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
+  magnitude: { title: "Magnitude response", subtitle: "Gain across frequency · view limited to −140 dB", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
   phase: { title: "Phase response", subtitle: "Natural phase shift across frequency", unit: "degrees", x: "Frequency · Hz", y: "Phase · degrees" },
   delay: { title: "Group delay", subtitle: "Delay across frequency", unit: "seconds", x: "Frequency · Hz", y: "Group delay · s" },
   step: { title: "Streamed step trace", subtitle: "Canonical current-hold step · bounded time window", unit: "output", x: "Time · s", y: "Output" },
@@ -126,17 +134,16 @@ function isValidOrder(order: number, topology: Topology, response: ResponseFamil
   return Number.isInteger(order) && order > 0 && order <= max && (topology !== "band-pass" || order % 2 === 0);
 }
 
-function refreshOrderOptions(preferredOrder?: number): void {
+function refreshOrderConstraints(preferredOrder?: number): void {
   const topology = currentTopology();
   const response = currentResponse();
   const previous = preferredOrder ?? Number(ui.order.value);
   const limit = maxOrder(topology, response);
-  const orders = topology === "band-pass"
-    ? Array.from({ length: limit / 2 }, (_, index) => 2 * (index + 1))
-    : Array.from({ length: limit }, (_, index) => index + 1);
-  ui.order.replaceChildren(...orders.map((order) => new Option(String(order), String(order))));
-  const fallback = topology === "band-pass" ? 4 : 4;
-  ui.order.value = String(orders.includes(previous) ? previous : fallback);
+  const minimum = topology === "band-pass" ? 2 : 1;
+  ui.order.min = String(minimum);
+  ui.order.max = String(limit);
+  ui.order.step = topology === "band-pass" ? "2" : "1";
+  ui.order.value = String(isValidOrder(previous, topology, response) ? previous : 4);
 }
 
 function updateConditionalControls(): void {
@@ -191,7 +198,7 @@ function validateConfiguration(): ResponseConfig | undefined {
   const order = Number(ui.order.value);
   if (!isValidOrder(order, topology, response)) {
     showError(topology === "band-pass"
-      ? "Band-pass order must be positive and even. Choose one of the listed even orders."
+      ? `Band-pass order must be an even integer from 2 through ${maxOrder(topology, response)}.`
       : `This response supports orders 1 through ${maxOrder(topology, response)}.`);
     return undefined;
   }
@@ -376,7 +383,10 @@ function drawResponseChart(): void {
     class: "ssfilt-plot",
     cursor: { drag: { x: false, y: false, setScale: false } },
     legend: { show: false },
-    scales: { x: { time: false, distr: activeChart === "step" ? 1 : 3 } },
+    scales: {
+      x: { time: false, distr: activeChart === "step" ? 1 : 3 },
+      y: activeChart === "magnitude" ? { range: [MAGNITUDE_DISPLAY_FLOOR_DB, 5] } : {},
+    },
     axes: [
       { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
       { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
@@ -414,7 +424,7 @@ function renderCode(config = validateConfiguration()): void {
     : `    // Start in steady state at sample 0, then advance to sample 1.\n    let next_sample = 0.0; // Replace with the next CSV value.\n    let elapsed_seconds = 0.01; // Difference between adjacent timestamps.\n    let output = filter.update(next_sample, elapsed_seconds)?;`;
   const imports = `use ssfilt::{${topologyType}, InputModel, Response};`;
   const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
-  ui.code.textContent = code;
+  ui.code.innerHTML = hljs.highlight(code, { language: "rust" }).value;
 }
 
 function rustVariant(value: ResponseFamily | InputModel): string {
@@ -491,7 +501,7 @@ function restoreUrl(): void {
   if (["low-pass", "high-pass", "band-pass"].includes(topology ?? "")) ui.topology.value = topology ?? "low-pass";
   if (["repeated-pole", "butterworth", "bessel", "chebyshev1"].includes(response ?? "")) ui.response.value = response ?? "butterworth";
   if (["linear", "previous-hold", "current-hold"].includes(inputModel ?? "")) ui.inputModel.value = inputModel ?? "linear";
-  refreshOrderOptions(Number(params.get("order")) || 4);
+  refreshOrderConstraints(Number(params.get("order")) || 4);
   const cutoff = Number(params.get("cutoff_hz"));
   const lower = Number(params.get("lower_cutoff_hz"));
   const upper = Number(params.get("upper_cutoff_hz"));
@@ -575,6 +585,45 @@ function loadCsvText(text: string): void {
     discardLoadedCsv();
     showCsvError(error instanceof Error ? error.message : String(error));
   }
+}
+
+function exampleCsv(kind: ExampleSignal): string {
+  let state = 0x5f37_59df;
+  const noise = (): number => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return (state / 0xffff_ffff) * 2 - 1;
+  };
+  const lines = ["time,value"];
+  let time = 0;
+
+  for (let index = 0; index < 420; index += 1) {
+    let value: number;
+    if (kind === "step-drift") {
+      value = (time >= 1.35 ? 1 : 0) + 0.18 * Math.sin(Math.PI * 0.38 * time) + 0.055 * noise();
+    } else if (kind === "motion-pulses") {
+      const pulse = (center: number, width: number, height: number): number =>
+        height * Math.exp(-(((time - center) / width) ** 2));
+      value = 0.12 * Math.sin(Math.PI * 0.7 * time)
+        + pulse(0.75, 0.09, 0.9)
+        - pulse(1.55, 0.14, 0.65)
+        + pulse(2.5, 0.08, 1.15)
+        + 0.08 * noise();
+    } else {
+      value = Math.sin(Math.PI * 2.2 * time)
+        + 0.3 * Math.sin(Math.PI * 36 * time)
+        + 0.12 * noise();
+    }
+    lines.push(`${time.toFixed(6)},${value.toFixed(6)}`);
+    time += 0.007 + 0.009 * ((noise() + 1) / 2);
+  }
+
+  return lines.join("\n");
+}
+
+function loadExampleSignal(): void {
+  const text = exampleCsv(ui.exampleSignal.value as ExampleSignal);
+  ui.csvText.value = text;
+  loadCsvText(text);
 }
 
 async function handleCsvFile(file: File): Promise<void> {
@@ -728,12 +777,12 @@ function watchResize(): void {
 }
 
 ui.topology.addEventListener("change", () => {
-  refreshOrderOptions();
+  refreshOrderConstraints();
   updateConditionalControls();
   void updateResponse();
 });
 ui.response.addEventListener("change", () => {
-  refreshOrderOptions();
+  refreshOrderConstraints();
   updateConditionalControls();
   void updateResponse();
 });
@@ -757,6 +806,7 @@ ui.initialMode.addEventListener("change", () => {
   if (loadedCsv) void runFilter();
 }));
 getElement<HTMLButtonElement>("load-csv").addEventListener("click", () => loadCsvText(ui.csvText.value));
+getElement<HTMLButtonElement>("load-example").addEventListener("click", loadExampleSignal);
 ui.csvFile.addEventListener("change", () => {
   const file = ui.csvFile.files?.[0];
   if (file) void handleCsvFile(file);
@@ -764,7 +814,7 @@ ui.csvFile.addEventListener("change", () => {
 getElement<HTMLButtonElement>("download-csv").addEventListener("click", downloadFilteredCsv);
 
 restoreUrl();
-refreshOrderOptions(Number(new URLSearchParams(window.location.search).get("order")) || 4);
+refreshOrderConstraints(Number(new URLSearchParams(window.location.search).get("order")) || 4);
 updateConditionalControls();
 updateInitialMode();
 setUpTabs();

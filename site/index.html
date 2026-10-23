@@ -100,7 +100,7 @@
                 </div>
                 <div class="field-group">
                   <label for="order">Final order</label>
-                  <select id="order" name="order" aria-describedby="order-hint"></select>
+                  <input id="order" name="order" type="number" min="1" max="50" step="1" value="4" inputmode="numeric" aria-describedby="order-hint" />
                 </div>
               </div>
               <p class="field-hint order-hint" id="order-hint">Band-pass order is even; Bessel is limited to validated orders.</p>
@@ -190,6 +190,17 @@
           <div class="csv-card">
             <div class="csv-card-head"><div><span class="card-kicker">CSV INPUT</span><h3>Replay a signal</h3></div><span class="csv-file-mark" aria-hidden="true">.csv</span></div>
             <div class="csv-format"><code>time,value</code><span>optional header · finite values · strictly increasing time · max 2 MB / 50,000 rows</span></div>
+            <div class="example-signal">
+              <div><label for="example-signal">No data handy?</label><span>Generate a deterministic irregular-time signal in your browser.</span></div>
+              <div class="example-signal-controls">
+                <select id="example-signal" aria-label="Example signal">
+                  <option value="noisy-sine">Noisy sine</option>
+                  <option value="step-drift">Step + drift</option>
+                  <option value="motion-pulses">Motion-like pulses</option>
+                </select>
+                <button class="button button-outline" id="load-example" type="button">Try example</button>
+              </div>
+            </div>
             <label for="csv-text" class="sr-only">CSV signal data with time and value columns</label>
             <textarea id="csv-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="time,value&#10;0.000,0.12&#10;0.017,0.35&#10;0.046,0.28"></textarea>
             <div class="csv-actions"><label class="button button-outline file-button" for="csv-file">Choose CSV<input id="csv-file" type="file" accept=".csv,text/csv" /></label><button class="button button-dark" id="load-csv" type="button">Filter these samples <span aria-hidden="true">→</span></button></div>

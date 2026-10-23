@@ -22,7 +22,6 @@ const FREQUENCY_POINTS: u32 = 1_201;
 const BAND_DETAIL_POINTS: u32 = 801;
 const BAND_MAPPED_LIMIT: f64 = 20.0;
 const STEP_POINTS: u32 = 1_201;
-const MAGNITUDE_FLOOR_DB: f64 = -140.0;
 const MAX_UPLOAD_ROWS: usize = 50_000;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -221,7 +220,7 @@ fn calculate_response(config: FilterConfig) -> Result<ResponseData, String> {
     for ratio in ratios {
         let point = transfer_point(config.topology, response, prototype_order, ratio, bandwidth)?;
         frequency_hz.push(reference_hz * ratio);
-        gain_db.push(point.gain_db.max(MAGNITUDE_FLOOR_DB));
+        gain_db.push(point.gain_db);
         phase_degrees.push(point.phase_radians.to_degrees());
         group_delay_seconds
             .push(point.normalized_group_delay / (core::f64::consts::TAU * reference_hz));
@@ -753,6 +752,14 @@ mod tests {
             .unwrap()
             .0;
         assert!((data.gain_db[cutoff_index] + 3.010_299_956_639_812).abs() < 0.03);
+    }
+
+    #[test]
+    fn response_data_is_not_clamped_to_the_chart_window() {
+        let mut config = low_pass_config();
+        config.order = 12;
+        let data = calculate_response(config).unwrap();
+        assert!(data.gain_db.iter().any(|gain| *gain < -140.0));
     }
 
     #[test]

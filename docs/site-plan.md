@@ -31,6 +31,8 @@ package's explicit include list.
   its existing public builders and update methods.
 - uPlot renders browser charts. The native Plotters examples remain the source
   for publication-quality SVG and CSV inspection reports.
+- highlight.js colors the generated Rust snippet; the panel remains read-only
+  and does not execute source code.
 - GitHub Actions builds static assets and deploys them to GitHub Pages. The
   browser requires no server and uploaded data never leaves the page.
 
@@ -56,12 +58,20 @@ The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only
 public API available in the current prerelease.
 
+Magnitude data is retained without an artificial floor. The interactive chart
+uses a documented -140 dB display window and clips curves below it rather than
+showing clipped values as computed response data.
+
 ## Uploaded data contract
 
 The initial format is deliberately narrow: a comma-separated file containing
 `time,value`, optionally preceded by that header. Times are seconds, all
 values must be finite, timestamps must increase strictly, and the browser
 adapter accepts at most 50,000 rows.
+
+Visitors without a capture can generate one of a few deterministic example
+signals. These use irregular timestamps, are created locally, and pass through
+the same CSV parser and public filtering path as pasted or uploaded data.
 
 Two initial-state modes make the first interval unambiguous:
 
