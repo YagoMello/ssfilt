@@ -77,7 +77,7 @@
 
         <div class="playground-layout">
           <aside class="controls-card" aria-labelledby="controls-title">
-            <div class="card-heading"><div><span class="card-kicker">CONFIGURATION</span><h3 id="controls-title">Filter setup</h3></div><span class="settings-icon" aria-hidden="true">⌘</span></div>
+            <div class="card-heading"><div><span class="card-kicker">CONFIGURATION</span><h3 id="controls-title">Filter setup</h3></div><span class="settings-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6" /></svg></span></div>
             <div class="control-stack">
               <div class="field-group">
                 <label for="topology">Topology</label>
@@ -158,13 +158,13 @@
             <div class="response-chart-panel" id="response-chart-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-magnitude">
               <div class="chart-title-row">
                 <div><h4 id="chart-title">Magnitude response</h4><p id="chart-subtitle">Gain across frequency</p></div>
-                <div class="chart-context">
-                  <div class="chart-reference-key" id="chart-reference-key" aria-hidden="true">
-                    <span><i class="cutoff-reference-mark"></i><span id="cutoff-reference-label">−3 dB cutoff</span></span>
-                    <span id="magnitude-floor-key"><i class="floor-reference-mark"></i>continues below view</span>
-                  </div>
-                  <span id="chart-unit" class="chart-unit">dB</span>
+              </div>
+              <div class="chart-reference-row" aria-hidden="true">
+                <div class="chart-reference-key" id="chart-reference-key">
+                  <span><i class="cutoff-reference-mark"></i><span id="cutoff-reference-label">−3 dB cutoff</span></span>
+                  <span id="magnitude-floor-key"><i class="floor-reference-mark"></i>continues below view</span>
                 </div>
+                <span id="chart-unit" class="chart-unit">dB</span>
               </div>
               <figure class="chart-figure">
                 <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary"></div>
@@ -229,15 +229,15 @@
             <div id="csv-error" class="validation-message" role="alert" hidden></div>
           </div>
           <div class="initial-card">
-            <div class="csv-card-head"><div><span class="card-kicker">STARTUP STATE</span><h3>Choose an initial condition</h3></div><span class="initial-mark" aria-hidden="true">↗</span></div>
-            <div class="field-group">
-              <label for="initial-mode">Before the first timestamp</label>
-              <select id="initial-mode">
-                <option value="sample0">Start at sample 0</option>
-                <option value="custom">Set a custom state</option>
-              </select>
+            <div class="csv-card-head"><div><span class="card-kicker">STARTUP STATE</span><h3>Choose an initial condition</h3></div><span class="initial-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2" /><path d="M8 12h11M16 8l4 4-4 4" /></svg></span></div>
+            <fieldset class="initial-mode-field">
+              <legend>Before the first timestamp</legend>
+              <div class="initial-mode-control">
+                <label><input type="radio" name="initial-mode" value="sample0" checked /><span>Sample 0</span></label>
+                <label><input type="radio" name="initial-mode" value="custom" /><span>Custom input</span></label>
+              </div>
               <p class="field-hint" id="initial-mode-description">Row 1 establishes the steady-state output; integration begins with row 2.</p>
-            </div>
+            </fieldset>
             <div id="custom-initial-fields" class="custom-initial-fields" hidden>
               <div class="field-group">
                 <label for="initial-value">Initial constant input <span class="required-marker">Required</span></label>
@@ -249,7 +249,7 @@
               </div>
               <p class="field-hint">The custom state is treated as constant before sample 0. This required interval advances the filter to the first timestamp.</p>
             </div>
-            <div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. A high-pass or band-pass starts with zero output at equilibrium.</p></div>
+            <div class="initial-explainer-wrap"><div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. A high-pass or band-pass starts with zero output at equilibrium.</p></div></div>
           </div>
         </div>
         <div class="filtered-result" id="filtered-result">

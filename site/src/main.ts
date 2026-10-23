@@ -58,7 +58,7 @@ const ui = {
   codeToggle: getElement<HTMLButtonElement>("toggle-code"),
   dataFilterSummary: getElement<HTMLElement>("data-filter-summary"),
   dataFilterNote: getElement<HTMLElement>("data-filter-note"),
-  initialMode: getElement<HTMLSelectElement>("initial-mode"),
+  initialModes: [...document.querySelectorAll<HTMLInputElement>('input[name="initial-mode"]')],
   initialModeDescription: getElement<HTMLParagraphElement>("initial-mode-description"),
   customInitialFields: getElement<HTMLDivElement>("custom-initial-fields"),
   initialValue: getElement<HTMLInputElement>("initial-value"),
@@ -105,6 +105,16 @@ function getElement<T extends Element>(id: string): T {
   const element = document.getElementById(id);
   if (!element) throw new Error(`Required page element #${id} is missing.`);
   return element as unknown as T;
+}
+
+function selectedInitialMode(): InitialMode {
+  return (ui.initialModes.find((input) => input.checked)?.value as InitialMode | undefined) ?? "sample0";
+}
+
+function selectInitialMode(mode: InitialMode): void {
+  ui.initialModes.forEach((input) => {
+    input.checked = input.value === mode;
+  });
 }
 
 function numericSeries(values: NumericSeries): number[] {
@@ -282,7 +292,7 @@ function validateConfiguration(): ResponseConfig | undefined {
 }
 
 function currentFilterConfig(base: ResponseConfig): FilterConfig | undefined {
-  const initialMode = ui.initialMode.value as InitialMode;
+  const initialMode = selectedInitialMode();
   let initialValue = Number(ui.initialValue.value);
   if (initialMode === "sample0") {
     initialValue = loadedCsv?.values[0] ?? 0;
@@ -414,9 +424,9 @@ function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
         ctx.save();
         finiteCutoffs.forEach((cutoff) => {
           const x = Math.round(plot.valToPos(cutoff, "x", true));
-          ctx.strokeStyle = "rgba(187, 112, 42, 0.72)";
-          ctx.lineWidth = Math.max(1, pixelRatio);
-          ctx.setLineDash([4 * pixelRatio, 4 * pixelRatio]);
+          ctx.strokeStyle = "rgba(182, 101, 37, 0.9)";
+          ctx.lineWidth = Math.max(1.5, 1.5 * pixelRatio);
+          ctx.setLineDash([5 * pixelRatio, 4 * pixelRatio]);
           ctx.beginPath();
           ctx.moveTo(x, bbox.top);
           ctx.lineTo(x, bbox.top + bbox.height);
@@ -516,8 +526,8 @@ function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult)
   ui.chartReferenceKey.hidden = !frequencyChart;
   if (!frequencyChart) return;
   ui.cutoffReferenceLabel.textContent = config.topology === "band-pass"
-    ? "−3 dB edges"
-    : "−3 dB cutoff";
+    ? `−3 dB edges · ${formatFrequency(config.lower_cutoff_hz ?? NaN)} / ${formatFrequency(config.upper_cutoff_hz ?? NaN)}`
+    : `−3 dB cutoff · ${formatFrequency(config.cutoff_hz ?? NaN)}`;
   ui.magnitudeFloorKey.hidden = activeChart !== "magnitude" || magnitudeFloorCrossings(result).length === 0;
 }
 
@@ -582,7 +592,7 @@ function renderCode(config = validateConfiguration()): void {
     ? `Response::Chebyshev1 { ripple_db: ${rustNumber(config.ripple_db ?? 0.5)} }`
     : `Response::${rustVariant(config.response)}`;
   const model = `InputModel::${rustVariant(config.input_model)}`;
-  const initialMode = ui.initialMode.value as InitialMode;
+  const initialMode = selectedInitialMode();
   const initial = initialMode === "custom"
     ? rustNumber(Number(ui.initialValue.value))
     : rustNumber(loadedCsv?.values[0] ?? 0);
@@ -642,8 +652,9 @@ function updateUrl(config: ResponseConfig): void {
   }
   if (config.ripple_db !== undefined) url.searchParams.set("ripple_db", String(config.ripple_db));
   else url.searchParams.delete("ripple_db");
-  url.searchParams.set("initial_mode", ui.initialMode.value);
-  if (ui.initialMode.value === "custom") {
+  const initialMode = selectedInitialMode();
+  url.searchParams.set("initial_mode", initialMode);
+  if (initialMode === "custom") {
     url.searchParams.set("initial_value", ui.initialValue.value);
     url.searchParams.set("first_interval_seconds", ui.firstInterval.value);
   } else {
@@ -676,7 +687,7 @@ function restoreUrl(): void {
   if (Number.isFinite(upper) && upper > 0) ui.upperCutoff.value = String(upper);
   if (Number.isFinite(ripple) && ripple > 0 && ripple < 3.0103) ui.ripple.value = String(ripple);
   const initialMode = params.get("initial_mode");
-  if (initialMode === "sample0" || initialMode === "custom") ui.initialMode.value = initialMode;
+  if (initialMode === "sample0" || initialMode === "custom") selectInitialMode(initialMode);
   const initialValue = Number(params.get("initial_value"));
   const firstInterval = Number(params.get("first_interval_seconds"));
   if (Number.isFinite(initialValue)) ui.initialValue.value = String(initialValue);
@@ -700,7 +711,7 @@ async function copyText(value: string, label: string): Promise<void> {
 }
 
 function updateInitialMode(): void {
-  const custom = ui.initialMode.value === "custom";
+  const custom = selectedInitialMode() === "custom";
   ui.customInitialFields.hidden = !custom;
   ui.initialValue.required = custom;
   ui.firstInterval.required = custom;
@@ -1000,11 +1011,12 @@ ui.ripple.addEventListener("input", () => scheduleResponseUpdate());
 getElement<HTMLButtonElement>("copy-link").addEventListener("click", () => void copyText(window.location.href, "Configuration link"));
 getElement<HTMLButtonElement>("copy-code").addEventListener("click", () => void copyText(ui.code.textContent ?? "", "Rust code"));
 ui.codeToggle.addEventListener("click", toggleCodeView);
-ui.initialMode.addEventListener("change", () => {
+ui.initialModes.forEach((input) => input.addEventListener("change", () => {
+  if (!input.checked) return;
   updateInitialMode();
   persistFilterConfiguration();
   if (loadedCsv) void runFilter();
-});
+}));
 [ui.initialValue, ui.firstInterval].forEach((input) => input.addEventListener("change", () => {
   renderCode();
   persistFilterConfiguration();
