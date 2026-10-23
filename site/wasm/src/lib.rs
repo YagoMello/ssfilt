@@ -475,7 +475,7 @@ fn prototype_order(config: FilterConfig) -> usize {
 fn frequency_mapping(config: FilterConfig) -> Result<(f64, f64, f64), String> {
     match config.topology {
         Topology::LowPass | Topology::HighPass => {
-            Ok((positive(config.cutoff_hz, "cutoff")?, 0.01, 20.0))
+            Ok((positive(config.cutoff_hz, "cutoff")?, 0.01, 100.0))
         }
         Topology::BandPass => {
             let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
@@ -760,6 +760,14 @@ mod tests {
         config.order = 12;
         let data = calculate_response(config).unwrap();
         assert!(data.gain_db.iter().any(|gain| *gain < -140.0));
+    }
+
+    #[test]
+    fn single_cutoff_response_grid_is_centered_on_the_cutoff() {
+        let data = calculate_response(low_pass_config()).unwrap();
+        assert!((data.frequency_hz[0] - 0.2).abs() < 1.0e-12);
+        assert!((data.frequency_hz.last().copied().unwrap() - 2_000.0).abs() < 1.0e-9);
+        assert!((data.frequency_hz[0] * data.frequency_hz.last().copied().unwrap() - 20.0_f64.powi(2)).abs() < 1.0e-9);
     }
 
     #[test]

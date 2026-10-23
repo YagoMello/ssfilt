@@ -51,6 +51,10 @@ const ui = {
   yAxisLabel: getElement<HTMLSpanElement>("y-axis-label"),
   responseChartSummary: getElement<HTMLElement>("response-chart-summary"),
   code: getElement<HTMLElement>("rust-code"),
+  codeCard: document.querySelector<HTMLElement>(".code-card")!,
+  codeToggle: getElement<HTMLButtonElement>("toggle-code"),
+  dataFilterSummary: getElement<HTMLElement>("data-filter-summary"),
+  dataFilterNote: getElement<HTMLElement>("data-filter-note"),
   initialMode: getElement<HTMLSelectElement>("initial-mode"),
   initialModeDescription: getElement<HTMLParagraphElement>("initial-mode-description"),
   customInitialFields: getElement<HTMLDivElement>("custom-initial-fields"),
@@ -61,7 +65,11 @@ const ui = {
   exampleSignal: getElement<HTMLSelectElement>("example-signal"),
   csvStatus: getElement<HTMLDivElement>("csv-status"),
   csvError: getElement<HTMLDivElement>("csv-error"),
-  filteredResult: getElement<HTMLDivElement>("filtered-result"),
+  filteredPlaceholder: getElement<HTMLDivElement>("filtered-placeholder"),
+  filteredPlaceholderTitle: getElement<HTMLElement>("filtered-placeholder-title"),
+  filteredPlaceholderCopy: getElement<HTMLElement>("filtered-placeholder-copy"),
+  filteredContent: getElement<HTMLDivElement>("filtered-content"),
+  downloadCsv: getElement<HTMLButtonElement>("download-csv"),
   filterChart: getElement<HTMLDivElement>("filter-chart"),
   filterChartSummary: getElement<HTMLParagraphElement>("filter-chart-summary"),
   toast: getElement<HTMLDivElement>("toast"),
@@ -69,7 +77,7 @@ const ui = {
 
 const chartTabs = [...document.querySelectorAll<HTMLButtonElement>("[role=tab][data-chart]")];
 const chartMeta: Record<ChartKind, { title: string; subtitle: string; unit: string; x: string; y: string }> = {
-  magnitude: { title: "Magnitude response", subtitle: "Gain across frequency · view limited to −140 dB", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
+  magnitude: { title: "Magnitude response", subtitle: "Gain across frequency · values below −140 dB ride the plot floor", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
   phase: { title: "Phase response", subtitle: "Natural phase shift across frequency", unit: "degrees", x: "Frequency · Hz", y: "Phase · degrees" },
   delay: { title: "Group delay", subtitle: "Delay across frequency", unit: "seconds", x: "Frequency · Hz", y: "Group delay · s" },
   step: { title: "Streamed step trace", subtitle: "Canonical current-hold step · bounded time window", unit: "output", x: "Time · s", y: "Output" },
@@ -82,7 +90,9 @@ let loadedCsv: ParsedCsv | undefined;
 let filterResult: FilterResult | undefined;
 let responsePlot: uPlot | undefined;
 let filterPlot: uPlot | undefined;
+let appliedConfig: ResponseConfig | undefined;
 let toastTimer = 0;
+let responseDebounceTimer = 0;
 let responseRequestId = 0;
 let filterRequestId = 0;
 let resizeObserver: ResizeObserver | undefined;
@@ -104,6 +114,32 @@ function shortNumber(value: number, digits = 3): string {
 
 function formatFrequency(value: number): string {
   return `${shortNumber(value, 6)} Hz`;
+}
+
+function configurationSummary(config: ResponseConfig): string {
+  const topology = enumName(config.topology);
+  const response = config.response === "chebyshev1" ? "Chebyshev I" : enumName(config.response);
+  const cutoff = config.topology === "band-pass"
+    ? `${formatFrequency(config.lower_cutoff_hz ?? NaN)}–${formatFrequency(config.upper_cutoff_hz ?? NaN)}`
+    : formatFrequency(config.cutoff_hz ?? NaN);
+  return `${topology} · ${response} · order ${config.order} · ${cutoff}`;
+}
+
+function frequencyInputStep(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0.1;
+  return 10 ** (Math.floor(Math.log10(value)) - 1);
+}
+
+function refreshFrequencyInputStep(input: HTMLInputElement): void {
+  input.step = String(frequencyInputStep(Number(input.value)));
+}
+
+function timeUnit(values: number[]): { factor: number; label: string } {
+  const largest = Math.max(0, ...values.filter(Number.isFinite).map((value) => Math.abs(value)));
+  if (largest >= 1) return { factor: 1, label: "s" };
+  if (largest >= 1e-3) return { factor: 1e3, label: "ms" };
+  if (largest >= 1e-6) return { factor: 1e6, label: "µs" };
+  return { factor: 1e9, label: "ns" };
 }
 
 function enumName(value: string): string {
@@ -179,7 +215,7 @@ function showError(message: string): void {
   ui.chartHost.replaceChildren();
   ui.chartHost.setAttribute("aria-label", "Response chart unavailable.");
   ui.responseChartSummary.textContent = message;
-  if (loadedCsv) ui.filteredResult.hidden = true;
+  if (loadedCsv) showFilterPlaceholder("The filter setup needs attention", "Correct the highlighted setting above to re-filter these samples.");
   filterRequestId += 1;
   responsePlot?.destroy();
   responsePlot = undefined;
@@ -281,8 +317,10 @@ async function updateResponse(): Promise<void> {
     const result = await adapter.response_data(config);
     if (requestId !== responseRequestId) return;
     assertResponseShape(result);
+    appliedConfig = { ...config };
     responseResult = result;
-    setStatus(result.summary || makeResponseSummary(result, config, activeChart));
+    setStatus(configurationSummary(config));
+    updateDataFilterContext(config);
     drawResponseChart();
     if (loadedCsv) await runFilter(config);
   } catch (error) {
@@ -290,6 +328,11 @@ async function updateResponse(): Promise<void> {
     showError(adapterUnavailableMessage(error));
     if (loadedCsv) showCsvError(adapterUnavailableMessage(error));
   }
+}
+
+function scheduleResponseUpdate(delay = 140): void {
+  window.clearTimeout(responseDebounceTimer);
+  responseDebounceTimer = window.setTimeout(() => void updateResponse(), delay);
 }
 
 function assertResponseShape(result: ResponseResult): void {
@@ -316,6 +359,13 @@ function updateCardHeading(config: ResponseConfig): void {
   ui.responseTitle.textContent = `${topology} · ${response} · order ${config.order}`;
 }
 
+function updateDataFilterContext(config: ResponseConfig): void {
+  ui.dataFilterSummary.textContent = configurationSummary(config);
+  ui.dataFilterNote.textContent = loadedCsv
+    ? "Loaded samples are re-filtered automatically when this setup changes."
+    : "Samples will use the same configuration shown above.";
+}
+
 function activeChartData(result: ResponseResult): { x: number[]; y: number[] } {
   if (activeChart === "step") return { x: numericSeries(result.step_time_seconds), y: numericSeries(result.step_output) };
   const y = activeChart === "magnitude"
@@ -324,6 +374,58 @@ function activeChartData(result: ResponseResult): { x: number[]; y: number[] } {
       ? result.phase_degrees
       : result.group_delay_seconds;
   return { x: numericSeries(result.frequency_hz), y: numericSeries(y) };
+}
+
+function displayChartData(result: ResponseResult): { x: number[]; y: number[]; xLabel: string; yLabel: string; unit: string } {
+  const data = activeChartData(result);
+  const meta = chartMeta[activeChart];
+  if (activeChart === "step") {
+    const unit = timeUnit(data.x);
+    return { x: data.x.map((value) => value * unit.factor), y: data.y, xLabel: `Time · ${unit.label}`, yLabel: meta.y, unit: meta.unit };
+  }
+  if (activeChart === "delay") {
+    const unit = timeUnit(data.y);
+    return { x: data.x, y: data.y.map((value) => value * unit.factor), xLabel: meta.x, yLabel: `Group delay · ${unit.label}`, unit: unit.label };
+  }
+  if (activeChart === "magnitude") {
+    return { ...data, y: data.y.map((value) => Math.max(MAGNITUDE_DISPLAY_FLOOR_DB + 0.75, value)), xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
+  }
+  return { ...data, xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
+}
+
+function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
+  const cutoffs = config.topology === "band-pass"
+    ? [config.lower_cutoff_hz, config.upper_cutoff_hz]
+    : [config.cutoff_hz];
+  const finiteCutoffs = cutoffs.filter((value): value is number => value !== undefined && Number.isFinite(value));
+  return {
+    hooks: {
+      draw: (plot) => {
+        const pixelRatio = window.devicePixelRatio || 1;
+        const { ctx, bbox } = plot;
+        ctx.save();
+        ctx.strokeStyle = "rgba(187, 112, 42, 0.82)";
+        ctx.fillStyle = "rgba(133, 73, 22, 0.95)";
+        ctx.lineWidth = Math.max(1, pixelRatio);
+        ctx.setLineDash([4 * pixelRatio, 4 * pixelRatio]);
+        ctx.font = `${9 * pixelRatio}px "DM Mono", monospace`;
+        finiteCutoffs.forEach((cutoff) => {
+          const x = Math.round(plot.valToPos(cutoff, "x", true));
+          ctx.beginPath();
+          ctx.moveTo(x, bbox.top);
+          ctx.lineTo(x, bbox.top + bbox.height);
+          ctx.stroke();
+          const label = "−3 dB";
+          const labelWidth = ctx.measureText(label).width;
+          const labelX = x + labelWidth + 8 * pixelRatio > bbox.left + bbox.width
+            ? x - labelWidth - 5 * pixelRatio
+            : x + 5 * pixelRatio;
+          ctx.fillText(label, labelX, bbox.top + 12 * pixelRatio);
+        });
+        ctx.restore();
+      },
+    },
+  };
 }
 
 function makeResponseSummary(result: ResponseResult, config: ResponseConfig, kind: ChartKind): string {
@@ -358,21 +460,21 @@ function nearestIndex(values: number[], target: number): number {
 }
 
 function drawResponseChart(): void {
-  if (!responseResult) return;
+  if (!responseResult || !appliedConfig) return;
   const meta = chartMeta[activeChart];
-  const values = activeChartData(responseResult);
+  const values = displayChartData(responseResult);
   if (values.x.length !== values.y.length || values.x.length === 0) return;
   responsePlot?.destroy();
   responsePlot = undefined;
   ui.chartHost.replaceChildren();
   ui.chartTitle.textContent = meta.title;
   ui.chartSubtitle.textContent = meta.subtitle;
-  ui.chartUnit.textContent = meta.unit;
-  ui.xAxisLabel.textContent = meta.x;
-  ui.yAxisLabel.textContent = meta.y;
+  ui.chartUnit.textContent = values.unit;
+  ui.xAxisLabel.textContent = values.xLabel;
+  ui.yAxisLabel.textContent = values.yLabel;
   ui.chartPanel.setAttribute("aria-labelledby", `tab-${activeChart}`);
-  ui.chartHost.setAttribute("aria-label", `${meta.title}; ${makeResponseSummary(responseResult, validateConfiguration() ?? defaultConfig(), activeChart)}`);
-  ui.responseChartSummary.textContent = makeResponseSummary(responseResult, validateConfiguration() ?? defaultConfig(), activeChart);
+  ui.chartHost.setAttribute("aria-label", `${meta.title}; ${makeResponseSummary(responseResult, appliedConfig, activeChart)}`);
+  ui.responseChartSummary.textContent = makeResponseSummary(responseResult, appliedConfig, activeChart);
 
   const rect = ui.chartHost.getBoundingClientRect();
   const width = Math.max(220, Math.floor(rect.width || 660));
@@ -383,6 +485,7 @@ function drawResponseChart(): void {
     class: "ssfilt-plot",
     cursor: { drag: { x: false, y: false, setScale: false } },
     legend: { show: false },
+    plugins: activeChart === "step" ? [] : [cutoffMarkerPlugin(appliedConfig)],
     scales: {
       x: activeChart === "step"
         ? { time: false, distr: 1 }
@@ -398,10 +501,6 @@ function drawResponseChart(): void {
       { label: meta.y, stroke: activeChart === "step" ? "#bfed4b" : "#168779", width: 2.5, points: { show: false } },
     ],
   }, [values.x, values.y], ui.chartHost);
-}
-
-function defaultConfig(): ResponseConfig {
-  return { topology: "low-pass", response: "repeated-pole", order: 4, cutoff_hz: 8, input_model: "linear" };
 }
 
 function renderCode(config = validateConfiguration()): void {
@@ -454,10 +553,8 @@ function setActiveChart(kind: ChartKind): void {
     tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
   });
-  if (responseResult) {
-    const config = validateConfiguration() ?? defaultConfig();
-    const summary = responseResult.summary || makeResponseSummary(responseResult, config, kind);
-    setStatus(summary);
+  if (responseResult && appliedConfig) {
+    setStatus(configurationSummary(appliedConfig));
     drawResponseChart();
   }
 }
@@ -547,6 +644,27 @@ function updateInitialMode(): void {
   renderCode();
 }
 
+function toggleCodeView(): void {
+  const expanded = ui.codeToggle.getAttribute("aria-expanded") !== "true";
+  ui.codeToggle.setAttribute("aria-expanded", String(expanded));
+  ui.codeToggle.textContent = expanded ? "Collapse code" : "Show full code";
+  ui.codeCard.classList.toggle("is-code-expanded", expanded);
+}
+
+function showFilterPlaceholder(title: string, copy: string): void {
+  ui.filteredPlaceholderTitle.textContent = title;
+  ui.filteredPlaceholderCopy.textContent = copy;
+  ui.filteredPlaceholder.hidden = false;
+  ui.filteredContent.hidden = true;
+  ui.downloadCsv.hidden = true;
+}
+
+function showFilterResult(): void {
+  ui.filteredPlaceholder.hidden = true;
+  ui.filteredContent.hidden = false;
+  ui.downloadCsv.hidden = false;
+}
+
 function showCsvError(message: string): void {
   ui.csvError.textContent = message;
   ui.csvError.hidden = false;
@@ -567,7 +685,8 @@ function discardLoadedCsv(): void {
   filterPlot?.destroy();
   filterPlot = undefined;
   ui.filterChart.replaceChildren();
-  ui.filteredResult.hidden = true;
+  showFilterPlaceholder("Your filtered trace will appear here", "Paste or generate a signal, then filter it with the active setup above.");
+  if (appliedConfig) updateDataFilterContext(appliedConfig);
 }
 
 function loadCsvText(text: string): void {
@@ -580,9 +699,11 @@ function loadCsvText(text: string): void {
     filterPlot = undefined;
     ui.filterChart.replaceChildren();
     ui.csvStatus.textContent = `${parsed.rowCount.toLocaleString()} samples ready · ${shortNumber(parsed.times[0] ?? 0, 5)} to ${shortNumber(parsed.times.at(-1) ?? 0, 5)} seconds`;
-    ui.filteredResult.hidden = false;
+    showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
+    if (appliedConfig) updateDataFilterContext(appliedConfig);
     renderCode();
-    void updateResponse();
+    if (appliedConfig) void runFilter(appliedConfig);
+    else scheduleResponseUpdate(0);
   } catch (error) {
     discardLoadedCsv();
     showCsvError(error instanceof Error ? error.message : String(error));
@@ -649,15 +770,15 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
   const requestId = ++filterRequestId;
   const config = baseConfig ?? validateConfiguration();
   if (!config) {
-    ui.filteredResult.hidden = true;
+    showFilterPlaceholder("The filter setup needs attention", "Correct the highlighted setting above to filter these samples.");
     return;
   }
   const filterConfig = currentFilterConfig(config);
   if (!filterConfig) {
-    ui.filteredResult.hidden = true;
+    showFilterPlaceholder("The startup state needs attention", "Correct the initial condition to filter these samples.");
     return;
   }
-  ui.filteredResult.hidden = true;
+  showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
   ui.csvStatus.textContent = "Filtering every elapsed interval…";
 
   try {
@@ -668,14 +789,14 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     assertFilterShape(result);
     filterResult = result;
     ui.csvStatus.textContent = `${loadedCsv.rowCount.toLocaleString()} samples filtered successfully.`;
-    ui.filteredResult.hidden = false;
+    showFilterResult();
     showDiagnostics(result);
     drawFilterChart(result);
     renderCode(config);
   } catch (error) {
     if (requestId !== filterRequestId) return;
     filterResult = undefined;
-    ui.filteredResult.hidden = true;
+    showFilterPlaceholder("This signal could not be filtered", "Review the CSV and filter settings, then try again.");
     showCsvError(`Could not filter this signal: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -771,7 +892,7 @@ function watchResize(): void {
   resizeObserver = new ResizeObserver(() => {
     window.requestAnimationFrame(() => {
       if (responseResult) drawResponseChart();
-      if (filterResult && !ui.filteredResult.hidden) drawFilterChart(filterResult);
+      if (filterResult && !ui.filteredContent.hidden) drawFilterChart(filterResult);
     });
   });
   resizeObserver.observe(ui.chartHost);
@@ -781,22 +902,26 @@ function watchResize(): void {
 ui.topology.addEventListener("change", () => {
   refreshOrderConstraints();
   updateConditionalControls();
-  void updateResponse();
+  scheduleResponseUpdate(0);
 });
 ui.response.addEventListener("change", () => {
   refreshOrderConstraints();
   updateConditionalControls();
-  void updateResponse();
+  scheduleResponseUpdate(0);
 });
-ui.order.addEventListener("change", () => void updateResponse());
+ui.order.addEventListener("input", () => scheduleResponseUpdate());
 ui.inputModel.addEventListener("change", () => {
   updateConditionalControls();
-  void updateResponse();
+  scheduleResponseUpdate(0);
 });
-[ui.cutoff, ui.lowerCutoff, ui.upperCutoff, ui.ripple].forEach((input) => input.addEventListener("change", () => void updateResponse()));
-getElement<HTMLButtonElement>("apply-config").addEventListener("click", () => void updateResponse());
+[ui.cutoff, ui.lowerCutoff, ui.upperCutoff].forEach((input) => input.addEventListener("input", () => {
+  refreshFrequencyInputStep(input);
+  scheduleResponseUpdate();
+}));
+ui.ripple.addEventListener("input", () => scheduleResponseUpdate());
 getElement<HTMLButtonElement>("copy-link").addEventListener("click", () => void copyText(window.location.href, "Configuration link"));
 getElement<HTMLButtonElement>("copy-code").addEventListener("click", () => void copyText(ui.code.textContent ?? "", "Rust code"));
+ui.codeToggle.addEventListener("click", toggleCodeView);
 ui.initialMode.addEventListener("change", () => {
   updateInitialMode();
   persistFilterConfiguration();
@@ -813,12 +938,13 @@ ui.csvFile.addEventListener("change", () => {
   const file = ui.csvFile.files?.[0];
   if (file) void handleCsvFile(file);
 });
-getElement<HTMLButtonElement>("download-csv").addEventListener("click", downloadFilteredCsv);
+ui.downloadCsv.addEventListener("click", downloadFilteredCsv);
 
 restoreUrl();
 refreshOrderConstraints(Number(new URLSearchParams(window.location.search).get("order")) || 4);
 updateConditionalControls();
 updateInitialMode();
+[ui.cutoff, ui.lowerCutoff, ui.upperCutoff].forEach(refreshFrequencyInputStep);
 setUpTabs();
 watchResize();
 renderCode();

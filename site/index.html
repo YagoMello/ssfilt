@@ -136,13 +136,10 @@
                 <p class="field-hint" id="input-model-hint">The new sample is the interval endpoint.</p>
               </div>
               <div id="validation-message" class="validation-message" role="alert" hidden></div>
-              <button class="button button-dark run-response" id="apply-config" type="button">
-                <span>Update response</span><span aria-hidden="true">↗</span>
-              </button>
             </div>
             <div class="url-control">
               <span class="url-dot" aria-hidden="true"></span>
-              <span>Configuration saved in this page’s URL</span>
+              <span>Response and URL update automatically</span>
               <button id="copy-link" type="button" class="text-button">Copy link</button>
             </div>
           </aside>
@@ -172,8 +169,14 @@
         </div>
 
         <section class="code-card" aria-labelledby="code-title">
-          <div class="code-card-heading"><div><span class="card-kicker">FROM EXPLORATION TO RUST</span><h3 id="code-title">Start with the same setup</h3></div><button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button></div>
-          <pre><code id="rust-code"></code></pre>
+          <div class="code-card-heading">
+            <div><span class="card-kicker">FROM EXPLORATION TO RUST</span><h3 id="code-title">Start with the same setup</h3></div>
+            <div class="code-actions">
+              <button class="copy-code" id="toggle-code" type="button" aria-expanded="false" aria-controls="code-viewport">Show full code</button>
+              <button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button>
+            </div>
+          </div>
+          <div class="code-viewport" id="code-viewport"><pre><code id="rust-code"></code></pre></div>
           <p class="code-note">The example uses the public streaming API. Replace the example values with your application’s samples and elapsed intervals.</p>
         </section>
       </section>
@@ -185,6 +188,10 @@
             <h2 id="data-title">Bring your <em>timestamps.</em></h2>
           </div>
           <p class="section-intro">Paste a two-column CSV or choose a file. The first column is time in seconds; the second is the sample value. Processing stays in your browser.</p>
+        </div>
+        <div class="data-filter-context" id="data-filter-context" aria-live="polite">
+          <div><span class="card-kicker">ACTIVE FILTER</span><strong id="data-filter-summary">Preparing the filter setup…</strong><span id="data-filter-note">Samples use the same configuration shown above.</span></div>
+          <a href="#playground">Review setup <span aria-hidden="true">↑</span></a>
         </div>
         <div class="data-layout">
           <div class="csv-card">
@@ -231,14 +238,21 @@
             <div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. A high-pass or band-pass starts with zero output at equilibrium.</p></div>
           </div>
         </div>
-        <div class="filtered-result" id="filtered-result" hidden>
-          <div class="filtered-head"><div><span class="card-kicker">FILTERED SIGNAL</span><h3>Input and output</h3></div><button class="button button-outline download-button" id="download-csv" type="button"><span aria-hidden="true">↓</span> Download CSV</button></div>
-          <div class="filter-chart-wrap"><div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div><p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p></div>
-          <div class="diagnostics-grid" aria-label="Integration diagnostics">
-            <div class="diagnostic-item"><span class="diagnostic-label">Accepted steps</span><strong id="diag-accepted">—</strong></div>
-            <div class="diagnostic-item"><span class="diagnostic-label">Rejected steps</span><strong id="diag-rejected">—</strong></div>
-            <div class="diagnostic-item"><span class="diagnostic-label">Derivative evaluations</span><strong id="diag-derivatives">—</strong></div>
-            <div class="diagnostic-item"><span class="diagnostic-label">Equilibrium shortcuts</span><strong id="diag-equilibrium">—</strong></div>
+        <div class="filtered-result" id="filtered-result">
+          <div class="filtered-head"><div><span class="card-kicker">FILTERED SIGNAL</span><h3>Input and output</h3></div><button class="button button-outline download-button" id="download-csv" type="button" hidden><span aria-hidden="true">↓</span> Download CSV</button></div>
+          <div class="filtered-placeholder" id="filtered-placeholder">
+            <span class="placeholder-mark" aria-hidden="true">≈</span>
+            <strong id="filtered-placeholder-title">Your filtered trace will appear here</strong>
+            <p id="filtered-placeholder-copy">Paste or generate a signal, then filter it with the active setup above.</p>
+          </div>
+          <div id="filtered-content" hidden>
+            <div class="filter-chart-wrap"><div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div><p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p></div>
+            <div class="diagnostics-grid" aria-label="Integration diagnostics">
+              <div class="diagnostic-item"><span class="diagnostic-label">Accepted steps</span><strong id="diag-accepted">—</strong></div>
+              <div class="diagnostic-item"><span class="diagnostic-label">Rejected steps</span><strong id="diag-rejected">—</strong></div>
+              <div class="diagnostic-item"><span class="diagnostic-label">Derivative evaluations</span><strong id="diag-derivatives">—</strong></div>
+              <div class="diagnostic-item"><span class="diagnostic-label">Equilibrium shortcuts</span><strong id="diag-equilibrium">—</strong></div>
+            </div>
           </div>
         </div>
       </section>
