@@ -513,21 +513,63 @@ function alignChartLabels(plot: uPlot): void {
   ui.chartPanel.style.setProperty("--chart-plot-right", `${Math.max(0, right)}px`);
 }
 
-function frequencyYRange(_plot: uPlot, minimum: number, maximum: number): [number, number] {
-  if (activeChart === "magnitude") return [MAGNITUDE_DISPLAY_FLOOR_DB, 5];
+function responseYLimits(minimum: number, maximum: number): { min: number; max: number } {
+  if (activeChart === "magnitude") return { min: MAGNITUDE_DISPLAY_FLOOR_DB, max: 5 };
   const span = maximum - minimum;
   const padding = span > 0 ? span * 0.06 : Math.max(1, Math.abs(maximum) * 0.06);
-  return [minimum - padding, maximum + padding];
+  return { min: minimum - padding, max: maximum + padding };
 }
 
-function stableLogRange(values: number[]): { min: number; max: number } {
-  // uPlot's log tick splitter can fail on a few exact decimal endpoints
-  // (for example 0.095–950). Reciprocal padding preserves the geometric center.
+function responseYRange(_plot: uPlot, minimum: number, maximum: number): [number, number] {
+  const limits = responseYLimits(minimum, maximum);
+  return [limits.min, limits.max];
+}
+
+function frequencyScaleRange(
+  _plot: uPlot,
+  minimum: number,
+  maximum: number,
+): [number, number] {
+  // Keep the sampled endpoints just inside the canvas while preserving the
+  // selected cutoff at the geometric center of the logarithmic range.
   const expansion = 1 + 1e-6;
-  return {
-    min: (values[0] ?? 1) / expansion,
-    max: (values[values.length - 1] ?? 1) * expansion,
-  };
+  return [minimum / expansion, maximum * expansion];
+}
+
+function frequencyAxisSplits(
+  _plot: uPlot,
+  _axisIndex: number,
+  minimum: number,
+  maximum: number,
+): number[] {
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum <= minimum) return [];
+
+  const firstExponent = Math.floor(Math.log10(minimum));
+  const lastExponent = Math.ceil(Math.log10(maximum));
+  // Response profiles span four decades. The cap keeps malformed external
+  // data from turning axis rendering into unbounded work.
+  if (lastExponent - firstExponent > 32) return [minimum, maximum];
+
+  const tolerance = 1e-12;
+  const splits: number[] = [];
+  for (let exponent = firstExponent; exponent <= lastExponent; exponent += 1) {
+    const decade = 10 ** exponent;
+    for (let multiplier = 1; multiplier < 10; multiplier += 1) {
+      const value = multiplier * decade;
+      if (value >= minimum * (1 - tolerance) && value <= maximum * (1 + tolerance)) splits.push(value);
+    }
+  }
+  return splits;
+}
+
+function frequencyAxisValues(
+  _plot: uPlot,
+  splits: number[],
+): (string | null)[] {
+  return splits.map((value) => {
+    const exponent = Math.log10(value);
+    return Math.abs(exponent - Math.round(exponent)) < 1e-9 ? shortNumber(value, 6) : null;
+  });
 }
 
 function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult): void {
@@ -558,16 +600,26 @@ function drawResponseChart(): void {
   const width = Math.max(220, Math.floor(rect.width || 660));
   const height = Math.max(230, Math.min(340, Math.round(width * 0.45)));
   const stepChart = activeChart === "step";
-  const frequencyRange = stableLogRange(values.x);
+  const frequencyRange = {
+    min: values.x[0] ?? 1,
+    max: values.x[values.x.length - 1] ?? 1,
+  };
   ui.frequencyChartHost.hidden = stepChart;
   ui.stepChartHost.hidden = !stepChart;
   const existingPlot = stepChart ? stepPlot : frequencyPlot;
   if (existingPlot) {
-    existingPlot.setSize({ width, height });
-    existingPlot.setData([values.x, values.y]);
-    existingPlot.setScale("x", stepChart
-      ? { min: values.x[0], max: values.x[values.x.length - 1] }
-      : frequencyRange);
+    const finiteY = values.y.filter(Number.isFinite);
+    const yLimits = finiteY.length > 0
+      ? responseYLimits(Math.min(...finiteY), Math.max(...finiteY))
+      : { min: 0, max: 1 };
+    existingPlot.batch(() => {
+      if (existingPlot.width !== width || existingPlot.height !== height) existingPlot.setSize({ width, height });
+      existingPlot.setData([values.x, values.y], false);
+      existingPlot.setScale("x", stepChart
+        ? { min: values.x[0], max: values.x[values.x.length - 1] }
+        : frequencyRange);
+      existingPlot.setScale("y", yLimits);
+    });
     alignChartLabels(existingPlot);
     return;
   }
@@ -582,11 +634,19 @@ function drawResponseChart(): void {
     scales: {
       x: stepChart
         ? { time: false, distr: 1 }
-        : { time: false, distr: 3, range: [frequencyRange.min, frequencyRange.max] },
-      y: stepChart ? {} : { range: frequencyYRange },
+        : { time: false, distr: 3, range: frequencyScaleRange },
+      y: { range: responseYRange },
     },
     axes: [
-      { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
+      {
+        stroke: "#687780",
+        grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 },
+        ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 },
+        font: "11px Inter, system-ui, sans-serif",
+        size: 38,
+        splits: stepChart ? undefined : frequencyAxisSplits,
+        values: stepChart ? undefined : frequencyAxisValues,
+      },
       { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
     ],
     series: [
