@@ -163,8 +163,10 @@
               </figure>
               <div class="chart-axis-labels" aria-hidden="true"><span id="x-axis-label">Frequency · Hz</span><span id="y-axis-label">Gain · dB</span></div>
             </div>
-            <div class="response-summary" id="response-summary" role="status" aria-live="polite">Loading the Rust response model…</div>
-            <div class="response-footnote"><span class="mini-info" aria-hidden="true">i</span><span>Phase and group delay show the natural response of this causal filter. No phase correction is applied.</span></div>
+            <div class="response-meta">
+              <div class="response-summary" id="response-summary" role="status" aria-live="polite">Loading the Rust response model…</div>
+              <div class="response-footnote"><span class="mini-info" aria-hidden="true">i</span><span>Natural causal response; no phase correction.</span></div>
+            </div>
           </div>
         </div>
 
@@ -209,7 +211,10 @@
               </div>
             </div>
             <label for="csv-text" class="sr-only">CSV signal data with time and value columns</label>
-            <textarea id="csv-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="time,value&#10;0.000,0.12&#10;0.017,0.35&#10;0.046,0.28"></textarea>
+            <div class="csv-editor">
+              <pre class="csv-line-numbers" id="csv-line-numbers" aria-hidden="true">1</pre>
+              <textarea id="csv-text" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="time,value&#10;0.000,0.12&#10;0.017,0.35&#10;0.046,0.28"></textarea>
+            </div>
             <div class="csv-actions"><label class="button button-outline file-button" for="csv-file">Choose CSV<input id="csv-file" type="file" accept=".csv,text/csv" /></label><button class="button button-dark" id="load-csv" type="button">Filter these samples <span aria-hidden="true">→</span></button></div>
             <div id="csv-status" class="csv-status" role="status" aria-live="polite">No sample data loaded yet.</div>
             <div id="csv-error" class="validation-message" role="alert" hidden></div>

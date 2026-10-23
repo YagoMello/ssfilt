@@ -61,6 +61,7 @@ const ui = {
   initialValue: getElement<HTMLInputElement>("initial-value"),
   firstInterval: getElement<HTMLInputElement>("first-interval"),
   csvText: getElement<HTMLTextAreaElement>("csv-text"),
+  csvLineNumbers: getElement<HTMLPreElement>("csv-line-numbers"),
   csvFile: getElement<HTMLInputElement>("csv-file"),
   exampleSignal: getElement<HTMLSelectElement>("example-signal"),
   csvStatus: getElement<HTMLDivElement>("csv-status"),
@@ -77,7 +78,7 @@ const ui = {
 
 const chartTabs = [...document.querySelectorAll<HTMLButtonElement>("[role=tab][data-chart]")];
 const chartMeta: Record<ChartKind, { title: string; subtitle: string; unit: string; x: string; y: string }> = {
-  magnitude: { title: "Magnitude response", subtitle: "Gain across frequency · values below −140 dB ride the plot floor", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
+  magnitude: { title: "Magnitude response", subtitle: "Unclamped gain · visible range ends at −140 dB", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
   phase: { title: "Phase response", subtitle: "Natural phase shift across frequency", unit: "degrees", x: "Frequency · Hz", y: "Phase · degrees" },
   delay: { title: "Group delay", subtitle: "Delay across frequency", unit: "seconds", x: "Frequency · Hz", y: "Group delay · s" },
   step: { title: "Streamed step trace", subtitle: "Canonical current-hold step · bounded time window", unit: "output", x: "Time · s", y: "Output" },
@@ -208,18 +209,25 @@ function updateConditionalControls(): void {
 }
 
 function showError(message: string): void {
-  ui.validation.textContent = message;
+  responseRequestId += 1;
+  const preservesResponse = responseResult !== undefined && appliedConfig !== undefined;
+  const displayedMessage = preservesResponse
+    ? `${message} The plot and loaded samples still show the last valid setup.`
+    : message;
+  ui.validation.textContent = displayedMessage;
   ui.validation.hidden = false;
-  ui.responseSummary.textContent = message;
+  ui.responseSummary.textContent = displayedMessage;
   ui.responseSummary.classList.add("is-error");
-  ui.chartHost.replaceChildren();
-  ui.chartHost.setAttribute("aria-label", "Response chart unavailable.");
-  ui.responseChartSummary.textContent = message;
-  if (loadedCsv) showFilterPlaceholder("The filter setup needs attention", "Correct the highlighted setting above to re-filter these samples.");
-  filterRequestId += 1;
-  responsePlot?.destroy();
-  responsePlot = undefined;
-  responseResult = undefined;
+  if (!preservesResponse) {
+    ui.chartHost.replaceChildren();
+    ui.chartHost.setAttribute("aria-label", "Response chart unavailable.");
+    ui.responseChartSummary.textContent = message;
+    if (loadedCsv) showFilterPlaceholder("The filter setup needs attention", "Correct the highlighted setting above to re-filter these samples.");
+    filterRequestId += 1;
+    responsePlot?.destroy();
+    responsePlot = undefined;
+    responseResult = undefined;
+  }
 }
 
 function clearError(): void {
@@ -303,8 +311,8 @@ function setStatus(message: string): void {
 
 async function updateResponse(): Promise<void> {
   const config = validateConfiguration();
-  renderCode(config);
   if (!config) return;
+  renderCode(config);
   clearError();
   updateUrl(config);
   updateCardHeading(config);
@@ -387,10 +395,35 @@ function displayChartData(result: ResponseResult): { x: number[]; y: number[]; x
     const unit = timeUnit(data.y);
     return { x: data.x, y: data.y.map((value) => value * unit.factor), xLabel: meta.x, yLabel: `Group delay · ${unit.label}`, unit: unit.label };
   }
-  if (activeChart === "magnitude") {
-    return { ...data, y: data.y.map((value) => Math.max(MAGNITUDE_DISPLAY_FLOOR_DB + 0.75, value)), xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
-  }
   return { ...data, xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
+}
+
+function drawCanvasLabel(
+  ctx: CanvasRenderingContext2D,
+  bbox: uPlot.BBox,
+  text: string,
+  anchorX: number,
+  centerY: number,
+  pixelRatio: number,
+  colors: { background: string; border: string; text: string },
+): void {
+  const paddingX = 5 * pixelRatio;
+  const height = 16 * pixelRatio;
+  const width = ctx.measureText(text).width + 2 * paddingX;
+  const left = Math.max(
+    bbox.left + 2 * pixelRatio,
+    Math.min(anchorX - width / 2, bbox.left + bbox.width - width - 2 * pixelRatio),
+  );
+  const top = centerY - height / 2;
+  ctx.fillStyle = colors.background;
+  ctx.fillRect(left, top, width, height);
+  ctx.strokeStyle = colors.border;
+  ctx.lineWidth = Math.max(1, pixelRatio * 0.75);
+  ctx.strokeRect(left, top, width, height);
+  ctx.fillStyle = colors.text;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, left + paddingX, centerY);
 }
 
 function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
@@ -404,23 +437,81 @@ function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
         const pixelRatio = window.devicePixelRatio || 1;
         const { ctx, bbox } = plot;
         ctx.save();
-        ctx.strokeStyle = "rgba(187, 112, 42, 0.82)";
-        ctx.fillStyle = "rgba(133, 73, 22, 0.95)";
-        ctx.lineWidth = Math.max(1, pixelRatio);
-        ctx.setLineDash([4 * pixelRatio, 4 * pixelRatio]);
         ctx.font = `${9 * pixelRatio}px "DM Mono", monospace`;
-        finiteCutoffs.forEach((cutoff) => {
+        finiteCutoffs.forEach((cutoff, index) => {
           const x = Math.round(plot.valToPos(cutoff, "x", true));
+          ctx.strokeStyle = "rgba(187, 112, 42, 0.82)";
+          ctx.lineWidth = Math.max(1, pixelRatio);
+          ctx.setLineDash([4 * pixelRatio, 4 * pixelRatio]);
           ctx.beginPath();
           ctx.moveTo(x, bbox.top);
           ctx.lineTo(x, bbox.top + bbox.height);
           ctx.stroke();
-          const label = "−3 dB";
-          const labelWidth = ctx.measureText(label).width;
-          const labelX = x + labelWidth + 8 * pixelRatio > bbox.left + bbox.width
-            ? x - labelWidth - 5 * pixelRatio
-            : x + 5 * pixelRatio;
-          ctx.fillText(label, labelX, bbox.top + 12 * pixelRatio);
+          ctx.setLineDash([]);
+          drawCanvasLabel(
+            ctx,
+            bbox,
+            "−3 dB",
+            x,
+            bbox.top + (11 + index % 2 * 19) * pixelRatio,
+            pixelRatio,
+            { background: "rgba(255, 252, 247, 0.96)", border: "rgba(207, 148, 91, 0.72)", text: "rgba(126, 67, 20, 0.98)" },
+          );
+        });
+        ctx.restore();
+      },
+    },
+  };
+}
+
+function magnitudeFloorCrossings(result: ResponseResult): number[] {
+  const frequencies = numericSeries(result.frequency_hz);
+  const gains = numericSeries(result.gain_db);
+  const crossings: number[] = [];
+  for (let index = 1; index < gains.length; index += 1) {
+    const previous = gains[index - 1];
+    const current = gains[index];
+    if (previous === undefined || current === undefined || !Number.isFinite(previous) || !Number.isFinite(current)) continue;
+    if ((previous < MAGNITUDE_DISPLAY_FLOOR_DB) === (current < MAGNITUDE_DISPLAY_FLOOR_DB)) continue;
+    const previousFrequency = frequencies[index - 1];
+    const currentFrequency = frequencies[index];
+    if (previousFrequency === undefined || currentFrequency === undefined || previousFrequency <= 0 || currentFrequency <= 0) continue;
+    const fraction = (MAGNITUDE_DISPLAY_FLOOR_DB - previous) / (current - previous);
+    const logFrequency = Math.log(previousFrequency) + fraction * (Math.log(currentFrequency) - Math.log(previousFrequency));
+    crossings.push(Math.exp(logFrequency));
+  }
+  return crossings;
+}
+
+function magnitudeFloorPlugin(result: ResponseResult): uPlot.Plugin {
+  const crossings = magnitudeFloorCrossings(result);
+  return {
+    hooks: {
+      draw: (plot) => {
+        if (crossings.length === 0) return;
+        const pixelRatio = window.devicePixelRatio || 1;
+        const { ctx, bbox } = plot;
+        ctx.save();
+        ctx.font = `${9 * pixelRatio}px "DM Mono", monospace`;
+        crossings.forEach((frequency, index) => {
+          const x = Math.round(plot.valToPos(frequency, "x", true));
+          const bottom = bbox.top + bbox.height;
+          ctx.fillStyle = "rgba(22, 135, 121, 0.95)";
+          ctx.beginPath();
+          ctx.moveTo(x - 4 * pixelRatio, bottom - 7 * pixelRatio);
+          ctx.lineTo(x + 4 * pixelRatio, bottom - 7 * pixelRatio);
+          ctx.lineTo(x, bottom - pixelRatio);
+          ctx.closePath();
+          ctx.fill();
+          drawCanvasLabel(
+            ctx,
+            bbox,
+            "below view",
+            x,
+            bottom - (17 + index % 2 * 19) * pixelRatio,
+            pixelRatio,
+            { background: "rgba(247, 251, 248, 0.96)", border: "rgba(116, 166, 151, 0.62)", text: "rgba(45, 104, 91, 0.98)" },
+          );
         });
         ctx.restore();
       },
@@ -479,13 +570,15 @@ function drawResponseChart(): void {
   const rect = ui.chartHost.getBoundingClientRect();
   const width = Math.max(220, Math.floor(rect.width || 660));
   const height = Math.max(230, Math.min(340, Math.round(width * 0.45)));
+  const plugins = activeChart === "step" ? [] : [cutoffMarkerPlugin(appliedConfig)];
+  if (activeChart === "magnitude") plugins.push(magnitudeFloorPlugin(responseResult));
   responsePlot = new uPlot({
     width,
     height,
     class: "ssfilt-plot",
     cursor: { drag: { x: false, y: false, setScale: false } },
     legend: { show: false },
-    plugins: activeChart === "step" ? [] : [cutoffMarkerPlugin(appliedConfig)],
+    plugins,
     scales: {
       x: activeChart === "step"
         ? { time: false, distr: 1 }
@@ -651,6 +744,16 @@ function toggleCodeView(): void {
   ui.codeCard.classList.toggle("is-code-expanded", expanded);
 }
 
+function updateCsvLineNumbers(): void {
+  const lineCount = (ui.csvText.value.match(/\n/g)?.length ?? 0) + 1;
+  ui.csvLineNumbers.textContent = Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n");
+  ui.csvLineNumbers.scrollTop = ui.csvText.scrollTop;
+}
+
+function syncCsvLineNumberScroll(): void {
+  ui.csvLineNumbers.scrollTop = ui.csvText.scrollTop;
+}
+
 function showFilterPlaceholder(title: string, copy: string): void {
   ui.filteredPlaceholderTitle.textContent = title;
   ui.filteredPlaceholderCopy.textContent = copy;
@@ -691,6 +794,7 @@ function discardLoadedCsv(): void {
 
 function loadCsvText(text: string): void {
   clearCsvError();
+  updateCsvLineNumbers();
   try {
     const parsed = parseCsv(text);
     loadedCsv = parsed;
@@ -939,12 +1043,15 @@ ui.csvFile.addEventListener("change", () => {
   if (file) void handleCsvFile(file);
 });
 ui.downloadCsv.addEventListener("click", downloadFilteredCsv);
+ui.csvText.addEventListener("input", updateCsvLineNumbers);
+ui.csvText.addEventListener("scroll", syncCsvLineNumberScroll, { passive: true });
 
 restoreUrl();
 refreshOrderConstraints(Number(new URLSearchParams(window.location.search).get("order")) || 4);
 updateConditionalControls();
 updateInitialMode();
 [ui.cutoff, ui.lowerCutoff, ui.upperCutoff].forEach(refreshFrequencyInputStep);
+updateCsvLineNumbers();
 setUpTabs();
 watchResize();
 renderCode();
