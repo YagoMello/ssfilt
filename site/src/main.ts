@@ -46,7 +46,6 @@ const ui = {
   chartPanel: getElement<HTMLDivElement>("response-chart-panel"),
   chartTitle: getElement<HTMLHeadingElement>("chart-title"),
   chartSubtitle: getElement<HTMLParagraphElement>("chart-subtitle"),
-  chartUnit: getElement<HTMLSpanElement>("chart-unit"),
   chartReferenceKey: getElement<HTMLDivElement>("chart-reference-key"),
   cutoffReferenceLabel: getElement<HTMLSpanElement>("cutoff-reference-label"),
   magnitudeFloorKey: getElement<HTMLSpanElement>("magnitude-floor-key"),
@@ -80,11 +79,11 @@ const ui = {
 };
 
 const chartTabs = [...document.querySelectorAll<HTMLButtonElement>("[role=tab][data-chart]")];
-const chartMeta: Record<ChartKind, { title: string; subtitle: string; unit: string; x: string; y: string }> = {
-  magnitude: { title: "Magnitude response", subtitle: "Unclamped gain · visible range ends at −140 dB", unit: "dB", x: "Frequency · Hz", y: "Gain · dB" },
-  phase: { title: "Phase response", subtitle: "Natural phase shift across frequency", unit: "degrees", x: "Frequency · Hz", y: "Phase · degrees" },
-  delay: { title: "Group delay", subtitle: "Delay across frequency", unit: "seconds", x: "Frequency · Hz", y: "Group delay · s" },
-  step: { title: "Streamed step trace", subtitle: "Canonical current-hold step · bounded time window", unit: "output", x: "Time · s", y: "Output" },
+const chartMeta: Record<ChartKind, { title: string; subtitle: string; x: string; y: string }> = {
+  magnitude: { title: "Magnitude response", subtitle: "Unclamped gain · visible range ends at −140 dB", x: "Frequency · Hz", y: "Gain · dB" },
+  phase: { title: "Phase response", subtitle: "Natural phase shift across frequency", x: "Frequency · Hz", y: "Phase · degrees" },
+  delay: { title: "Group delay", subtitle: "Delay across frequency", x: "Frequency · Hz", y: "Group delay · s" },
+  step: { title: "Streamed step trace", subtitle: "Canonical current-hold step · bounded time window", x: "Time · s", y: "Output" },
 };
 
 let activeChart: ChartKind = "magnitude";
@@ -397,18 +396,18 @@ function activeChartData(result: ResponseResult): { x: number[]; y: number[] } {
   return { x: numericSeries(result.frequency_hz), y: numericSeries(y) };
 }
 
-function displayChartData(result: ResponseResult): { x: number[]; y: number[]; xLabel: string; yLabel: string; unit: string } {
+function displayChartData(result: ResponseResult): { x: number[]; y: number[]; xLabel: string; yLabel: string } {
   const data = activeChartData(result);
   const meta = chartMeta[activeChart];
   if (activeChart === "step") {
     const unit = timeUnit(data.x);
-    return { x: data.x.map((value) => value * unit.factor), y: data.y, xLabel: `Time · ${unit.label}`, yLabel: meta.y, unit: meta.unit };
+    return { x: data.x.map((value) => value * unit.factor), y: data.y, xLabel: `Time · ${unit.label}`, yLabel: meta.y };
   }
   if (activeChart === "delay") {
     const unit = timeUnit(data.y);
-    return { x: data.x, y: data.y.map((value) => value * unit.factor), xLabel: meta.x, yLabel: `Group delay · ${unit.label}`, unit: unit.label };
+    return { x: data.x, y: data.y.map((value) => value * unit.factor), xLabel: meta.x, yLabel: `Group delay · ${unit.label}` };
   }
-  return { ...data, xLabel: meta.x, yLabel: meta.y, unit: meta.unit };
+  return { ...data, xLabel: meta.x, yLabel: meta.y };
 }
 
 function cutoffMarkerPlugin(config: ResponseConfig): uPlot.Plugin {
@@ -457,32 +456,6 @@ function magnitudeFloorCrossings(result: ResponseResult): number[] {
   return crossings;
 }
 
-function magnitudeFloorPlugin(result: ResponseResult): uPlot.Plugin {
-  const crossings = magnitudeFloorCrossings(result);
-  return {
-    hooks: {
-      draw: (plot) => {
-        if (crossings.length === 0) return;
-        const pixelRatio = window.devicePixelRatio || 1;
-        const { ctx, bbox } = plot;
-        ctx.save();
-        crossings.forEach((frequency) => {
-          const x = Math.round(plot.valToPos(frequency, "x", true));
-          const bottom = bbox.top + bbox.height;
-          ctx.fillStyle = "rgba(22, 135, 121, 0.95)";
-          ctx.beginPath();
-          ctx.moveTo(x - 4 * pixelRatio, bottom - 7 * pixelRatio);
-          ctx.lineTo(x + 4 * pixelRatio, bottom - 7 * pixelRatio);
-          ctx.lineTo(x, bottom - pixelRatio);
-          ctx.closePath();
-          ctx.fill();
-        });
-        ctx.restore();
-      },
-    },
-  };
-}
-
 function makeResponseSummary(result: ResponseResult, config: ResponseConfig, kind: ChartKind): string {
   const data = activeChartData(result);
   const finite = data.y.filter(Number.isFinite);
@@ -521,6 +494,14 @@ function replayReveal(element: HTMLElement): void {
   element.classList.add("is-revealing");
 }
 
+function alignChartLabels(plot: uPlot): void {
+  const pixelRatio = window.devicePixelRatio || 1;
+  const left = plot.bbox.left / pixelRatio;
+  const right = plot.width - (plot.bbox.left + plot.bbox.width) / pixelRatio;
+  ui.chartPanel.style.setProperty("--chart-plot-left", `${Math.max(0, left)}px`);
+  ui.chartPanel.style.setProperty("--chart-plot-right", `${Math.max(0, right)}px`);
+}
+
 function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult): void {
   const frequencyChart = activeChart !== "step";
   ui.chartReferenceKey.hidden = !frequencyChart;
@@ -541,7 +522,6 @@ function drawResponseChart(): void {
   ui.chartHost.replaceChildren();
   ui.chartTitle.textContent = meta.title;
   ui.chartSubtitle.textContent = meta.subtitle;
-  ui.chartUnit.textContent = values.unit;
   updateChartReferenceKey(appliedConfig, responseResult);
   ui.xAxisLabel.textContent = values.xLabel;
   ui.yAxisLabel.textContent = values.yLabel;
@@ -553,7 +533,6 @@ function drawResponseChart(): void {
   const width = Math.max(220, Math.floor(rect.width || 660));
   const height = Math.max(230, Math.min(340, Math.round(width * 0.45)));
   const plugins = activeChart === "step" ? [] : [cutoffMarkerPlugin(appliedConfig)];
-  if (activeChart === "magnitude") plugins.push(magnitudeFloorPlugin(responseResult));
   responsePlot = new uPlot({
     width,
     height,
@@ -576,7 +555,7 @@ function drawResponseChart(): void {
       { label: meta.y, stroke: activeChart === "step" ? "#bfed4b" : "#168779", width: 2.5, points: { show: false } },
     ],
   }, [values.x, values.y], ui.chartHost);
-  replayReveal(ui.chartPanel);
+  alignChartLabels(responsePlot);
 }
 
 function renderCode(config = validateConfiguration()): void {

@@ -158,13 +158,10 @@
             <div class="response-chart-panel" id="response-chart-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-magnitude">
               <div class="chart-title-row">
                 <div><h4 id="chart-title">Magnitude response</h4><p id="chart-subtitle">Gain across frequency</p></div>
-              </div>
-              <div class="chart-reference-row" aria-hidden="true">
-                <div class="chart-reference-key" id="chart-reference-key">
+                <div class="chart-reference-key" id="chart-reference-key" aria-hidden="true">
                   <span><i class="cutoff-reference-mark"></i><span id="cutoff-reference-label">−3 dB cutoff</span></span>
-                  <span id="magnitude-floor-key"><i class="floor-reference-mark"></i>continues below view</span>
+                  <span id="magnitude-floor-key" class="magnitude-floor-key">below −140 dB</span>
                 </div>
-                <span id="chart-unit" class="chart-unit">dB</span>
               </div>
               <figure class="chart-figure">
                 <div id="response-chart" class="uplot-host" role="img" aria-label="Magnitude response chart" aria-describedby="response-chart-summary"></div>
