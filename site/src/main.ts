@@ -143,6 +143,61 @@ function shortNumber(value: number, digits = 3): string {
   return new Intl.NumberFormat(undefined, { maximumSignificantDigits: digits }).format(value);
 }
 
+function niceLinearStep(span: number, targetIntervals: number): number {
+  const roughStep = span / Math.max(1, targetIntervals);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
+}
+
+function timeAxisTicks(minimum: number, maximum: number, plotWidth: number): number[] {
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || maximum <= minimum) return [];
+  const targetIntervals = Math.max(2, Math.min(12, Math.floor(plotWidth / 68)));
+  const step = niceLinearStep(maximum - minimum, targetIntervals);
+  const tolerance = step * 1e-9;
+  const first = Math.ceil((minimum - tolerance) / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= maximum + tolerance && ticks.length < 64; value += step) {
+    ticks.push(Math.abs(value) < tolerance ? 0 : value);
+  }
+  return ticks;
+}
+
+function tickStep(ticks: number[]): number {
+  if (ticks.length < 2) return Math.max(1, Math.abs(ticks[0] ?? 1));
+  return Math.abs((ticks[1] ?? 1) - (ticks[0] ?? 0));
+}
+
+function timeTickLabel(value: number, step: number): string {
+  if (!Number.isFinite(value)) return "";
+  if (Math.abs(value) >= 1e6 || (value !== 0 && Math.abs(value) < 1e-4)) return shortNumber(value, 4);
+  let decimals = Math.max(0, -Math.floor(Math.log10(Math.max(Number.MIN_VALUE, step))));
+  while (decimals < 8 && Math.abs(step * 10 ** decimals - Math.round(step * 10 ** decimals)) > 1e-8) decimals += 1;
+  return new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(value);
+}
+
+function guideFrequencyTicks(minimum: number, maximum: number, plotHeight: number): number[] {
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum <= minimum) return [];
+  const firstExponent = Math.floor(Math.log10(minimum));
+  const lastExponent = Math.ceil(Math.log10(maximum));
+  if (lastExponent - firstExponent > 32) return [];
+  const ticks: number[] = [];
+  for (let exponent = firstExponent; exponent <= lastExponent; exponent += 1) {
+    const decade = 10 ** exponent;
+    for (const multiplier of [1, 2, 5]) {
+      const value = multiplier * decade;
+      if (value >= minimum * (1 - 1e-12) && value <= maximum * (1 + 1e-12)) ticks.push(value);
+    }
+  }
+  const maximumLabels = Math.max(2, Math.floor(plotHeight / 30));
+  if (ticks.length <= maximumLabels) return ticks;
+  const decadeTicks = ticks.filter((value) => Math.abs(Math.log10(value) - Math.round(Math.log10(value))) < 1e-9);
+  if (decadeTicks.length <= maximumLabels) return decadeTicks;
+  const stride = Math.ceil(decadeTicks.length / maximumLabels);
+  return decadeTicks.filter((_value, index) => index % stride === 0);
+}
+
 function formatFrequency(value: number): string {
   return `${shortNumber(value, 6)} Hz`;
 }
@@ -581,6 +636,24 @@ function frequencyAxisValues(
     const exponent = Math.log10(value);
     return Math.abs(exponent - Math.round(exponent)) < 1e-9 ? shortNumber(value, 6) : null;
   });
+}
+
+function timeAxisSplits(
+  plot: uPlot,
+  _axisIndex: number,
+  minimum: number,
+  maximum: number,
+): number[] {
+  const pixelRatio = window.devicePixelRatio || 1;
+  return timeAxisTicks(minimum, maximum, plot.bbox.width / pixelRatio);
+}
+
+function timeAxisValues(
+  _plot: uPlot,
+  splits: number[],
+): string[] {
+  const step = tickStep(splits);
+  return splits.map((value) => timeTickLabel(value, step));
 }
 
 function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult): void {
@@ -1058,6 +1131,14 @@ function cutoffFrequencies(config: ResponseConfig): number[] {
     : [config.cutoff_hz].filter((value): value is number => value !== undefined);
 }
 
+function filterPlotHorizontalMargins(): { left: number; right: number } {
+  if (!filterPlot) return { left: 62, right: 0 };
+  const pixelRatio = window.devicePixelRatio || 1;
+  const left = filterPlot.bbox.left / pixelRatio;
+  const right = filterPlot.width - (filterPlot.bbox.left + filterPlot.bbox.width) / pixelRatio;
+  return { left: Math.max(0, left), right: Math.max(0, right) };
+}
+
 function drawFrequencyGuide(config = appliedConfig): void {
   if (!frequencyGuideResult || !config || !frequencyGuideOpen) return;
   const result = frequencyGuideResult;
@@ -1076,7 +1157,8 @@ function drawFrequencyGuide(config = appliedConfig): void {
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, cssWidth, cssHeight);
 
-  const margin = { left: 51, right: 14, top: 18, bottom: 32 };
+  const horizontalMargins = filterPlotHorizontalMargins();
+  const margin = { left: horizontalMargins.left, right: horizontalMargins.right, top: 18, bottom: 32 };
   const plotWidth = cssWidth - margin.left - margin.right;
   const plotHeight = cssHeight - margin.top - margin.bottom;
   const cellWidth = plotWidth / times.length;
@@ -1120,6 +1202,27 @@ function drawFrequencyGuide(config = appliedConfig): void {
     context.strokeRect(x + 0.5, margin.top + 0.5, Math.max(0, width - 1), plotHeight - 1);
   });
 
+  const frequencyTicks = guideFrequencyTicks(minimumFrequency, maximumFrequency, plotHeight);
+  const timeTicks = timeAxisTicks(firstTime, lastTime, plotWidth);
+  context.setLineDash([]);
+  context.strokeStyle = "rgba(21, 45, 57, 0.1)";
+  context.lineWidth = 1;
+  frequencyTicks.forEach((frequency) => {
+    const fraction = (Math.log(frequency) - logMinimum) / logSpan;
+    const y = margin.top + (1 - fraction) * plotHeight;
+    context.beginPath();
+    context.moveTo(margin.left, y);
+    context.lineTo(margin.left + plotWidth, y);
+    context.stroke();
+  });
+  timeTicks.forEach((time) => {
+    const x = margin.left + ((time - firstTime) / duration) * plotWidth;
+    context.beginPath();
+    context.moveTo(x, margin.top);
+    context.lineTo(x, margin.top + plotHeight);
+    context.stroke();
+  });
+
   context.font = "9px DM Mono, ui-monospace, monospace";
   context.textBaseline = "middle";
   context.setLineDash([5, 4]);
@@ -1151,20 +1254,18 @@ function drawFrequencyGuide(config = appliedConfig): void {
   context.font = "9px DM Mono, ui-monospace, monospace";
   context.textAlign = "right";
   context.textBaseline = "middle";
-  for (let tick = 0; tick < 5; tick += 1) {
-    const fraction = tick / 4;
-    const frequency = Math.exp(fraction * logSpan + logMinimum);
+  frequencyTicks.forEach((frequency) => {
+    const fraction = (Math.log(frequency) - logMinimum) / logSpan;
     const y = margin.top + (1 - fraction) * plotHeight;
-    context.fillText(shortNumber(frequency, 3), margin.left - 7, y);
-  }
+    context.fillText(shortNumber(frequency, 4), margin.left - 7, y);
+  });
   context.textAlign = "center";
   context.textBaseline = "top";
-  for (let tick = 0; tick < 5; tick += 1) {
-    const fraction = tick / 4;
-    const time = fraction * duration + firstTime;
-    const x = margin.left + fraction * plotWidth;
-    context.fillText(shortNumber(time, 4), x, margin.top + plotHeight + 8);
-  }
+  const timeStep = tickStep(timeTicks);
+  timeTicks.forEach((time) => {
+    const x = margin.left + ((time - firstTime) / duration) * plotWidth;
+    context.fillText(timeTickLabel(time, timeStep), x, margin.top + plotHeight + 8);
+  });
   context.fillStyle = "#859197";
   context.font = "8px DM Mono, ui-monospace, monospace";
   context.textAlign = "left";
@@ -1244,10 +1345,13 @@ function drawFilterChart(result: FilterResult): void {
   const width = Math.max(220, Math.floor(ui.filterChart.getBoundingClientRect().width || 700));
   const height = Math.max(230, Math.min(380, Math.round(width * 0.4)));
   const existingPlot = filterPlot;
+  const first = time[0] ?? 0;
+  const last = time.at(-1) ?? first;
   if (existingPlot) {
     existingPlot.batch(() => {
       if (existingPlot.width !== width || existingPlot.height !== height) existingPlot.setSize({ width, height });
-      existingPlot.setData([time, input, output]);
+      existingPlot.setData([time, input, output], false);
+      existingPlot.setScale("x", { min: first, max: last });
     });
   } else {
     filterPlot = new uPlot({
@@ -1256,10 +1360,33 @@ function drawFilterChart(result: FilterResult): void {
       class: "ssfilt-plot",
       cursor: { drag: { x: false, y: false, setScale: false } },
       legend: { show: true, live: false },
-      scales: { x: { time: false } },
+      scales: { x: { time: false, range: (_plot, minimum, maximum) => [minimum, maximum] } },
       axes: [
-        { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 38 },
-        { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
+        {
+          stroke: "#687780",
+          grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 },
+          ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 },
+          font: "11px Inter, system-ui, sans-serif",
+          size: 38,
+          label: "Time · s",
+          labelSize: 14,
+          labelGap: 0,
+          labelFont: "8px DM Mono, ui-monospace, monospace",
+          splits: timeAxisSplits,
+          values: timeAxisValues,
+        },
+        {
+          stroke: "#687780",
+          grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 },
+          ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 },
+          font: "11px Inter, system-ui, sans-serif",
+          size: 48,
+          side: 3,
+          label: "Value",
+          labelSize: 14,
+          labelGap: 0,
+          labelFont: "8px DM Mono, ui-monospace, monospace",
+        },
       ],
       series: [
         {},
@@ -1268,8 +1395,6 @@ function drawFilterChart(result: FilterResult): void {
       ],
     }, [time, input, output], ui.filterChart);
   }
-  const first = time[0] ?? 0;
-  const last = time.at(-1) ?? first;
   ui.filterChart.setAttribute("aria-label", `Input and filter output across ${result.time.length} irregularly timed samples from ${shortNumber(first, 5)} to ${shortNumber(last, 5)} seconds.`);
   ui.filterChartSummary.textContent = `Input and filtered output for ${result.time.length} samples, from ${shortNumber(first, 5)} to ${shortNumber(last, 5)} seconds. Use the downloaded CSV for the exact values.`;
 }
