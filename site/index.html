@@ -170,7 +170,6 @@
                 </div>
                 <figcaption class="sr-only" id="response-chart-summary">Response chart is loading.</figcaption>
               </figure>
-              <div class="chart-axis-labels" aria-hidden="true"><span id="x-axis-label">Frequency · Hz</span><span id="y-axis-label">Gain · dB</span></div>
             </div>
             <div class="response-meta">
               <div class="response-summary" id="response-summary" role="status" aria-live="polite">Loading the Rust response model…</div>
@@ -260,7 +259,14 @@
             <p id="filtered-placeholder-copy">Paste or generate a signal, then filter it with the active setup above.</p>
           </div>
           <div id="filtered-content" hidden>
-            <div class="filter-chart-wrap"><div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div><p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p></div>
+            <div class="filter-chart-wrap">
+              <div class="plot-key filter-series-key" aria-hidden="true">
+                <span><i class="series-reference-mark input-reference-mark"></i> Input</span>
+                <span><i class="series-reference-mark output-reference-mark"></i> Output</span>
+              </div>
+              <div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div>
+              <p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p>
+            </div>
             <section class="frequency-guide" aria-labelledby="frequency-guide-title">
               <div class="frequency-guide-head">
                 <div>
@@ -271,7 +277,7 @@
                 <button id="toggle-frequency-guide" class="button button-outline frequency-guide-toggle" type="button" aria-expanded="false" aria-controls="frequency-guide-content">Show guide</button>
               </div>
               <div id="frequency-guide-content" class="frequency-guide-content" hidden>
-                <div class="frequency-guide-key" aria-hidden="true">
+                <div class="plot-key frequency-guide-key" aria-hidden="true">
                   <span class="frequency-color-key"><i></i><span>weaker</span><span>stronger</span></span>
                   <span><i class="cutoff-reference-mark"></i> active −3 dB cutoff</span>
                 </div>

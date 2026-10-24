@@ -53,8 +53,6 @@ const ui = {
   chartReferenceKey: getElement<HTMLDivElement>("chart-reference-key"),
   cutoffReferenceLabel: getElement<HTMLSpanElement>("cutoff-reference-label"),
   magnitudeFloorKey: getElement<HTMLSpanElement>("magnitude-floor-key"),
-  xAxisLabel: getElement<HTMLSpanElement>("x-axis-label"),
-  yAxisLabel: getElement<HTMLSpanElement>("y-axis-label"),
   responseChartSummary: getElement<HTMLElement>("response-chart-summary"),
   code: getElement<HTMLElement>("rust-code"),
   codeCard: document.querySelector<HTMLElement>(".code-card")!,
@@ -571,14 +569,6 @@ function replayReveal(element: HTMLElement): void {
   element.classList.add("is-revealing");
 }
 
-function alignChartLabels(plot: uPlot): void {
-  const pixelRatio = window.devicePixelRatio || 1;
-  const left = plot.bbox.left / pixelRatio;
-  const right = plot.width - (plot.bbox.left + plot.bbox.width) / pixelRatio;
-  ui.chartPanel.style.setProperty("--chart-plot-left", `${Math.max(0, left)}px`);
-  ui.chartPanel.style.setProperty("--chart-plot-right", `${Math.max(0, right)}px`);
-}
-
 function responseYLimits(minimum: number, maximum: number): { min: number; max: number } {
   if (activeChart === "magnitude") return { min: MAGNITUDE_DISPLAY_FLOOR_DB, max: 5 };
   const span = maximum - minimum;
@@ -674,8 +664,6 @@ function drawResponseChart(): void {
   ui.chartTitle.textContent = meta.title;
   ui.chartSubtitle.textContent = meta.subtitle;
   updateChartReferenceKey(appliedConfig, responseResult);
-  ui.xAxisLabel.textContent = values.xLabel;
-  ui.yAxisLabel.textContent = values.yLabel;
   ui.chartPanel.setAttribute("aria-labelledby", `tab-${activeChart}`);
   ui.chartHost.setAttribute("aria-label", `${meta.title}; ${makeResponseSummary(responseResult, appliedConfig, activeChart)}`);
   ui.responseChartSummary.textContent = makeResponseSummary(responseResult, appliedConfig, activeChart);
@@ -692,6 +680,8 @@ function drawResponseChart(): void {
   ui.stepChartHost.hidden = !stepChart;
   const existingPlot = stepChart ? stepPlot : frequencyPlot;
   if (existingPlot) {
+    if (existingPlot.axes[0]) existingPlot.axes[0].label = values.xLabel;
+    if (existingPlot.axes[1]) existingPlot.axes[1].label = values.yLabel;
     const finiteY = values.y.filter(Number.isFinite);
     const yLimits = finiteY.length > 0
       ? responseYLimits(Math.min(...finiteY), Math.max(...finiteY))
@@ -704,7 +694,6 @@ function drawResponseChart(): void {
         : frequencyRange);
       existingPlot.setScale("y", yLimits);
     });
-    alignChartLabels(existingPlot);
     return;
   }
 
@@ -728,10 +717,25 @@ function drawResponseChart(): void {
         ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 },
         font: "11px Inter, system-ui, sans-serif",
         size: 38,
+        label: values.xLabel,
+        labelSize: 15,
+        labelGap: 0,
+        labelFont: "9px DM Mono, ui-monospace, monospace",
         splits: stepChart ? undefined : frequencyAxisSplits,
         values: stepChart ? undefined : frequencyAxisValues,
       },
-      { stroke: "#687780", grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 }, ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 }, font: "11px Inter, system-ui, sans-serif", size: 48, side: 3 },
+      {
+        stroke: "#687780",
+        grid: { stroke: "rgba(21, 45, 57, 0.08)", width: 1 },
+        ticks: { stroke: "rgba(21, 45, 57, 0.14)", width: 1 },
+        font: "11px Inter, system-ui, sans-serif",
+        size: 48,
+        side: 3,
+        label: values.yLabel,
+        labelSize: 15,
+        labelGap: 0,
+        labelFont: "9px DM Mono, ui-monospace, monospace",
+      },
     ],
     series: [
       {},
@@ -740,7 +744,6 @@ function drawResponseChart(): void {
   }, [values.x, values.y], stepChart ? ui.stepChartHost : ui.frequencyChartHost);
   if (stepChart) stepPlot = plot;
   else frequencyPlot = plot;
-  alignChartLabels(plot);
 }
 
 function renderCode(config = validateConfiguration()): void {
@@ -1158,7 +1161,7 @@ function drawFrequencyGuide(config = appliedConfig): void {
   context.clearRect(0, 0, cssWidth, cssHeight);
 
   const horizontalMargins = filterPlotHorizontalMargins();
-  const margin = { left: horizontalMargins.left, right: horizontalMargins.right, top: 18, bottom: 32 };
+  const margin = { left: horizontalMargins.left, right: horizontalMargins.right, top: 18, bottom: 42 };
   const plotWidth = cssWidth - margin.left - margin.right;
   const plotHeight = cssHeight - margin.top - margin.bottom;
   const cellWidth = plotWidth / times.length;
@@ -1251,7 +1254,7 @@ function drawFrequencyGuide(config = appliedConfig): void {
   context.lineWidth = 1;
   context.strokeRect(margin.left + 0.5, margin.top + 0.5, plotWidth - 1, plotHeight - 1);
   context.fillStyle = "#718086";
-  context.font = "9px DM Mono, ui-monospace, monospace";
+  context.font = "11px Inter, system-ui, sans-serif";
   context.textAlign = "right";
   context.textBaseline = "middle";
   frequencyTicks.forEach((frequency) => {
@@ -1267,12 +1270,17 @@ function drawFrequencyGuide(config = appliedConfig): void {
     context.fillText(timeTickLabel(time, timeStep), x, margin.top + plotHeight + 8);
   });
   context.fillStyle = "#859197";
-  context.font = "8px DM Mono, ui-monospace, monospace";
-  context.textAlign = "left";
+  context.font = "9px DM Mono, ui-monospace, monospace";
+  context.save();
+  context.translate(9, margin.top + plotHeight / 2);
+  context.rotate(-Math.PI / 2);
+  context.textAlign = "center";
+  context.textBaseline = "top";
+  context.fillText("Frequency · Hz", 0, 0);
+  context.restore();
+  context.textAlign = "center";
   context.textBaseline = "bottom";
-  context.fillText("Hz", 5, margin.top - 3);
-  context.textAlign = "right";
-  context.fillText("Time · s", margin.left + plotWidth, cssHeight - 1);
+  context.fillText("Time · s", margin.left + plotWidth / 2, cssHeight - 1);
 
   const shownCutoffs = cutoffFrequencies(config).filter(
     (cutoff) => cutoff >= minimumFrequency && cutoff <= maximumFrequency,
@@ -1359,7 +1367,7 @@ function drawFilterChart(result: FilterResult): void {
       height,
       class: "ssfilt-plot",
       cursor: { drag: { x: false, y: false, setScale: false } },
-      legend: { show: true, live: false },
+      legend: { show: false },
       scales: { x: { time: false, range: (_plot, minimum, maximum) => [minimum, maximum] } },
       axes: [
         {
@@ -1369,9 +1377,9 @@ function drawFilterChart(result: FilterResult): void {
           font: "11px Inter, system-ui, sans-serif",
           size: 38,
           label: "Time · s",
-          labelSize: 14,
+          labelSize: 15,
           labelGap: 0,
-          labelFont: "8px DM Mono, ui-monospace, monospace",
+          labelFont: "9px DM Mono, ui-monospace, monospace",
           splits: timeAxisSplits,
           values: timeAxisValues,
         },
@@ -1383,9 +1391,9 @@ function drawFilterChart(result: FilterResult): void {
           size: 48,
           side: 3,
           label: "Value",
-          labelSize: 14,
+          labelSize: 15,
           labelGap: 0,
-          labelFont: "8px DM Mono, ui-monospace, monospace",
+          labelFont: "9px DM Mono, ui-monospace, monospace",
         },
       ],
       series: [

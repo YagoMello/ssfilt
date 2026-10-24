@@ -1081,17 +1081,6 @@ p {
   font-family: var(--mono);
 }
 
-.chart-axis-labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: -1px;
-  padding-right: var(--chart-plot-right);
-  padding-left: var(--chart-plot-left);
-  color: #849197;
-  font-family: var(--mono);
-  font-size: 8px;
-}
-
 .response-meta {
   display: flex;
   min-height: 49px;
@@ -1762,6 +1751,44 @@ p {
   border-top: 1px solid #edf1ed;
 }
 
+.plot-key {
+  display: flex;
+  min-height: 22px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px 18px;
+  color: #65777c;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.plot-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-series-key {
+  margin-bottom: 1px;
+}
+
+.series-reference-mark {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid;
+}
+
+.input-reference-mark {
+  border-color: #89979d;
+}
+
+.output-reference-mark {
+  border-color: #168779;
+  border-top-width: 3px;
+}
+
 .filter-uplot {
   min-height: 260px;
 }
@@ -1816,18 +1843,9 @@ p {
 }
 
 .frequency-guide-key {
-  display: flex;
-  min-height: 22px;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px 18px;
-  color: #65777c;
-  font-family: var(--mono);
-  font-size: 8px;
+  margin-bottom: 1px;
 }
 
-.frequency-guide-key > span,
 .frequency-color-key {
   display: inline-flex;
   align-items: center;
@@ -2448,10 +2466,6 @@ p {
     min-height: 220px;
   }
 
-  .chart-axis-labels {
-    font-size: 7px;
-  }
-
   .response-meta {
     margin-right: -12px;
     margin-left: -12px;
@@ -2544,10 +2558,6 @@ p {
   .frequency-guide-toggle {
     padding-right: 10px;
     padding-left: 10px;
-  }
-
-  .frequency-guide-key {
-    justify-content: flex-start;
   }
 
   .frequency-color-key i {
