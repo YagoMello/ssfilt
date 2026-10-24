@@ -25,7 +25,47 @@ type ExampleSignal =
   | "step-drift"
   | "motion-pulses"
   | "frequency-sweep"
-  | "intermittent-vibration";
+  | "intermittent-vibration"
+  | "weak-am-interference";
+
+type ExampleSignalSpec = {
+  samples: number;
+  intervalScale: number;
+  hint: string;
+};
+
+const exampleSignalSpecs: Record<ExampleSignal, ExampleSignalSpec> = {
+  "noisy-sine": {
+    samples: 420,
+    intervalScale: 1,
+    hint: "Periodic signal with broadband and high-frequency noise.",
+  },
+  "step-drift": {
+    samples: 420,
+    intervalScale: 1,
+    hint: "A sudden level change riding on a slowly moving baseline.",
+  },
+  "motion-pulses": {
+    samples: 420,
+    intervalScale: 1,
+    hint: "Short, non-periodic events with measurement noise.",
+  },
+  "frequency-sweep": {
+    samples: 840,
+    intervalScale: 0.5,
+    hint: "A tone that rises from 0.7 Hz to about 16 Hz.",
+  },
+  "intermittent-vibration": {
+    samples: 420,
+    intervalScale: 1,
+    hint: "A slow baseline with localized 11 Hz and 17 Hz vibration bursts.",
+  },
+  "weak-am-interference": {
+    samples: 1_120,
+    intervalScale: 0.375,
+    hint: "Weak 8 Hz AM amid strong interference; try a 7–9 Hz band-pass and compare orders.",
+  },
+};
 
 const MAGNITUDE_DISPLAY_FLOOR_DB = -140;
 
@@ -73,6 +113,7 @@ const ui = {
   csvLineNumbers: getElement<HTMLPreElement>("csv-line-numbers"),
   csvFile: getElement<HTMLInputElement>("csv-file"),
   exampleSignal: getElement<HTMLSelectElement>("example-signal"),
+  exampleSignalHint: getElement<HTMLSpanElement>("example-signal-hint"),
   csvStatus: getElement<HTMLDivElement>("csv-status"),
   csvError: getElement<HTMLDivElement>("csv-error"),
   filteredPlaceholder: getElement<HTMLDivElement>("filtered-placeholder"),
@@ -993,6 +1034,7 @@ function loadCsvText(text: string): void {
 }
 
 function exampleCsv(kind: ExampleSignal): string {
+  const spec = exampleSignalSpecs[kind];
   let state = 0x5f37_59df;
   const noise = (): number => {
     state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
@@ -1003,7 +1045,7 @@ function exampleCsv(kind: ExampleSignal): string {
   const gaussian = (sampleTime: number, center: number, width: number): number =>
     Math.exp(-(((sampleTime - center) / width) ** 2));
 
-  for (let index = 0; index < 420; index += 1) {
+  for (let index = 0; index < spec.samples; index += 1) {
     let value: number;
     if (kind === "step-drift") {
       value = (time >= 1.35 ? 1 : 0) + 0.18 * Math.sin(Math.PI * 0.38 * time) + 0.055 * noise();
@@ -1027,13 +1069,18 @@ function exampleCsv(kind: ExampleSignal): string {
         + firstBurst
         + secondBurst
         + 0.04 * noise();
+    } else if (kind === "weak-am-interference") {
+      const modulation = 1 + 0.75 * Math.sin(Math.PI * 2 * 0.7 * time);
+      const weakSignal = 0.28 * modulation * Math.sin(Math.PI * 2 * 8 * time);
+      const nearbyInterference = 0.9 * Math.sin(Math.PI * 2 * 10.5 * time + 0.4);
+      value = weakSignal + nearbyInterference + 0.65 * noise();
     } else {
       value = Math.sin(Math.PI * 2.2 * time)
         + 0.3 * Math.sin(Math.PI * 36 * time)
         + 0.12 * noise();
     }
     lines.push(`${time.toFixed(6)},${value.toFixed(6)}`);
-    time += 0.007 + 0.009 * ((noise() + 1) / 2);
+    time += spec.intervalScale * (0.007 + 0.009 * ((noise() + 1) / 2));
   }
 
   return lines.join("\n");
@@ -1043,6 +1090,10 @@ function loadExampleSignal(): void {
   const text = exampleCsv(ui.exampleSignal.value as ExampleSignal);
   ui.csvText.value = text;
   loadCsvText(text);
+}
+
+function updateExampleSignalHint(): void {
+  ui.exampleSignalHint.textContent = exampleSignalSpecs[ui.exampleSignal.value as ExampleSignal].hint;
 }
 
 async function handleCsvFile(file: File): Promise<void> {
@@ -1529,6 +1580,7 @@ ui.initialModes.forEach((input) => input.addEventListener("change", () => {
 }));
 getElement<HTMLButtonElement>("load-csv").addEventListener("click", () => loadCsvText(ui.csvText.value));
 getElement<HTMLButtonElement>("load-example").addEventListener("click", loadExampleSignal);
+ui.exampleSignal.addEventListener("change", updateExampleSignalHint);
 ui.csvFile.addEventListener("change", () => {
   const file = ui.csvFile.files?.[0];
   if (file) void handleCsvFile(file);

@@ -208,7 +208,7 @@
             <div class="csv-card-head"><div><span class="card-kicker">CSV INPUT</span><h3>Replay a signal</h3></div><span class="csv-file-mark" aria-hidden="true">.csv</span></div>
             <div class="csv-format"><code>time,value</code><span>optional header · finite values · strictly increasing time · max 2 MB / 50,000 rows</span></div>
             <div class="example-signal">
-              <div><label for="example-signal">No data handy?</label><span>Generate a deterministic irregular-time signal in your browser.</span></div>
+              <div><label for="example-signal">No data handy?</label><span id="example-signal-hint">Periodic signal with broadband and high-frequency noise.</span></div>
               <div class="example-signal-controls">
                 <select id="example-signal" aria-label="Example signal">
                   <option value="noisy-sine">Noisy sine</option>
@@ -216,6 +216,7 @@
                   <option value="motion-pulses">Motion-like pulses</option>
                   <option value="frequency-sweep">Frequency sweep</option>
                   <option value="intermittent-vibration">Intermittent vibration</option>
+                  <option value="weak-am-interference">Weak AM + interference</option>
                 </select>
                 <button class="button button-outline" id="load-example" type="button">Try example</button>
               </div>
