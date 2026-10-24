@@ -42,6 +42,12 @@ results must be produced through public `ssfilt` objects. The site must not
 expose private runtime models, add a feature to the runtime crate, or change
 the `no_std` dependency graph.
 
+An opt-in, experimental frequency guide is being evaluated as a private site
+adapter feature. It reconstructs uploaded data with the selected public input
+model before a bounded wavelet analysis; it is not a public library contract
+or a calibrated spectrum. Its scope, evidence, and exit criteria are recorded
+in [`frequency-guide-spike.md`](frequency-guide-spike.md).
+
 ## Configuration contract
 
 The playground supports:

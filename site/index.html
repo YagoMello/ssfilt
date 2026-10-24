@@ -261,6 +261,27 @@
           </div>
           <div id="filtered-content" hidden>
             <div class="filter-chart-wrap"><div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div><p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p></div>
+            <section class="frequency-guide" aria-labelledby="frequency-guide-title">
+              <div class="frequency-guide-head">
+                <div>
+                  <span class="card-kicker">FREQUENCY GUIDE · EXPERIMENTAL</span>
+                  <h4 id="frequency-guide-title">See when frequencies appear</h4>
+                  <p>Uses the active between-sample assumption, then maps relative input energy over time.</p>
+                </div>
+                <button id="toggle-frequency-guide" class="button button-outline frequency-guide-toggle" type="button" aria-expanded="false" aria-controls="frequency-guide-content">Show guide</button>
+              </div>
+              <div id="frequency-guide-content" class="frequency-guide-content" hidden>
+                <div class="frequency-guide-key" aria-hidden="true">
+                  <span class="frequency-color-key"><i></i><span>weaker</span><span>stronger</span></span>
+                  <span><i class="cutoff-reference-mark"></i> active −3 dB cutoff</span>
+                </div>
+                <figure class="frequency-guide-figure">
+                  <canvas id="frequency-guide-canvas" role="img" aria-label="Time-frequency guide for the reconstructed input signal" aria-describedby="frequency-guide-status frequency-guide-caption"></canvas>
+                  <figcaption id="frequency-guide-caption">Relative Morlet-wavelet magnitude. Faded edges have incomplete wavelet support; pale vertical bands mark unusually sparse intervals.</figcaption>
+                </figure>
+                <p id="frequency-guide-status" class="frequency-guide-status" role="status" aria-live="polite">Open the guide to analyze the loaded samples.</p>
+              </div>
+            </section>
             <div class="diagnostics-grid" aria-label="Integration diagnostics">
               <div class="diagnostic-item"><span class="diagnostic-label">Accepted steps</span><strong id="diag-accepted">—</strong></div>
               <div class="diagnostic-item"><span class="diagnostic-label">Rejected steps</span><strong id="diag-rejected">—</strong></div>

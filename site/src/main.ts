@@ -7,6 +7,7 @@ import {
   loadAdapter,
   type FilterConfig,
   type FilterResult,
+  type FrequencyGuideResult,
   type InitialMode,
   type InputModel,
   type NumericSeries,
@@ -79,6 +80,10 @@ const ui = {
   downloadCsv: getElement<HTMLButtonElement>("download-csv"),
   filterChart: getElement<HTMLDivElement>("filter-chart"),
   filterChartSummary: getElement<HTMLParagraphElement>("filter-chart-summary"),
+  frequencyGuideToggle: getElement<HTMLButtonElement>("toggle-frequency-guide"),
+  frequencyGuideContent: getElement<HTMLDivElement>("frequency-guide-content"),
+  frequencyGuideCanvas: getElement<HTMLCanvasElement>("frequency-guide-canvas"),
+  frequencyGuideStatus: getElement<HTMLParagraphElement>("frequency-guide-status"),
   toast: getElement<HTMLDivElement>("toast"),
 };
 
@@ -98,6 +103,12 @@ let filterResult: FilterResult | undefined;
 let frequencyPlot: uPlot | undefined;
 let stepPlot: uPlot | undefined;
 let filterPlot: uPlot | undefined;
+let frequencyGuideResult: FrequencyGuideResult | undefined;
+let frequencyGuideOpen = false;
+let frequencyGuideRequestId = 0;
+let signalRevision = 0;
+let analyzedSignalRevision = -1;
+let analyzedInputModel: InputModel | undefined;
 let appliedConfig: ResponseConfig | undefined;
 let toastTimer = 0;
 let responseDebounceTimer = 0;
@@ -851,9 +862,16 @@ function discardLoadedCsv(): void {
   loadedCsv = undefined;
   filterResult = undefined;
   filterRequestId += 1;
+  frequencyGuideRequestId += 1;
+  signalRevision += 1;
+  analyzedSignalRevision = -1;
+  analyzedInputModel = undefined;
+  frequencyGuideResult = undefined;
   filterPlot?.destroy();
   filterPlot = undefined;
   ui.filterChart.replaceChildren();
+  clearFrequencyGuideCanvas();
+  ui.frequencyGuideStatus.textContent = "Load and filter a signal to build the frequency guide.";
   showFilterPlaceholder("Your filtered trace will appear here", "Paste or generate a signal, then filter it with the active setup above.");
   if (appliedConfig) updateDataFilterContext(appliedConfig);
 }
@@ -867,6 +885,14 @@ function loadCsvText(text: string): void {
       && filterPlot !== undefined
       && !ui.filteredContent.hidden;
     loadedCsv = parsed;
+    signalRevision += 1;
+    frequencyGuideRequestId += 1;
+    frequencyGuideResult = undefined;
+    analyzedSignalRevision = -1;
+    if (frequencyGuideOpen) {
+      clearFrequencyGuideCanvas();
+      ui.frequencyGuideStatus.textContent = "Waiting for the new samples to finish filtering…";
+    }
     ui.csvStatus.textContent = `${parsed.rowCount.toLocaleString()} samples ready · ${shortNumber(parsed.times[0] ?? 0, 5)} to ${shortNumber(parsed.times.at(-1) ?? 0, 5)} seconds`;
     if (!preservesDisplayedResult) {
       filterResult = undefined;
@@ -973,6 +999,7 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     showDiagnostics(result);
     drawFilterChart(result);
     renderCode(config);
+    if (frequencyGuideOpen) await updateFrequencyGuide(config);
   } catch (error) {
     if (requestId !== filterRequestId) return;
     filterResult = undefined;
@@ -992,6 +1019,222 @@ function showDiagnostics(result: FilterResult): void {
   getElement<HTMLElement>("diag-rejected").textContent = result.rejected_steps.toLocaleString();
   getElement<HTMLElement>("diag-derivatives").textContent = result.derivative_evaluations.toLocaleString();
   getElement<HTMLElement>("diag-equilibrium").textContent = result.equilibrium_shortcuts.toLocaleString();
+}
+
+function clearFrequencyGuideCanvas(): void {
+  const context = ui.frequencyGuideCanvas.getContext("2d");
+  context?.clearRect(0, 0, ui.frequencyGuideCanvas.width, ui.frequencyGuideCanvas.height);
+}
+
+function assertFrequencyGuideShape(result: FrequencyGuideResult): void {
+  const times = result.time_seconds.length;
+  const frequencies = result.frequency_hz.length;
+  if (times < 2 || frequencies < 2 || result.magnitude_db.length !== times * frequencies) {
+    throw new Error("The Rust adapter returned an incomplete frequency guide.");
+  }
+  if (result.gap_start_seconds.length !== result.gap_end_seconds.length) {
+    throw new Error("The Rust adapter returned mismatched sparse-interval markers.");
+  }
+}
+
+function inputModelLabel(model: InputModel): string {
+  if (model === "previous-hold") return "previous-value hold";
+  if (model === "current-hold") return "current-value hold";
+  return "linear interpolation";
+}
+
+function guideColor(db: number, floor: number, alpha: number): string {
+  const normalized = Math.max(0, Math.min(1, (db - floor) / -floor));
+  const shaped = normalized ** 1.25;
+  const hue = 164 - 129 * shaped;
+  const saturation = 18 + 67 * shaped;
+  const lightness = 96 - 43 * shaped;
+  return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
+}
+
+function cutoffFrequencies(config: ResponseConfig): number[] {
+  return config.topology === "band-pass"
+    ? [config.lower_cutoff_hz, config.upper_cutoff_hz].filter((value): value is number => value !== undefined)
+    : [config.cutoff_hz].filter((value): value is number => value !== undefined);
+}
+
+function drawFrequencyGuide(config = appliedConfig): void {
+  if (!frequencyGuideResult || !config || !frequencyGuideOpen) return;
+  const result = frequencyGuideResult;
+  const times = numericSeries(result.time_seconds);
+  const frequencies = numericSeries(result.frequency_hz);
+  const magnitude = numericSeries(result.magnitude_db);
+  const canvas = ui.frequencyGuideCanvas;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const cssWidth = Math.max(280, Math.floor(canvas.getBoundingClientRect().width || 760));
+  const cssHeight = Math.max(230, Math.floor(canvas.getBoundingClientRect().height || 280));
+  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(cssWidth * pixelRatio);
+  canvas.height = Math.round(cssHeight * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.clearRect(0, 0, cssWidth, cssHeight);
+
+  const margin = { left: 51, right: 14, top: 18, bottom: 32 };
+  const plotWidth = cssWidth - margin.left - margin.right;
+  const plotHeight = cssHeight - margin.top - margin.bottom;
+  const cellWidth = plotWidth / times.length;
+  const cellHeight = plotHeight / frequencies.length;
+  const firstTime = times[0] ?? 0;
+  const lastTime = times.at(-1) ?? firstTime;
+  const duration = Math.max(Number.EPSILON, lastTime - firstTime);
+  const minimumFrequency = frequencies[0] ?? 1;
+  const maximumFrequency = frequencies.at(-1) ?? minimumFrequency;
+  const logMinimum = Math.log(minimumFrequency);
+  const logSpan = Math.max(Number.EPSILON, Math.log(maximumFrequency) - logMinimum);
+
+  context.fillStyle = "#f6f8f5";
+  context.fillRect(margin.left, margin.top, plotWidth, plotHeight);
+  frequencies.forEach((frequency, frequencyIndex) => {
+    const scale = 6 / (Math.PI * 2 * frequency);
+    times.forEach((time, timeIndex) => {
+      const edgeDistance = Math.min(time - firstTime, lastTime - time);
+      const support = Math.max(Number.EPSILON, 2 * scale);
+      const reliability = Math.max(0, Math.min(1, edgeDistance / support));
+      const alpha = 0.22 + 0.78 * Math.sqrt(reliability);
+      const db = magnitude[frequencyIndex * times.length + timeIndex] ?? result.display_floor_db;
+      context.fillStyle = guideColor(db, result.display_floor_db, alpha);
+      const x = margin.left + timeIndex * cellWidth;
+      const y = margin.top + plotHeight - (frequencyIndex + 1) * cellHeight;
+      context.fillRect(x, y, Math.ceil(cellWidth + 0.5), Math.ceil(cellHeight + 0.5));
+    });
+  });
+
+  const gapStarts = numericSeries(result.gap_start_seconds);
+  const gapEnds = numericSeries(result.gap_end_seconds);
+  gapStarts.forEach((start, index) => {
+    const end = gapEnds[index] ?? start;
+    const x = margin.left + ((start - firstTime) / duration) * plotWidth;
+    const width = Math.max(1, ((end - start) / duration) * plotWidth);
+    context.fillStyle = "rgba(255, 255, 255, 0.58)";
+    context.fillRect(x, margin.top, width, plotHeight);
+    context.strokeStyle = "rgba(78, 105, 106, 0.38)";
+    context.lineWidth = 1;
+    context.setLineDash([3, 3]);
+    context.strokeRect(x + 0.5, margin.top + 0.5, Math.max(0, width - 1), plotHeight - 1);
+  });
+
+  context.font = "9px DM Mono, ui-monospace, monospace";
+  context.textBaseline = "middle";
+  context.setLineDash([5, 4]);
+  cutoffFrequencies(config).forEach((cutoff) => {
+    if (cutoff < minimumFrequency || cutoff > maximumFrequency) return;
+    const fraction = (Math.log(cutoff) - logMinimum) / logSpan;
+    const y = margin.top + (1 - fraction) * plotHeight;
+    context.strokeStyle = "rgba(182, 101, 37, 0.95)";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.moveTo(margin.left, y);
+    context.lineTo(margin.left + plotWidth, y);
+    context.stroke();
+    const label = `−3 dB · ${shortNumber(cutoff, 4)} Hz`;
+    const labelWidth = context.measureText(label).width + 8;
+    const labelY = y < margin.top + 14 ? y + 9 : y - 8;
+    context.fillStyle = "rgba(255, 252, 247, 0.9)";
+    context.fillRect(margin.left + plotWidth - labelWidth, labelY - 7, labelWidth, 14);
+    context.fillStyle = "#8d5428";
+    context.textAlign = "right";
+    context.fillText(label, margin.left + plotWidth - 4, labelY);
+  });
+  context.setLineDash([]);
+
+  context.strokeStyle = "rgba(32, 60, 68, 0.22)";
+  context.lineWidth = 1;
+  context.strokeRect(margin.left + 0.5, margin.top + 0.5, plotWidth - 1, plotHeight - 1);
+  context.fillStyle = "#718086";
+  context.font = "9px DM Mono, ui-monospace, monospace";
+  context.textAlign = "right";
+  context.textBaseline = "middle";
+  for (let tick = 0; tick < 5; tick += 1) {
+    const fraction = tick / 4;
+    const frequency = Math.exp(fraction * logSpan + logMinimum);
+    const y = margin.top + (1 - fraction) * plotHeight;
+    context.fillText(shortNumber(frequency, 3), margin.left - 7, y);
+  }
+  context.textAlign = "center";
+  context.textBaseline = "top";
+  for (let tick = 0; tick < 5; tick += 1) {
+    const fraction = tick / 4;
+    const time = fraction * duration + firstTime;
+    const x = margin.left + fraction * plotWidth;
+    context.fillText(shortNumber(time, 4), x, margin.top + plotHeight + 8);
+  }
+  context.fillStyle = "#859197";
+  context.font = "8px DM Mono, ui-monospace, monospace";
+  context.textAlign = "left";
+  context.textBaseline = "bottom";
+  context.fillText("Hz", 5, margin.top - 3);
+  context.textAlign = "right";
+  context.fillText("Time · s", margin.left + plotWidth, cssHeight - 1);
+
+  const shownCutoffs = cutoffFrequencies(config).filter(
+    (cutoff) => cutoff >= minimumFrequency && cutoff <= maximumFrequency,
+  );
+  const cutoffNote = shownCutoffs.length === cutoffFrequencies(config).length
+    ? "The active cutoff reference is inside the analyzed frequency range."
+    : "At least one active cutoff is outside the frequency range supported by this capture.";
+  const gapNote = gapStarts.length === 0
+    ? "No interval exceeded four times the median sample spacing."
+    : `${gapStarts.length} unusually sparse interval${gapStarts.length === 1 ? " is" : "s are"} shaded.`;
+  ui.frequencyGuideStatus.textContent = `${result.summary} Reconstructed with ${inputModelLabel(config.input_model)}. ${gapNote} ${cutoffNote}`;
+  canvas.setAttribute(
+    "aria-label",
+    `Relative input frequency guide from ${shortNumber(minimumFrequency, 3)} to ${shortNumber(maximumFrequency, 3)} hertz across ${shortNumber(firstTime, 4)} to ${shortNumber(lastTime, 4)} seconds. ${gapNote}`,
+  );
+}
+
+async function updateFrequencyGuide(config: ResponseConfig): Promise<void> {
+  if (!frequencyGuideOpen || !loadedCsv) return;
+  if (
+    frequencyGuideResult
+    && analyzedSignalRevision === signalRevision
+    && analyzedInputModel === config.input_model
+  ) {
+    drawFrequencyGuide(config);
+    return;
+  }
+
+  const requestId = ++frequencyGuideRequestId;
+  ui.frequencyGuideStatus.textContent = "Reconstructing the input and calculating a bounded wavelet guide…";
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  try {
+    adapter ??= await loadAdapter();
+    if (requestId !== frequencyGuideRequestId || !loadedCsv) return;
+    const result = await adapter.frequency_guide(config, loadedCsv.times, loadedCsv.values);
+    if (requestId !== frequencyGuideRequestId) return;
+    assertFrequencyGuideShape(result);
+    frequencyGuideResult = result;
+    analyzedSignalRevision = signalRevision;
+    analyzedInputModel = config.input_model;
+    drawFrequencyGuide(config);
+  } catch (error) {
+    if (requestId !== frequencyGuideRequestId) return;
+    frequencyGuideResult = undefined;
+    clearFrequencyGuideCanvas();
+    ui.frequencyGuideStatus.textContent = `Frequency guide unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function toggleFrequencyGuide(): void {
+  frequencyGuideOpen = !frequencyGuideOpen;
+  ui.frequencyGuideToggle.setAttribute("aria-expanded", String(frequencyGuideOpen));
+  ui.frequencyGuideToggle.textContent = frequencyGuideOpen ? "Hide guide" : "Show guide";
+  ui.frequencyGuideContent.hidden = !frequencyGuideOpen;
+  if (!frequencyGuideOpen) {
+    frequencyGuideRequestId += 1;
+    return;
+  }
+  if (!loadedCsv || !appliedConfig) {
+    ui.frequencyGuideStatus.textContent = "Load and filter a signal to build the frequency guide.";
+    return;
+  }
+  void updateFrequencyGuide(appliedConfig);
 }
 
 function drawFilterChart(result: FilterResult): void {
@@ -1084,7 +1327,10 @@ function redrawChartsAfterResize(): void {
     }
     if (nextFilterWidth !== filterContainerWidth) {
       filterContainerWidth = nextFilterWidth;
-      if (filterResult && !ui.filteredContent.hidden) drawFilterChart(filterResult);
+      if (filterResult && !ui.filteredContent.hidden) {
+        drawFilterChart(filterResult);
+        drawFrequencyGuide();
+      }
     }
   });
 }
@@ -1136,6 +1382,7 @@ ui.csvFile.addEventListener("change", () => {
   if (file) void handleCsvFile(file);
 });
 ui.downloadCsv.addEventListener("click", downloadFilteredCsv);
+ui.frequencyGuideToggle.addEventListener("click", toggleFrequencyGuide);
 ui.csvText.addEventListener("input", updateCsvLineNumbers);
 ui.csvText.addEventListener("scroll", syncCsvLineNumberScroll, { passive: true });
 

@@ -14,6 +14,8 @@ use ssfilt::{
 };
 use wasm_bindgen::prelude::*;
 
+mod frequency;
+
 #[allow(dead_code)]
 #[path = "../../../examples/support/transfer.rs"]
 mod transfer;
@@ -198,6 +200,28 @@ pub fn filter_samples(
 ) -> Result<JsValue, JsValue> {
     let config = parse_config(config)?;
     let data = filter_uploaded_data(config, &times.to_vec(), &values.to_vec()).map_err(js_error)?;
+    serde_wasm_bindgen::to_value(&data).map_err(|error| js_error(error.to_string()))
+}
+
+#[wasm_bindgen]
+/// Builds a bounded time-frequency guide for uploaded samples.
+///
+/// The guide reconstructs the signal with the selected public input model
+/// before applying the private display-only wavelet analysis.
+///
+/// # Errors
+///
+/// Returns a JavaScript error value when the samples or configuration cannot
+/// support a meaningful bounded analysis.
+pub fn frequency_guide(
+    config: JsValue,
+    times: &Float64Array,
+    values: &Float64Array,
+) -> Result<JsValue, JsValue> {
+    let config = parse_config(config)?;
+    validate_config(config).map_err(js_error)?;
+    let data = frequency::analyze(&times.to_vec(), &values.to_vec(), config.input_model)
+        .map_err(js_error)?;
     serde_wasm_bindgen::to_value(&data).map_err(|error| js_error(error.to_string()))
 }
 
@@ -767,7 +791,11 @@ mod tests {
         let data = calculate_response(low_pass_config()).unwrap();
         assert!((data.frequency_hz[0] - 0.2).abs() < 1.0e-12);
         assert!((data.frequency_hz.last().copied().unwrap() - 2_000.0).abs() < 1.0e-9);
-        assert!((data.frequency_hz[0] * data.frequency_hz.last().copied().unwrap() - 20.0_f64.powi(2)).abs() < 1.0e-9);
+        assert!(
+            (data.frequency_hz[0] * data.frequency_hz.last().copied().unwrap() - 20.0_f64.powi(2))
+                .abs()
+                < 1.0e-9
+        );
     }
 
     #[test]

@@ -42,6 +42,18 @@ export interface FilterResult {
   equilibrium_shortcuts: number;
 }
 
+export interface FrequencyGuideResult {
+  time_seconds: NumericSeries;
+  frequency_hz: NumericSeries;
+  magnitude_db: NumericSeries;
+  gap_start_seconds: NumericSeries;
+  gap_end_seconds: NumericSeries;
+  median_interval_seconds: number;
+  maximum_interval_seconds: number;
+  display_floor_db: number;
+  summary: string;
+}
+
 export interface SsfiltWasmModule {
   default: () => Promise<unknown>;
   response_data: (config: ResponseConfig) => ResponseResult | Promise<ResponseResult>;
@@ -50,6 +62,11 @@ export interface SsfiltWasmModule {
     times: Float64Array,
     values: Float64Array,
   ) => FilterResult | Promise<FilterResult>;
+  frequency_guide: (
+    config: ResponseConfig,
+    times: Float64Array,
+    values: Float64Array,
+  ) => FrequencyGuideResult | Promise<FrequencyGuideResult>;
 }
 
 let adapterPromise: Promise<SsfiltWasmModule> | undefined;
