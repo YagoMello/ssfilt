@@ -20,7 +20,12 @@ import {
 import { MAX_CSV_BYTES, parseCsv, type ParsedCsv } from "./csv";
 
 type ChartKind = "magnitude" | "phase" | "delay" | "step";
-type ExampleSignal = "noisy-sine" | "step-drift" | "motion-pulses";
+type ExampleSignal =
+  | "noisy-sine"
+  | "step-drift"
+  | "motion-pulses"
+  | "frequency-sweep"
+  | "intermittent-vibration";
 
 const MAGNITUDE_DISPLAY_FLOOR_DB = -140;
 
@@ -995,6 +1000,8 @@ function exampleCsv(kind: ExampleSignal): string {
   };
   const lines = ["time,value"];
   let time = 0;
+  const gaussian = (sampleTime: number, center: number, width: number): number =>
+    Math.exp(-(((sampleTime - center) / width) ** 2));
 
   for (let index = 0; index < 420; index += 1) {
     let value: number;
@@ -1002,12 +1009,24 @@ function exampleCsv(kind: ExampleSignal): string {
       value = (time >= 1.35 ? 1 : 0) + 0.18 * Math.sin(Math.PI * 0.38 * time) + 0.055 * noise();
     } else if (kind === "motion-pulses") {
       const pulse = (center: number, width: number, height: number): number =>
-        height * Math.exp(-(((time - center) / width) ** 2));
+        height * gaussian(time, center, width);
       value = 0.12 * Math.sin(Math.PI * 0.7 * time)
         + pulse(0.75, 0.09, 0.9)
         - pulse(1.55, 0.14, 0.65)
         + pulse(2.5, 0.08, 1.15)
         + 0.08 * noise();
+    } else if (kind === "frequency-sweep") {
+      const startFrequencyHz = 0.7;
+      const sweepRateHzPerSecond = 3.15;
+      const cycles = startFrequencyHz * time + 0.5 * sweepRateHzPerSecond * time * time;
+      value = Math.sin(Math.PI * 2 * cycles) + 0.05 * noise();
+    } else if (kind === "intermittent-vibration") {
+      const firstBurst = 0.85 * gaussian(time, 1.25, 0.22) * Math.sin(Math.PI * 2 * 11 * time);
+      const secondBurst = 0.72 * gaussian(time, 3.5, 0.18) * Math.sin(Math.PI * 2 * 17 * time);
+      value = 0.22 * Math.sin(Math.PI * 2 * 0.6 * time)
+        + firstBurst
+        + secondBurst
+        + 0.04 * noise();
     } else {
       value = Math.sin(Math.PI * 2.2 * time)
         + 0.3 * Math.sin(Math.PI * 36 * time)
