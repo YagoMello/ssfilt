@@ -15,6 +15,12 @@ impl<T: Scalar> InputSegment<T> {
     pub(crate) fn value_at(self, fraction: T) -> T {
         match self.model {
             InputModel::Linear => {
+                if fraction == T::zero() {
+                    return self.start;
+                }
+                if fraction == T::one() {
+                    return self.end;
+                }
                 if self.start.is_sign_positive() == self.end.is_sign_positive() {
                     self.start + fraction * (self.end - self.start)
                 } else {
@@ -67,6 +73,17 @@ mod tests {
             assert_eq!(segment.value_at(1.0), end);
             assert!(segment.value_at(0.25).is_finite());
             assert!(segment.value_at(0.75).is_finite());
+        }
+    }
+
+    #[test]
+    fn linear_interpolation_returns_disparate_same_sign_endpoints_exactly() {
+        for segment in [
+            InputSegment::new(1.0e20_f64, 1.0, InputModel::Linear),
+            InputSegment::new(1.0, 1.0e20_f64, InputModel::Linear),
+        ] {
+            assert_eq!(segment.value_at(0.0), segment.start);
+            assert_eq!(segment.value_at(1.0), segment.end);
         }
     }
 }
