@@ -321,6 +321,16 @@ an MCU without a floating-point unit: benchmark the actual target, especially
 for high orders and adaptive integration. The fixed-size enum above also works
 without `std` or an allocator.
 
+On a measured 160 MHz ESP32-C3, an order-two 20 Hz Butterworth update took
+about 155 us for the representative irregular 1 kHz workload. A fixed-rate
+biquad took about 11 us and a 64-sample moving average about 7 us. Those are not
+equivalent filters: `ssfilt` is paying for measured elapsed-time integration,
+explicit input reconstruction, adaptive error control, and transactional
+failure. If the signal is truly fixed-rate and those contracts are unnecessary,
+a conventional digital IIR or moving average is usually the better embedded
+choice. See [MCU performance and integrator findings](docs/mcu-performance.md)
+for the workload, tradeoffs, and alternatives that were evaluated.
+
 ## Development
 
 ```text
