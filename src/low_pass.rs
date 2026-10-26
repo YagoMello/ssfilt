@@ -308,6 +308,30 @@ mod tests {
     }
 
     #[test]
+    fn linear_input_reuses_endpoint_derivatives_but_held_input_does_not() {
+        let mut linear = LowPass::<2, f32>::builder(20.0)
+            .response(Response::Butterworth)
+            .input_model(InputModel::Linear)
+            .build()
+            .unwrap();
+        for input in [1.0_f32, -0.25] {
+            linear.update(input, 0.001).unwrap();
+            let diagnostics = linear.last_diagnostics();
+            assert_eq!(diagnostics.attempted_steps(), 1);
+            assert_eq!(diagnostics.derivative_evaluations(), 6);
+        }
+
+        let mut held = LowPass::<2, f32>::builder(20.0)
+            .response(Response::Butterworth)
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap();
+        held.update(1.0, 0.001).unwrap();
+        assert_eq!(held.last_diagnostics().attempted_steps(), 1);
+        assert_eq!(held.last_diagnostics().derivative_evaluations(), 7);
+    }
+
+    #[test]
     fn non_finite_input_is_transactional() {
         let mut filter = LowPass::<3>::builder(2.0)
             .input_model(InputModel::CurrentHold)
@@ -813,7 +837,10 @@ mod tests {
             diagnostics.attempted_steps(),
             diagnostics.accepted_steps() + diagnostics.rejected_steps()
         );
-        assert!(diagnostics.derivative_evaluations() >= 7 * diagnostics.attempted_steps());
+        assert_eq!(
+            diagnostics.derivative_evaluations(),
+            6 * diagnostics.attempted_steps() + 1
+        );
         assert!(diagnostics.smallest_accepted_step_seconds().unwrap() > 0.0);
         assert!(diagnostics.largest_accepted_step_seconds().unwrap() <= 0.000_25);
         assert!(!diagnostics.used_equilibrium_shortcut());

@@ -28,6 +28,7 @@ impl<T> SolverDiagnostics<T> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct IntegrationOutcome<T, const N: usize> {
     pub(crate) state: [T; N],
+    pub(crate) endpoint_derivative: [T; N],
     pub(crate) diagnostics: SolverDiagnostics<T>,
 }
 
@@ -38,6 +39,7 @@ pub(crate) fn integrate<T: Scalar, M, const N: usize>(
     normalized_duration: T,
     max_normalized_step: T,
     config: IntegrationConfig<T>,
+    initial_derivative: Option<[T; N]>,
 ) -> Result<IntegrationOutcome<T, N>, UpdateError>
 where
     M: ContinuousModel<T, N>,
@@ -49,12 +51,19 @@ where
     let mut diagnostics = SolverDiagnostics::new();
     let mut state = *initial_state;
     let mut position = T::zero();
+    let mut input_fraction = T::zero();
     let mut step = normalized_duration.min(max_normalized_step);
+    let mut start_derivative = initial_derivative;
 
     for _ in 0..config.max_step_attempts {
         let remaining = normalized_duration - position;
         if remaining <= T::zero() {
-            return Ok(IntegrationOutcome { state, diagnostics });
+            return Ok(IntegrationOutcome {
+                state,
+                endpoint_derivative: start_derivative
+                    .expect("a completed interval has an endpoint derivative"),
+                diagnostics,
+            });
         }
 
         step = step.min(remaining).min(max_normalized_step);
@@ -62,12 +71,22 @@ where
             return Err(UpdateError::StepSizeUnderflow);
         }
 
-        let (candidate, error) =
-            dormand_prince_step(model, &state, input, position, step, normalized_duration);
-        diagnostics.derivative_evaluations = diagnostics.derivative_evaluations.saturating_add(7);
+        let outcome = dormand_prince_step(
+            model,
+            &state,
+            input,
+            position,
+            step,
+            normalized_duration,
+            input_fraction,
+            start_derivative.as_ref(),
+        );
+        diagnostics.derivative_evaluations = diagnostics
+            .derivative_evaluations
+            .saturating_add(if start_derivative.is_some() { 6 } else { 7 });
 
-        let error_norm = scaled_error(&state, &candidate, &error, config);
-        if error_norm.is_finite() && error_norm <= T::one() && all_finite(&candidate) {
+        let error_norm = scaled_error(&state, &outcome.candidate, &outcome.error, config);
+        if error_norm.is_finite() && error_norm <= T::one() && all_finite(&outcome.candidate) {
             diagnostics.accepted_steps = diagnostics.accepted_steps.saturating_add(1);
             diagnostics.smallest_accepted_step = Some(
                 diagnostics
@@ -79,11 +98,17 @@ where
                     .largest_accepted_step
                     .map_or(step, |largest| largest.max(step)),
             );
-            state = candidate;
+            state = outcome.candidate;
             if step == remaining {
-                return Ok(IntegrationOutcome { state, diagnostics });
+                return Ok(IntegrationOutcome {
+                    state,
+                    endpoint_derivative: outcome.end_derivative,
+                    diagnostics,
+                });
             }
             position = position + step;
+            input_fraction = outcome.end_fraction;
+            start_derivative = Some(outcome.end_derivative);
             step = (step * accepted_factor(error_norm)).min(max_normalized_step);
         } else {
             diagnostics.rejected_steps = diagnostics.rejected_steps.saturating_add(1);
@@ -96,13 +121,22 @@ where
             if !step.is_finite() {
                 return Err(UpdateError::NonFiniteState);
             }
+            start_derivative = Some(outcome.start_derivative);
         }
     }
 
     Err(UpdateError::StepBudgetExceeded)
 }
 
-#[allow(clippy::too_many_lines)]
+struct StepOutcome<T, const N: usize> {
+    candidate: [T; N],
+    error: [T; N],
+    start_derivative: [T; N],
+    end_derivative: [T; N],
+    end_fraction: T,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn dormand_prince_step<T: Scalar, M, const N: usize>(
     model: &M,
     state: &[T; N],
@@ -110,7 +144,9 @@ fn dormand_prince_step<T: Scalar, M, const N: usize>(
     position: T,
     step: T,
     total: T,
-) -> ([T; N], [T; N])
+    start_fraction: T,
+    start_derivative: Option<&[T; N]>,
+) -> StepOutcome<T, N>
 where
     M: ContinuousModel<T, N>,
 {
@@ -122,8 +158,18 @@ where
     let mut k6 = [T::zero(); N];
     let mut k7 = [T::zero(); N];
     let mut temporary = [T::zero(); N];
+    let step_fraction = step / total;
+    let end_fraction = if step == total - position {
+        T::one()
+    } else {
+        (position + step) / total
+    };
 
-    model.derivative(state, input.value_at(position / total), &mut k1);
+    if let Some(start_derivative) = start_derivative {
+        k1 = *start_derivative;
+    } else {
+        model.derivative(state, input.value_at(start_fraction), &mut k1);
+    }
 
     let c2 = fraction::<T>(1.0, 5.0);
     for index in 0..N {
@@ -131,7 +177,7 @@ where
     }
     model.derivative(
         &temporary,
-        input.value_at((position + c2 * step) / total),
+        input.value_at(start_fraction + c2 * step_fraction),
         &mut k2,
     );
 
@@ -142,7 +188,7 @@ where
     }
     model.derivative(
         &temporary,
-        input.value_at((position + c3 * step) / total),
+        input.value_at(start_fraction + c3 * step_fraction),
         &mut k3,
     );
 
@@ -155,7 +201,7 @@ where
     }
     model.derivative(
         &temporary,
-        input.value_at((position + c4 * step) / total),
+        input.value_at(start_fraction + c4 * step_fraction),
         &mut k4,
     );
 
@@ -170,7 +216,7 @@ where
     }
     model.derivative(
         &temporary,
-        input.value_at((position + c5 * step) / total),
+        input.value_at(start_fraction + c5 * step_fraction),
         &mut k5,
     );
 
@@ -183,11 +229,7 @@ where
                     + fraction::<T>(49.0, 176.0) * k4[index]
                     - fraction::<T>(5_103.0, 18_656.0) * k5[index]);
     }
-    model.derivative(
-        &temporary,
-        input.value_at((position + step) / total),
-        &mut k6,
-    );
+    model.derivative(&temporary, input.value_at(end_fraction), &mut k6);
 
     let mut fifth_order = [T::zero(); N];
     for index in 0..N {
@@ -199,11 +241,7 @@ where
                     - fraction::<T>(2_187.0, 6_784.0) * k5[index]
                     + fraction::<T>(11.0, 84.0) * k6[index]);
     }
-    model.derivative(
-        &fifth_order,
-        input.value_at((position + step) / total),
-        &mut k7,
-    );
+    model.derivative(&fifth_order, input.value_at(end_fraction), &mut k7);
 
     let mut error = [T::zero(); N];
     for index in 0..N {
@@ -218,7 +256,13 @@ where
         error[index] = fifth_order[index] - fourth_order;
     }
 
-    (fifth_order, error)
+    StepOutcome {
+        candidate: fifth_order,
+        error,
+        start_derivative: k1,
+        end_derivative: k7,
+        end_fraction,
+    }
 }
 
 fn scaled_error<T: Scalar, const N: usize>(
@@ -290,11 +334,37 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::vec::Vec;
+
     use approx::assert_relative_eq;
 
     use super::*;
     use crate::InputModel;
     use crate::model::RepeatedPole;
+
+    struct RecordingModel {
+        inputs: RefCell<Vec<f32>>,
+    }
+
+    impl ContinuousModel<f32, 1> for RecordingModel {
+        fn derivative(&self, _state: &[f32; 1], input: f32, derivative: &mut [f32; 1]) {
+            self.inputs.borrow_mut().push(input);
+            derivative[0] = 0.0;
+        }
+
+        fn output(&self, state: &[f32; 1], _input: f32) -> f32 {
+            state[0]
+        }
+
+        fn equilibrium(&self, input: f32) -> [f32; 1] {
+            [input]
+        }
+
+        fn max_normalized_step(&self) -> f32 {
+            1.0
+        }
+    }
 
     #[test]
     fn adaptive_solver_matches_exact_first_order_step() {
@@ -308,11 +378,102 @@ mod tests {
             duration,
             1.0 / rate,
             IntegrationConfig::default(),
+            None,
         )
         .unwrap()
         .state[0];
         let expected = 1.0 - (-rate * duration).exp();
         assert_relative_eq!(actual, expected, epsilon = 5.0e-9);
+    }
+
+    #[test]
+    fn cached_linear_endpoint_matches_fresh_derivative_evaluation() {
+        let model = RepeatedPole::<f64>::new(1);
+        let config = IntegrationConfig::default();
+        let first = integrate(
+            &model,
+            &[0.0],
+            InputSegment::new(0.0, 1.0, InputModel::Linear),
+            0.125,
+            1.0,
+            config,
+            None,
+        )
+        .unwrap();
+        let input = InputSegment::new(1.0, -0.25, InputModel::Linear);
+        let cached = integrate(
+            &model,
+            &first.state,
+            input,
+            0.13,
+            1.0,
+            config,
+            Some(first.endpoint_derivative),
+        )
+        .unwrap();
+        let uncached = integrate(&model, &first.state, input, 0.13, 1.0, config, None).unwrap();
+
+        assert_eq!(cached.state, uncached.state);
+        assert_eq!(
+            cached.diagnostics.accepted_steps,
+            uncached.diagnostics.accepted_steps
+        );
+        assert_eq!(
+            cached.diagnostics.rejected_steps,
+            uncached.diagnostics.rejected_steps
+        );
+        assert_eq!(
+            cached.diagnostics.derivative_evaluations + 1,
+            uncached.diagnostics.derivative_evaluations
+        );
+    }
+
+    #[test]
+    fn rejected_attempt_reuses_the_unchanged_start_derivative() {
+        let model = RepeatedPole::<f64>::new(1);
+        let config = IntegrationConfig {
+            tolerances: crate::Tolerances::new(1.0e-14, 1.0e-14),
+            ..IntegrationConfig::default()
+        };
+        let outcome = integrate(
+            &model,
+            &[0.0],
+            InputSegment::new(0.0, 1.0, InputModel::CurrentHold),
+            1.0,
+            1.0,
+            config,
+            None,
+        )
+        .unwrap();
+        let attempts = outcome.diagnostics.accepted_steps + outcome.diagnostics.rejected_steps;
+        assert!(outcome.diagnostics.rejected_steps > 0);
+        assert_eq!(outcome.diagnostics.derivative_evaluations, 6 * attempts + 1);
+    }
+
+    #[test]
+    fn final_stages_use_the_exact_input_endpoint() {
+        let position = 4.136_500_4_f32 / 256.0;
+        let step = 76.776_54_f32 / 256.0;
+        let total = 80.913_04_f32 / 256.0;
+        assert_eq!(step, total - position);
+        assert!(position / total + step / total > 1.0);
+
+        let model = RecordingModel {
+            inputs: RefCell::new(Vec::new()),
+        };
+        let _ = dormand_prince_step(
+            &model,
+            &[0.0],
+            InputSegment::new(0.0, 1.0, InputModel::Linear),
+            position,
+            step,
+            total,
+            position / total,
+            None,
+        );
+        let inputs = model.inputs.borrow();
+        assert!(inputs.iter().all(|input| *input <= 1.0));
+        assert_eq!(&inputs[inputs.len() - 2..], &[1.0, 1.0]);
     }
 
     #[test]
@@ -343,6 +504,7 @@ mod tests {
             2.0,
             0.1,
             config,
+            None,
         );
         assert_eq!(result, Err(UpdateError::StepBudgetExceeded));
     }

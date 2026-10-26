@@ -199,6 +199,13 @@ The maximum component decides acceptance. Two independent limits apply:
 - A finite attempt budget bounds CPU work from very large gaps, tight
   tolerances, and rejected steps.
 
+The solver reuses Dormand-Prince's final derivative as the next initial
+derivative within an update. It also carries that derivative across successful
+updates for `Linear` input, whose adjacent segments share an exact endpoint.
+Held-input modes do not share that endpoint value, so they deliberately do not
+use the cross-update cache. The cache is committed transactionally with the
+state and remains private, fixed-size storage.
+
 The complete elapsed interval is either integrated or rejected. It is never
 clamped or partially committed. Constant input at exact equilibrium is a safe
 fast path, allowing arbitrarily large elapsed intervals without needless work.

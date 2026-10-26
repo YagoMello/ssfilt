@@ -14,6 +14,7 @@ pub(crate) struct StreamingCore<T, M, const N: usize> {
     time_scale: T,
     input_model: InputModel,
     integration: IntegrationConfig<T>,
+    endpoint_derivative: Option<[T; N]>,
     pub(crate) last_diagnostics: IntegrationDiagnostics<T>,
     pub(crate) at_equilibrium: bool,
 }
@@ -31,6 +32,8 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         if !state.iter().all(|value| value.is_finite()) || !output.is_finite() {
             return Err(BuildError::UnrepresentableInitialEquilibrium);
         }
+        let endpoint_derivative =
+            linear_endpoint_derivative(&model, &state, initial_input, input_model);
         Ok(Self {
             model,
             state,
@@ -39,6 +42,7 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
             time_scale,
             input_model,
             integration,
+            endpoint_derivative,
             last_diagnostics: IntegrationDiagnostics::empty(),
             at_equilibrium: true,
         })
@@ -92,6 +96,7 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
             normalized_duration,
             max_normalized_step,
             self.integration,
+            self.endpoint_derivative,
         )?;
         let next_output = self.model.output(&outcome.state, input);
         if !next_output.is_finite() {
@@ -101,6 +106,8 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         self.state = outcome.state;
         self.previous_input = input;
         self.output = next_output;
+        self.endpoint_derivative =
+            matches!(self.input_model, InputModel::Linear).then_some(outcome.endpoint_derivative);
         self.last_diagnostics =
             IntegrationDiagnostics::from_solver(outcome.diagnostics, self.time_scale);
         self.at_equilibrium = false;
@@ -111,6 +118,8 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         self.state = self.model.equilibrium(T::zero());
         self.previous_input = T::zero();
         self.output = self.model.output(&self.state, T::zero());
+        self.endpoint_derivative =
+            linear_endpoint_derivative(&self.model, &self.state, T::zero(), self.input_model);
         self.last_diagnostics = IntegrationDiagnostics::empty();
         self.at_equilibrium = true;
     }
@@ -128,8 +137,24 @@ impl<T: Scalar, M: ContinuousModel<T, N>, const N: usize> StreamingCore<T, M, N>
         self.state = state;
         self.previous_input = input;
         self.output = output;
+        self.endpoint_derivative =
+            linear_endpoint_derivative(&self.model, &self.state, input, self.input_model);
         self.last_diagnostics = IntegrationDiagnostics::empty();
         self.at_equilibrium = true;
         Ok(())
     }
+}
+
+fn linear_endpoint_derivative<T: Scalar, M: ContinuousModel<T, N>, const N: usize>(
+    model: &M,
+    state: &[T; N],
+    input: T,
+    input_model: InputModel,
+) -> Option<[T; N]> {
+    if !matches!(input_model, InputModel::Linear) {
+        return None;
+    }
+    let mut derivative = [T::zero(); N];
+    model.derivative(state, input, &mut derivative);
+    Some(derivative)
 }
