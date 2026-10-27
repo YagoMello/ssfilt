@@ -241,13 +241,15 @@ updates preserve the preceding snapshot transactionally.
    feedback before adding new filter categories. The first ESP32-C3 trial
    identified soft-float integration cost as the next product issue. ◐
 9. Evaluate a bounded MCU-oriented integration path against the existing RK45
-   contract, a fixed-step RK4 reference, and a fixed-rate digital IIR. ✓ The
-   fixed RK4 ceiling was substantially faster but ignored configured error
-   tolerances. RK23 was slower; Dormand--Prince FSAL saved only about 5%; and a
-   five-stage adaptive Merson candidate was inconsistent across responses and
-   bandwidths, including regressions for Bessel and a narrow band-pass. Keep
-   one production integrator rather than adding hidden response-specific
-   policies or a public selector. See `docs/mcu-performance.md`.
+   contract, a fixed-step RK4 reference, and a fixed-rate digital IIR. ◐ Fixed
+   RK4 established a substantially faster ceiling but has no error estimate.
+   RK23 was slower at production tolerances but materially faster at relaxed
+   tolerances on ordinary soft-float MCU intervals; relaxed Dormand--Prince was
+   better for long gaps. Euler--Heun was rejected, Dormand--Prince FSAL saved
+   only about 5%, and adaptive Merson was inconsistent across responses and
+   bandwidths. Next evaluate whether one small, honest performance-profile
+   interface survives a representative topology and timing matrix. Do not add
+   hidden response-specific policies. See `docs/mcu-performance.md`.
 10. Phase correction, offline batch filtering, custom kernels, and unrelated
     alternative integrators require a separately demonstrated use case and
     interface.

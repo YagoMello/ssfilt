@@ -328,8 +328,11 @@ equivalent filters: `ssfilt` is paying for measured elapsed-time integration,
 explicit input reconstruction, adaptive error control, and transactional
 failure. If the signal is truly fixed-rate and those contracts are unnecessary,
 a conventional digital IIR or moving average is usually the better embedded
-choice. See [MCU performance and integrator findings](docs/mcu-performance.md)
-for the workload, tradeoffs, and alternatives that were evaluated.
+choice. Private experiments also found an 83--90 us relaxed RK23 path and a
+roughly 50 us fixed-RK4 ceiling, but neither is currently a selectable backend.
+See [MCU performance and integrator findings](docs/mcu-performance.md) for the
+workload, host-FPU comparison, tolerance caveats, and alternatives that were
+evaluated.
 
 ## Development
 
