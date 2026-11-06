@@ -81,6 +81,69 @@ fn integration_diagnostics_are_available_without_extending_the_trait() {
 }
 
 #[test]
+fn default_dormand_prince_behavior_is_stable_during_integrator_refactoring() {
+    // This deliberately freezes representative output and controller work at
+    // the bit level. Change it only alongside an explicit numerical decision,
+    // not as fallout from moving integration behind a policy abstraction.
+    let samples = [
+        (0.25_f64, 0.000_7_f64),
+        (1.0, 0.001_3),
+        (-0.5, 0.004_1),
+        (0.75, 0.000_2),
+        (0.1, 0.012_7),
+    ];
+    let expected_f64 = [
+        (0x3e80_1c4f_fa69_08e0, 4, 1, 30),
+        (0x3ef7_f512_d5a7_3578, 7, 1, 48),
+        (0x3f71_317b_2913_4cf1, 16, 2, 108),
+        (0x3f73_7010_7589_23c8, 1, 0, 6),
+        (0x3fc2_9aa5_c7e8_df35, 22, 2, 144),
+    ];
+    let mut f64_filter = LowPass::<4>::builder(20.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::Linear)
+        .build()
+        .unwrap();
+    for ((input, dt), (output_bits, accepted, rejected, evaluations)) in
+        samples.into_iter().zip(expected_f64)
+    {
+        assert_eq!(f64_filter.update(input, dt).unwrap().to_bits(), output_bits);
+        let diagnostics = f64_filter.last_diagnostics();
+        assert_eq!(diagnostics.accepted_steps(), accepted);
+        assert_eq!(diagnostics.rejected_steps(), rejected);
+        assert_eq!(diagnostics.derivative_evaluations(), evaluations);
+    }
+
+    let expected_f32 = [
+        (0x33ff_8d9b, 1, 0, 6),
+        (0x37bf_a2ff, 2, 1, 18),
+        (0x3b89_8d06, 4, 1, 30),
+        (0x3b9b_81a7, 1, 0, 6),
+        (0x3e14_d564, 6, 2, 48),
+    ];
+    let mut f32_filter = LowPass::<4, f32>::builder(20.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::Linear)
+        .build()
+        .unwrap();
+    for ((input, dt), (output_bits, accepted, rejected, evaluations)) in
+        samples.into_iter().zip(expected_f32)
+    {
+        assert_eq!(
+            f32_filter
+                .update(input as f32, dt as f32)
+                .unwrap()
+                .to_bits(),
+            output_bits
+        );
+        let diagnostics = f32_filter.last_diagnostics();
+        assert_eq!(diagnostics.accepted_steps(), accepted);
+        assert_eq!(diagnostics.rejected_steps(), rejected);
+        assert_eq!(diagnostics.derivative_evaluations(), evaluations);
+    }
+}
+
+#[test]
 fn runtime_order_can_use_the_object_safe_streaming_trait() {
     for order in [2, 4, 8] {
         let mut filter: Box<dyn StreamingFilter<Scalar = f64>> = match order {
