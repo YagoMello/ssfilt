@@ -56,7 +56,7 @@ pub enum UpdateError {
     NonFiniteInput,
     /// Elapsed time was NaN, infinite, zero, or negative.
     InvalidDeltaTime,
-    /// Adaptive integration exhausted its configured work budget.
+    /// Integration exhausted its configured work budget.
     StepBudgetExceeded,
     /// Floating-point resolution prevented further progress.
     StepSizeUnderflow,
@@ -69,7 +69,7 @@ impl fmt::Display for UpdateError {
         let message = match self {
             Self::NonFiniteInput => "input must be finite",
             Self::InvalidDeltaTime => "elapsed time must be finite and positive",
-            Self::StepBudgetExceeded => "adaptive integration exhausted its step budget",
+            Self::StepBudgetExceeded => "integration exhausted its configured work budget",
             Self::StepSizeUnderflow => "integration step is too small to advance time",
             Self::NonFiniteState => "integration produced a non-finite state",
         };

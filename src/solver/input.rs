@@ -1,7 +1,7 @@
 use crate::{InputModel, Scalar};
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct InputSegment<T> {
+pub struct InputSegment<T> {
     start: T,
     end: T,
     model: InputModel,

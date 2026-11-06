@@ -68,16 +68,18 @@ sample interval.
   tolerances exhausted the existing attempt budget in 24 library tests. It
   was discarded.
 - Reusing Dormand--Prince's endpoint derivative reduced the common case by
-  only about 5%, which did not justify the extra persistent buffer and cache
-  validity state.
+  about 5%. The optimization is retained, and its persistent buffer and cache
+  validity are now isolated inside the DOPRI-specific runtime rather than the
+  common streaming core.
 - A five-stage adaptive Merson method cut many ordinary order-one and order-two
   cases by 34--43% while preserving adaptive checks. Its estimator was much
   more conservative for some dynamics: order-two Bessel gained essentially
   nothing, and a narrow 55--65 Hz band-pass became about 43% slower. A broad or
   hidden topology-specific rollout was therefore rejected.
 
-There is currently one private production integrator: Dormand--Prince 5(4).
-The public API does not expose an integrator selector.
+There is currently one production integrator: Dormand--Prince 5(4). The public
+sealed policy interface selects and configures it statically, but no alternative
+method is public until one demonstrates a distinct, validated workload benefit.
 
 ## Hardware-FPU host reference
 
@@ -107,7 +109,8 @@ low-, high-, and band-pass filters, ordinary and long intervals, and `f32` and
 `f64`. A useful interface must state whether it offers fixed effort or adaptive
 error control, retain complete-interval and transactional-failure semantics,
 and give diagnostics enough context to explain the work performed. The
-existing `IntegrationConfig` remains the honest custom path in the meantime.
+`DormandPrince54` remains the honest custom path in the meantime; its public
+fields name the local-error tolerances and work limits directly.
 
 ## Equilibrium shortcut
 

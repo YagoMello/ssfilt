@@ -1,8 +1,8 @@
 use approx::assert_relative_eq;
 use ssfilt::{
-    BandPass, BuildError, HighPass, InputModel, IntegrationDiagnostics, LowPass,
-    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, ResetError, Response, StreamingFilter,
-    UpdateError,
+    BandPass, BuildError, DormandPrince54, HighPass, InputModel, IntegrationDiagnostics,
+    Integrator, LowPass, MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, ResetError, Response,
+    StreamingFilter, UpdateError,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -33,6 +33,34 @@ fn streaming_trait_supports_generic_callers() {
         .unwrap();
     let value = update_generic(&mut filter, 1.0, 0.01);
     assert!(value > 0.0 && value < 1.0);
+}
+
+fn update_with_integrator<const N: usize, I>(
+    filter: &mut LowPass<N, f32, I>,
+    input: f32,
+    dt_seconds: f32,
+) -> Result<f32, UpdateError>
+where
+    I: Integrator<f32, N>,
+{
+    filter.update(input, dt_seconds)
+}
+
+#[test]
+fn integrator_trait_supports_external_generic_callers() {
+    let policy = DormandPrince54 {
+        absolute_tolerance: 1.0e-5,
+        relative_tolerance: 1.0e-3,
+        max_step_seconds: Some(0.002),
+        max_step_attempts: 128,
+    };
+    let mut filter = LowPass::<4, f32>::builder(20.0)
+        .integrator(policy)
+        .build()
+        .unwrap();
+
+    let output = update_with_integrator(&mut filter, 1.0, 0.01).unwrap();
+    assert!(output.is_finite());
 }
 
 #[test]
@@ -121,21 +149,22 @@ fn default_dormand_prince_behavior_is_stable_during_integrator_refactoring() {
         (0x3b9b_81a7, 1, 0, 6),
         (0x3e14_d564, 6, 2, 48),
     ];
+    let samples_f32 = [
+        (0.25_f32, 0.000_7_f32),
+        (1.0, 0.001_3),
+        (-0.5, 0.004_1),
+        (0.75, 0.000_2),
+        (0.1, 0.012_7),
+    ];
     let mut f32_filter = LowPass::<4, f32>::builder(20.0)
         .response(Response::Butterworth)
         .input_model(InputModel::Linear)
         .build()
         .unwrap();
     for ((input, dt), (output_bits, accepted, rejected, evaluations)) in
-        samples.into_iter().zip(expected_f32)
+        samples_f32.into_iter().zip(expected_f32)
     {
-        assert_eq!(
-            f32_filter
-                .update(input as f32, dt as f32)
-                .unwrap()
-                .to_bits(),
-            output_bits
-        );
+        assert_eq!(f32_filter.update(input, dt).unwrap().to_bits(), output_bits);
         let diagnostics = f32_filter.last_diagnostics();
         assert_eq!(diagnostics.accepted_steps(), accepted);
         assert_eq!(diagnostics.rejected_steps(), rejected);

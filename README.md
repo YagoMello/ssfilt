@@ -275,7 +275,41 @@ The public `Scalar` trait is sealed and implemented for `f32` and `f64`. The
 algorithms use `num-traits`, but a scalar is exposed as supported only after its
 error behavior, precision, defaults, and `no_std` characteristics have been
 validated. Precision-specific integration defaults live in
-`IntegrationConfig`, not in the scalar trait.
+`DormandPrince54`, not in the scalar trait.
+
+## Integration policy
+
+Dormand–Prince 5(4) remains the default, so the ordinary builder requires no
+integration configuration. Advanced callers can replace its public policy
+value while keeping the same static, allocation-free filter:
+
+```rust
+use ssfilt::{DormandPrince54, LowPass};
+
+let policy = DormandPrince54::<f32> {
+    absolute_tolerance: 1.0e-5,
+    relative_tolerance: 1.0e-3,
+    max_step_seconds: Some(0.001),
+    max_step_attempts: 512,
+};
+
+let filter = LowPass::<4, f32>::builder(20.0)
+    .integrator(policy)
+    .build()?;
+# let _ = filter;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+These tolerances control local state error; they are not direct output-error
+percentages. Every policy validates its own meaningful settings during
+`build()`. Numerical execution, models, and method-specific runtime caches
+remain private.
+
+During prerelease development this replaced `IntegrationConfig`, the nested
+`Tolerances` value, and `.integration(config)`. Advanced callers migrate by
+using `DormandPrince54`, its direct `absolute_tolerance` and
+`relative_tolerance` fields, and `.integrator(policy)`. The default builder
+expression and its numerical defaults are unchanged.
 
 ## Error behavior
 
@@ -286,7 +320,7 @@ controls. It also rejects a finite initial input when its equilibrium state or
 output cannot be represented. Updates reject non-finite input and non-positive
 or non-finite elapsed time.
 
-An update is transactional: if adaptive integration cannot finish, the state,
+An update is transactional: if integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
 controls numerical stability; the separate attempt budget bounds worst-case
 work. No elapsed time is silently discarded.
@@ -318,7 +352,7 @@ ssfilt = { version = "0.1.0-beta.1", default-features = false, features = ["libm
 Use `LowPass::<N, f32>` (or `HighPass`/`BandPass`) when `f32` is appropriate for
 the target's precision and range. The `f32` choice does not guarantee speed on
 an MCU without a floating-point unit: benchmark the actual target, especially
-for high orders and adaptive integration. The fixed-size enum above also works
+for high orders and integration. The fixed-size enum above also works
 without `std` or an allocator.
 
 On a measured 160 MHz ESP32-C3, an order-two 20 Hz Butterworth update took

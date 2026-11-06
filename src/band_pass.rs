@@ -1,25 +1,29 @@
 use crate::model::BandPassModel;
 use crate::streaming::StreamingCore;
 use crate::{
-    BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
-    Scalar, StreamingFilter, UpdateError,
+    BuildError, DormandPrince54, InputModel, IntegrationDiagnostics, Integrator, ResetError,
+    Response, Scalar, StreamingFilter, UpdateError,
 };
 
 /// Builder for a continuous-time band-pass filter.
 #[derive(Clone, Copy, Debug)]
-pub struct BandPassBuilder<const N: usize, T: Scalar = f64> {
+pub struct BandPassBuilder<
+    const N: usize,
+    T: Scalar = f64,
+    I: Integrator<T, N> = DormandPrince54<T>,
+> {
     lower_cutoff_hz: T,
     upper_cutoff_hz: T,
     response: Response<T>,
     input_model: InputModel,
     initial_input: T,
-    integration: IntegrationConfig<T>,
+    integrator: I,
 }
 
-impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
+impl<const N: usize, T: Scalar> BandPassBuilder<N, T, DormandPrince54<T>> {
     fn new(lower_cutoff_hz: T, upper_cutoff_hz: T) -> Self
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         Self {
             lower_cutoff_hz,
@@ -27,10 +31,12 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
             response: Response::default(),
             input_model: InputModel::default(),
             initial_input: T::zero(),
-            integration: IntegrationConfig::default(),
+            integrator: DormandPrince54::default(),
         }
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> BandPassBuilder<N, T, I> {
     /// Selects the analog prototype response family.
     #[must_use]
     pub const fn response(mut self, response: Response<T>) -> Self {
@@ -52,11 +58,17 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
         self
     }
 
-    /// Replaces the adaptive integration configuration.
+    /// Replaces the complete integration policy.
     #[must_use]
-    pub const fn integration(mut self, integration: IntegrationConfig<T>) -> Self {
-        self.integration = integration;
-        self
+    pub fn integrator<J: Integrator<T, N>>(self, integrator: J) -> BandPassBuilder<N, T, J> {
+        BandPassBuilder {
+            lower_cutoff_hz: self.lower_cutoff_hz,
+            upper_cutoff_hz: self.upper_cutoff_hz,
+            response: self.response,
+            input_model: self.input_model,
+            initial_input: self.initial_input,
+            integrator,
+        }
     }
 
     /// Validates the configuration and constructs the filter.
@@ -66,7 +78,7 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
     /// Returns [`BuildError`] if `N` is not positive and even, the lower and
     /// upper cutoff frequencies are invalid, or another configuration value is
     /// invalid.
-    pub fn build(self) -> Result<BandPass<N, T>, BuildError> {
+    pub fn build(self) -> Result<BandPass<N, T, I>, BuildError> {
         if N == 0 {
             return Err(BuildError::ZeroOrder);
         }
@@ -83,7 +95,7 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
         if !self.initial_input.is_finite() {
             return Err(BuildError::InvalidInitialInput);
         }
-        if !self.integration.is_valid() {
+        if !self.integrator.is_valid(crate::integrator::private::Token) {
             return Err(BuildError::InvalidIntegrationConfig);
         }
 
@@ -108,7 +120,7 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
             self.initial_input,
             angular_center,
             self.input_model,
-            self.integration,
+            self.integrator,
         )?;
         Ok(BandPass {
             runtime,
@@ -127,24 +139,26 @@ impl<const N: usize, T: Scalar> BandPassBuilder<N, T> {
 /// `BandPass::<4>` uses a second-order prototype and has fourth-order state.
 /// Both cutoff arguments denote complete-filter −3 dB frequencies.
 #[derive(Clone, Copy, Debug)]
-pub struct BandPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, BandPassModel<T, N>, N>,
+pub struct BandPass<const N: usize, T: Scalar = f64, I: Integrator<T, N> = DormandPrince54<T>> {
+    runtime: StreamingCore<T, BandPassModel<T, N>, N, I>,
     lower_cutoff_hz: T,
     upper_cutoff_hz: T,
     center_hz: T,
     response: Response<T>,
 }
 
-impl<const N: usize, T: Scalar> BandPass<N, T> {
+impl<const N: usize, T: Scalar> BandPass<N, T, DormandPrince54<T>> {
     /// Starts configuring a band-pass filter from its two −3 dB edges.
     #[must_use]
     pub fn builder(lower_cutoff_hz: T, upper_cutoff_hz: T) -> BandPassBuilder<N, T>
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         BandPassBuilder::new(lower_cutoff_hz, upper_cutoff_hz)
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> BandPass<N, T, I> {
     /// Returns the lower −3 dB cutoff frequency in hertz.
     #[must_use]
     pub const fn lower_cutoff_hz(&self) -> T {
@@ -174,7 +188,7 @@ impl<const N: usize, T: Scalar> BandPass<N, T> {
     /// # Errors
     ///
     /// Returns [`UpdateError`] for invalid input or elapsed time, or if the
-    /// adaptive integration cannot finish safely. The filter is unchanged on
+    /// integration cannot finish safely. The filter is unchanged on
     /// error.
     pub fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
         <Self as StreamingFilter>::update(self, input, dt_seconds)
@@ -211,7 +225,7 @@ impl<const N: usize, T: Scalar> BandPass<N, T> {
     }
 }
 
-impl<const N: usize, T: Scalar> StreamingFilter for BandPass<N, T> {
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> StreamingFilter for BandPass<N, T, I> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
@@ -373,18 +387,19 @@ mod tests {
             // This property isolates the exact normalized-time scaling law.
             // Use tighter local error control than the runtime default so two
             // valid adaptive step histories cannot dominate that comparison.
-            let integration = IntegrationConfig {
-                tolerances: crate::Tolerances::new(1.0e-12, 1.0e-9),
-                ..IntegrationConfig::default()
+            let integrator = DormandPrince54 {
+                absolute_tolerance: 1.0e-12,
+                relative_tolerance: 1.0e-9,
+                ..DormandPrince54::default()
             };
             let mut original = BandPass::<6>::builder(lower_hz, upper_hz)
                 .response(Response::Bessel)
-                .integration(integration)
+                .integrator(integrator)
                 .build()
                 .unwrap();
             let mut scaled = BandPass::<6>::builder(lower_hz * scale, upper_hz * scale)
                 .response(Response::Bessel)
-                .integration(integration)
+                .integrator(integrator)
                 .build()
                 .unwrap();
             let angular_center = core::f64::consts::TAU * (lower_hz * upper_hz).sqrt();

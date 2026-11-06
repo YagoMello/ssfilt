@@ -24,6 +24,15 @@ The first public field-test release.
 - A browser playground for response inspection, shareable configurations,
   Rust setup snippets, and local filtering of timestamped CSV samples.
 
+### Changed during prerelease development
+
+- Replaced `IntegrationConfig`, `Tolerances`, and the builder's
+  `.integration(config)` method with the sealed integration-policy API. Use
+  `DormandPrince54`, its direct `absolute_tolerance` and
+  `relative_tolerance` fields, and `.integrator(policy)`. The ordinary builder
+  path and default Dormand–Prince numerical behavior are unchanged. This is an
+  intentional source-breaking cleanup before the first field-test release.
+
 ### Known limitations
 
 - The public filter order is a const generic; runtime selection requires an

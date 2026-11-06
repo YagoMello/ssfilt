@@ -183,6 +183,20 @@ successful update.
 
 ## Integration policy
 
+The public filter type carries a sealed integration-policy parameter. The
+default policy is `DormandPrince54<T>`, so ordinary `LowPass<N, T>` and the
+other topology types retain their concise spelling. Public policy values hold
+immutable configuration; a private order-specific runtime holds both that
+configuration and any method-specific cache. The streaming core treats that
+runtime as one opaque value and commits its replacement transactionally with
+the candidate filter state.
+
+The inaccessible implementation supertrait intentionally owns continuous-model
+access, derivative evaluation, normalized-time requests, concrete runtime and
+cache representations, candidate state, diagnostics, and internal failures.
+Its associated runtime hook supplies fixed-size static storage but is not a
+customization interface or a general ODE API.
+
 Dormand-Prince 5(4) supplies a fifth-order candidate and a fourth-order local
 error estimate. Error is scaled componentwise:
 
@@ -208,7 +222,8 @@ state and remains private, fixed-size storage.
 
 The complete elapsed interval is either integrated or rejected. It is never
 clamped or partially committed. Constant input at exact equilibrium is a safe
-fast path, allowing arbitrarily large elapsed intervals without needless work.
+fast path for every finite elapsed interval whose normalized duration remains
+representable; duration validation intentionally precedes the shortcut.
 
 Forward Euler exists only in tests for convergence and comparison. It is not
 an accuracy oracle or public backend.

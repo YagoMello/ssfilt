@@ -12,10 +12,7 @@ use std::time::Instant;
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
-use ssfilt::{
-    BandPass, HighPass, InputModel, IntegrationConfig, LowPass, Response, StreamingFilter,
-    Tolerances,
-};
+use ssfilt::{BandPass, DormandPrince54, HighPass, InputModel, LowPass, Response, StreamingFilter};
 
 const CUTOFF_HZ: f64 = 1_000.0;
 const DT_SECONDS: f64 = 1.0 / (8.0 * CUTOFF_HZ);
@@ -127,15 +124,17 @@ fn integrator_cases() -> Result<Vec<Timing>, Box<dyn Error>> {
     let base = LowPass::<4>::builder(CUTOFF_HZ)
         .response(Response::Butterworth)
         .build()?;
-    let loose = IntegrationConfig::<f64> {
-        tolerances: Tolerances::new(1.0e-7, 1.0e-4),
+    let loose = DormandPrince54::<f64> {
+        absolute_tolerance: 1.0e-7,
+        relative_tolerance: 1.0e-4,
         ..Default::default()
     };
-    let tight = IntegrationConfig::<f64> {
-        tolerances: Tolerances::new(1.0e-12, 1.0e-9),
+    let tight = DormandPrince54::<f64> {
+        absolute_tolerance: 1.0e-12,
+        relative_tolerance: 1.0e-9,
         ..Default::default()
     };
-    let capped = IntegrationConfig::<f64> {
+    let capped = DormandPrince54::<f64> {
         max_step_seconds: Some(DT_SECONDS / 8.0),
         ..Default::default()
     };
@@ -145,21 +144,21 @@ fn integrator_cases() -> Result<Vec<Timing>, Box<dyn Error>> {
             "RK45 loose / linear",
             LowPass::<4>::builder(CUTOFF_HZ)
                 .response(Response::Butterworth)
-                .integration(loose)
+                .integrator(loose)
                 .build()?,
         )?,
         timing(
             "RK45 tight / linear",
             LowPass::<4>::builder(CUTOFF_HZ)
                 .response(Response::Butterworth)
-                .integration(tight)
+                .integrator(tight)
                 .build()?,
         )?,
         timing(
             "RK45 capped / linear",
             LowPass::<4>::builder(CUTOFF_HZ)
                 .response(Response::Butterworth)
-                .integration(capped)
+                .integrator(capped)
                 .build()?,
         )?,
         timing(

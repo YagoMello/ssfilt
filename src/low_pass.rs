@@ -1,34 +1,37 @@
 use crate::model::LowPassModel;
 use crate::streaming::StreamingCore;
 use crate::{
-    BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
-    Scalar, StreamingFilter, UpdateError,
+    BuildError, DormandPrince54, InputModel, IntegrationDiagnostics, Integrator, ResetError,
+    Response, Scalar, StreamingFilter, UpdateError,
 };
 
 /// Builder for a continuous-time low-pass filter.
 #[derive(Clone, Copy, Debug)]
-pub struct LowPassBuilder<const N: usize, T: Scalar = f64> {
+pub struct LowPassBuilder<const N: usize, T: Scalar = f64, I: Integrator<T, N> = DormandPrince54<T>>
+{
     cutoff_hz: T,
     response: Response<T>,
     input_model: InputModel,
     initial_input: T,
-    integration: IntegrationConfig<T>,
+    integrator: I,
 }
 
-impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
+impl<const N: usize, T: Scalar> LowPassBuilder<N, T, DormandPrince54<T>> {
     fn new(cutoff_hz: T) -> Self
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         Self {
             cutoff_hz,
             response: Response::default(),
             input_model: InputModel::default(),
             initial_input: T::zero(),
-            integration: IntegrationConfig::default(),
+            integrator: DormandPrince54::default(),
         }
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> LowPassBuilder<N, T, I> {
     /// Selects the analog low-pass response family.
     #[must_use]
     pub const fn response(mut self, response: Response<T>) -> Self {
@@ -50,11 +53,16 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
         self
     }
 
-    /// Replaces the adaptive integration configuration.
+    /// Replaces the complete integration policy.
     #[must_use]
-    pub const fn integration(mut self, integration: IntegrationConfig<T>) -> Self {
-        self.integration = integration;
-        self
+    pub fn integrator<J: Integrator<T, N>>(self, integrator: J) -> LowPassBuilder<N, T, J> {
+        LowPassBuilder {
+            cutoff_hz: self.cutoff_hz,
+            response: self.response,
+            input_model: self.input_model,
+            initial_input: self.initial_input,
+            integrator,
+        }
     }
 
     /// Validates the configuration and constructs the filter.
@@ -63,7 +71,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
     ///
     /// Returns [`BuildError`] if the order is zero or any numeric
     /// configuration value is invalid.
-    pub fn build(self) -> Result<LowPass<N, T>, BuildError> {
+    pub fn build(self) -> Result<LowPass<N, T, I>, BuildError> {
         if N == 0 {
             return Err(BuildError::ZeroOrder);
         }
@@ -73,7 +81,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
         if !self.initial_input.is_finite() {
             return Err(BuildError::InvalidInitialInput);
         }
-        if !self.integration.is_valid() {
+        if !self.integrator.is_valid(crate::integrator::private::Token) {
             return Err(BuildError::InvalidIntegrationConfig);
         }
 
@@ -88,7 +96,7 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
             self.initial_input,
             angular_cutoff,
             self.input_model,
-            self.integration,
+            self.integrator,
         )?;
         Ok(LowPass {
             runtime,
@@ -103,22 +111,24 @@ impl<const N: usize, T: Scalar> LowPassBuilder<N, T> {
 /// `N` is the filter order. `cutoff_hz` denotes the −3 dB frequency of the
 /// complete filter for every supported [`Response`].
 #[derive(Clone, Copy, Debug)]
-pub struct LowPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, LowPassModel<T, N>, N>,
+pub struct LowPass<const N: usize, T: Scalar = f64, I: Integrator<T, N> = DormandPrince54<T>> {
+    runtime: StreamingCore<T, LowPassModel<T, N>, N, I>,
     cutoff_hz: T,
     response: Response<T>,
 }
 
-impl<const N: usize, T: Scalar> LowPass<N, T> {
+impl<const N: usize, T: Scalar> LowPass<N, T, DormandPrince54<T>> {
     /// Starts configuring a low-pass filter with total cutoff `cutoff_hz`.
     #[must_use]
     pub fn builder(cutoff_hz: T) -> LowPassBuilder<N, T>
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         LowPassBuilder::new(cutoff_hz)
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> LowPass<N, T, I> {
     /// Returns the total filter's −3 dB cutoff frequency in hertz.
     #[must_use]
     pub const fn cutoff_hz(&self) -> T {
@@ -136,7 +146,7 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     /// # Errors
     ///
     /// Returns [`UpdateError`] for invalid input or elapsed time, or if the
-    /// adaptive integration cannot finish safely. The filter is unchanged on
+    /// integration cannot finish safely. The filter is unchanged on
     /// error.
     pub fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
         <Self as StreamingFilter>::update(self, input, dt_seconds)
@@ -174,7 +184,7 @@ impl<const N: usize, T: Scalar> LowPass<N, T> {
     }
 }
 
-impl<const N: usize, T: Scalar> StreamingFilter for LowPass<N, T> {
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> StreamingFilter for LowPass<N, T, I> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
@@ -209,7 +219,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::Tolerances;
     use crate::model::RepeatedPole;
 
     #[test]
@@ -242,13 +251,13 @@ mod tests {
 
     #[test]
     fn builder_rejects_invalid_integration_config() {
-        let invalid_integration = IntegrationConfig {
-            tolerances: Tolerances::new(0.0, 1.0e-7),
-            ..IntegrationConfig::default()
+        let invalid_integrator = DormandPrince54 {
+            absolute_tolerance: 0.0,
+            ..DormandPrince54::default()
         };
         assert!(matches!(
             LowPass::<1>::builder(1.0)
-                .integration(invalid_integration)
+                .integrator(invalid_integrator)
                 .build(),
             Err(BuildError::InvalidIntegrationConfig)
         ));
@@ -383,14 +392,14 @@ mod tests {
 
     #[test]
     fn step_budget_failure_is_transactional() {
-        let integration = IntegrationConfig {
+        let integrator = DormandPrince54 {
             max_step_seconds: Some(1.0e-4),
             max_step_attempts: 1,
-            ..IntegrationConfig::default()
+            ..DormandPrince54::default()
         };
         let mut filter = LowPass::<2>::builder(10.0)
             .input_model(InputModel::CurrentHold)
-            .integration(integration)
+            .integrator(integrator)
             .build()
             .unwrap();
         let before = filter;
@@ -407,6 +416,33 @@ mod tests {
             before.runtime.last_diagnostics
         );
         assert_eq!(filter.runtime.at_equilibrium, before.runtime.at_equilibrium);
+    }
+
+    #[test]
+    fn failed_linear_update_preserves_dormand_prince_cache() {
+        let integrator = DormandPrince54 {
+            max_step_seconds: Some(1.0e-4),
+            max_step_attempts: 8,
+            ..DormandPrince54::default()
+        };
+        let mut tested = LowPass::<2>::builder(10.0)
+            .input_model(InputModel::Linear)
+            .integrator(integrator)
+            .build()
+            .unwrap();
+        tested.update(0.75, 1.0e-4).unwrap();
+        let mut untouched = tested;
+
+        assert_eq!(
+            tested.update(2.0, 0.1),
+            Err(UpdateError::StepBudgetExceeded)
+        );
+
+        assert_eq!(
+            tested.update(-0.25, 1.0e-4).unwrap(),
+            untouched.update(-0.25, 1.0e-4).unwrap()
+        );
+        assert_eq!(tested.last_diagnostics(), untouched.last_diagnostics());
     }
 
     #[rstest]
@@ -821,13 +857,13 @@ mod tests {
 
     #[test]
     fn configured_step_limit_subdivides_the_complete_interval() {
-        let integration = IntegrationConfig {
+        let integrator = DormandPrince54 {
             max_step_seconds: Some(0.000_25),
-            ..IntegrationConfig::default()
+            ..DormandPrince54::default()
         };
         let mut filter = LowPass::<3>::builder(8.0)
             .input_model(InputModel::CurrentHold)
-            .integration(integration)
+            .integrator(integrator)
             .build()
             .unwrap();
         let actual = filter.update(1.0, 0.05).unwrap();

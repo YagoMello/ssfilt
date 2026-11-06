@@ -1,34 +1,40 @@
 use crate::model::HighPassModel;
 use crate::streaming::StreamingCore;
 use crate::{
-    BuildError, InputModel, IntegrationConfig, IntegrationDiagnostics, ResetError, Response,
-    Scalar, StreamingFilter, UpdateError,
+    BuildError, DormandPrince54, InputModel, IntegrationDiagnostics, Integrator, ResetError,
+    Response, Scalar, StreamingFilter, UpdateError,
 };
 
 /// Builder for a continuous-time high-pass filter.
 #[derive(Clone, Copy, Debug)]
-pub struct HighPassBuilder<const N: usize, T: Scalar = f64> {
+pub struct HighPassBuilder<
+    const N: usize,
+    T: Scalar = f64,
+    I: Integrator<T, N> = DormandPrince54<T>,
+> {
     cutoff_hz: T,
     response: Response<T>,
     input_model: InputModel,
     initial_input: T,
-    integration: IntegrationConfig<T>,
+    integrator: I,
 }
 
-impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
+impl<const N: usize, T: Scalar> HighPassBuilder<N, T, DormandPrince54<T>> {
     fn new(cutoff_hz: T) -> Self
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         Self {
             cutoff_hz,
             response: Response::default(),
             input_model: InputModel::default(),
             initial_input: T::zero(),
-            integration: IntegrationConfig::default(),
+            integrator: DormandPrince54::default(),
         }
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> HighPassBuilder<N, T, I> {
     /// Selects the analog high-pass response family.
     #[must_use]
     pub const fn response(mut self, response: Response<T>) -> Self {
@@ -50,11 +56,16 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
         self
     }
 
-    /// Replaces the adaptive integration configuration.
+    /// Replaces the complete integration policy.
     #[must_use]
-    pub const fn integration(mut self, integration: IntegrationConfig<T>) -> Self {
-        self.integration = integration;
-        self
+    pub fn integrator<J: Integrator<T, N>>(self, integrator: J) -> HighPassBuilder<N, T, J> {
+        HighPassBuilder {
+            cutoff_hz: self.cutoff_hz,
+            response: self.response,
+            input_model: self.input_model,
+            initial_input: self.initial_input,
+            integrator,
+        }
     }
 
     /// Validates the configuration and constructs the filter.
@@ -63,7 +74,7 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
     ///
     /// Returns [`BuildError`] if the order is zero or any configuration value
     /// is invalid.
-    pub fn build(self) -> Result<HighPass<N, T>, BuildError> {
+    pub fn build(self) -> Result<HighPass<N, T, I>, BuildError> {
         if N == 0 {
             return Err(BuildError::ZeroOrder);
         }
@@ -73,7 +84,7 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
         if !self.initial_input.is_finite() {
             return Err(BuildError::InvalidInitialInput);
         }
-        if !self.integration.is_valid() {
+        if !self.integrator.is_valid(crate::integrator::private::Token) {
             return Err(BuildError::InvalidIntegrationConfig);
         }
 
@@ -88,7 +99,7 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
             self.initial_input,
             angular_cutoff,
             self.input_model,
-            self.integration,
+            self.integrator,
         )?;
         Ok(HighPass {
             runtime,
@@ -105,22 +116,24 @@ impl<const N: usize, T: Scalar> HighPassBuilder<N, T> {
 /// direct feedthrough, so a newly supplied endpoint sample can affect the
 /// returned output immediately.
 #[derive(Clone, Copy, Debug)]
-pub struct HighPass<const N: usize, T: Scalar = f64> {
-    runtime: StreamingCore<T, HighPassModel<T, N>, N>,
+pub struct HighPass<const N: usize, T: Scalar = f64, I: Integrator<T, N> = DormandPrince54<T>> {
+    runtime: StreamingCore<T, HighPassModel<T, N>, N, I>,
     cutoff_hz: T,
     response: Response<T>,
 }
 
-impl<const N: usize, T: Scalar> HighPass<N, T> {
+impl<const N: usize, T: Scalar> HighPass<N, T, DormandPrince54<T>> {
     /// Starts configuring a high-pass filter with total cutoff `cutoff_hz`.
     #[must_use]
     pub fn builder(cutoff_hz: T) -> HighPassBuilder<N, T>
     where
-        IntegrationConfig<T>: Default,
+        DormandPrince54<T>: Default,
     {
         HighPassBuilder::new(cutoff_hz)
     }
+}
 
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> HighPass<N, T, I> {
     /// Returns the total filter's −3 dB cutoff frequency in hertz.
     #[must_use]
     pub const fn cutoff_hz(&self) -> T {
@@ -142,7 +155,7 @@ impl<const N: usize, T: Scalar> HighPass<N, T> {
     /// # Errors
     ///
     /// Returns [`UpdateError`] for invalid input or elapsed time, or if the
-    /// adaptive integration cannot finish safely. The filter is unchanged on
+    /// integration cannot finish safely. The filter is unchanged on
     /// error.
     pub fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {
         <Self as StreamingFilter>::update(self, input, dt_seconds)
@@ -179,7 +192,7 @@ impl<const N: usize, T: Scalar> HighPass<N, T> {
     }
 }
 
-impl<const N: usize, T: Scalar> StreamingFilter for HighPass<N, T> {
+impl<const N: usize, T: Scalar, I: Integrator<T, N>> StreamingFilter for HighPass<N, T, I> {
     type Scalar = T;
 
     fn update(&mut self, input: T, dt_seconds: T) -> Result<T, UpdateError> {

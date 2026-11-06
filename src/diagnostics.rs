@@ -3,7 +3,7 @@ use crate::solver::SolverDiagnostics;
 
 /// Work performed by the most recent successful filter update.
 ///
-/// The counters describe the adaptive integration work for one call to
+/// The counters describe the integration work for one call to
 /// `update`. They are observations rather than configuration: solver details
 /// may evolve without changing the filter's numerical contract.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -1,28 +1,81 @@
+use crate::integrator::private::IntegrationCandidate;
 use crate::model::ContinuousModel;
 use crate::scalar::from_f64;
-use crate::{IntegrationConfig, Scalar, UpdateError};
+use crate::{DormandPrince54, InputModel, Scalar, UpdateError};
 
-use super::InputSegment;
+use super::{InputSegment, SolverDiagnostics};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SolverDiagnostics<T> {
-    pub(crate) accepted_steps: usize,
-    pub(crate) rejected_steps: usize,
-    pub(crate) derivative_evaluations: usize,
-    pub(crate) smallest_accepted_step: Option<T>,
-    pub(crate) largest_accepted_step: Option<T>,
+#[derive(Clone, Copy, Debug)]
+pub struct DormandPrinceRuntime<T, const N: usize> {
+    pub(crate) policy: DormandPrince54<T>,
+    endpoint_derivative: Option<[T; N]>,
 }
 
-impl<T> SolverDiagnostics<T> {
-    const fn new() -> Self {
+impl<T: Scalar, const N: usize> DormandPrinceRuntime<T, N> {
+    pub(crate) fn new<M: ContinuousModel<T, N>>(
+        policy: DormandPrince54<T>,
+        model: &M,
+        state: &[T; N],
+        input: T,
+        input_model: InputModel,
+    ) -> Self {
         Self {
-            accepted_steps: 0,
-            rejected_steps: 0,
-            derivative_evaluations: 0,
-            smallest_accepted_step: None,
-            largest_accepted_step: None,
+            policy,
+            endpoint_derivative: linear_endpoint_derivative(model, state, input, input_model),
         }
     }
+
+    pub(crate) fn integrate<M: ContinuousModel<T, N>>(
+        &self,
+        model: &M,
+        initial_state: &[T; N],
+        input: InputSegment<T>,
+        input_model: InputModel,
+        normalized_duration: T,
+        time_scale: T,
+    ) -> Result<IntegrationCandidate<T, N, Self>, UpdateError> {
+        let mut max_normalized_step = model.max_normalized_step();
+        if let Some(max_step_seconds) = self.policy.max_step_seconds {
+            let configured = time_scale * max_step_seconds;
+            if !configured.is_finite() {
+                return Err(UpdateError::InvalidDeltaTime);
+            }
+            max_normalized_step = max_normalized_step.min(configured);
+        }
+
+        let outcome = integrate(
+            model,
+            initial_state,
+            input,
+            normalized_duration,
+            max_normalized_step,
+            self.policy,
+            self.endpoint_derivative,
+        )?;
+        Ok(IntegrationCandidate {
+            state: outcome.state,
+            runtime: Self {
+                policy: self.policy,
+                endpoint_derivative: matches!(input_model, InputModel::Linear)
+                    .then_some(outcome.endpoint_derivative),
+            },
+            diagnostics: outcome.diagnostics,
+        })
+    }
+}
+
+fn linear_endpoint_derivative<T: Scalar, M: ContinuousModel<T, N>, const N: usize>(
+    model: &M,
+    state: &[T; N],
+    input: T,
+    input_model: InputModel,
+) -> Option<[T; N]> {
+    if !matches!(input_model, InputModel::Linear) {
+        return None;
+    }
+    let mut derivative = [T::zero(); N];
+    model.derivative(state, input, &mut derivative);
+    Some(derivative)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -38,7 +91,7 @@ pub(crate) fn integrate<T: Scalar, M, const N: usize>(
     input: InputSegment<T>,
     normalized_duration: T,
     max_normalized_step: T,
-    config: IntegrationConfig<T>,
+    config: DormandPrince54<T>,
     initial_derivative: Option<[T; N]>,
 ) -> Result<IntegrationOutcome<T, N>, UpdateError>
 where
@@ -269,12 +322,12 @@ fn scaled_error<T: Scalar, const N: usize>(
     state: &[T; N],
     candidate: &[T; N],
     error: &[T; N],
-    config: IntegrationConfig<T>,
+    config: DormandPrince54<T>,
 ) -> T {
     let mut norm = T::zero();
     for index in 0..N {
-        let scale = config.tolerances.absolute
-            + config.tolerances.relative * state[index].abs().max(candidate[index].abs());
+        let scale = config.absolute_tolerance
+            + config.relative_tolerance * state[index].abs().max(candidate[index].abs());
         let component = error[index].abs() / scale;
         if component > norm {
             norm = component;
@@ -377,7 +430,7 @@ mod tests {
             InputSegment::new(0.0, 1.0, InputModel::CurrentHold),
             duration,
             1.0 / rate,
-            IntegrationConfig::default(),
+            DormandPrince54::default(),
             None,
         )
         .unwrap()
@@ -389,7 +442,7 @@ mod tests {
     #[test]
     fn cached_linear_endpoint_matches_fresh_derivative_evaluation() {
         let model = RepeatedPole::<f64>::new(1);
-        let config = IntegrationConfig::default();
+        let config = DormandPrince54::default();
         let first = integrate(
             &model,
             &[0.0],
@@ -431,9 +484,10 @@ mod tests {
     #[test]
     fn rejected_attempt_reuses_the_unchanged_start_derivative() {
         let model = RepeatedPole::<f64>::new(1);
-        let config = IntegrationConfig {
-            tolerances: crate::Tolerances::new(1.0e-14, 1.0e-14),
-            ..IntegrationConfig::default()
+        let config = DormandPrince54 {
+            absolute_tolerance: 1.0e-14,
+            relative_tolerance: 1.0e-14,
+            ..DormandPrince54::default()
         };
         let outcome = integrate(
             &model,
@@ -493,9 +547,9 @@ mod tests {
     #[test]
     fn work_budget_does_not_discard_unintegrated_time() {
         let model = RepeatedPole::<f64>::new(1);
-        let config = IntegrationConfig {
+        let config = DormandPrince54 {
             max_step_attempts: 1,
-            ..IntegrationConfig::default()
+            ..DormandPrince54::default()
         };
         let result = integrate(
             &model,
