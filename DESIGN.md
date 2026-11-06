@@ -225,6 +225,27 @@ clamped or partially committed. Constant input at exact equilibrium is a safe
 fast path for every finite elapsed interval whose normalized duration remains
 representable; duration validation intentionally precedes the shortcut.
 
+Classical fourth-order Runge–Kutta is the bounded fixed-step alternative. Its
+public `max_step_seconds` is required because the method has no local-error
+estimator; it is an application accuracy choice. A model-derived stability
+limit may reduce the step further. The models bound normalized steps by the
+inverse magnitude of their fastest pole, so every scaled pole satisfies
+`|h*p| <= 1` in the left half-plane. This lies inside classical RK4's stability
+region, as seen from its stability polynomial
+`R(z) = 1 + z + z^2/2 + z^3/6 + z^4/24`. The bound protects stability, not
+application accuracy.
+
+Each accepted step performs four derivative evaluations,
+rejection-by-error-control never occurs, and `max_steps` bounds the work needed
+to cover one complete sample interval. The required count is computed first;
+steps then use equal endpoints derived from the original interval, avoiding a
+floating-point residual at exact budget boundaries. A quotient no more than
+eight machine epsilons above its lower integer is treated as that integer. A
+materially larger interval still requires another step. Separately, subtracting
+equal endpoints can make an individual represented step differ slightly from
+the target cap by rounding at the full-interval scale, especially for `f32`.
+Exhausting the budget rejects the whole update transactionally.
+
 Forward Euler exists only in tests for convergence and comparison. It is not
 an accuracy oracle or public backend.
 
@@ -264,7 +285,9 @@ updates preserve the preceding snapshot transactionally.
    identified soft-float integration cost as the next product issue. ◐
 9. Evaluate a bounded MCU-oriented integration path against the existing RK45
    contract, a fixed-step RK4 reference, and a fixed-rate digital IIR. ◐ Fixed
-   RK4 established a substantially faster ceiling but has no error estimate.
+   RK4 established a substantially faster ceiling and is now selectable with
+   an explicit application-owned accuracy step cap; target remeasurement of
+   the public implementation remains.
    RK23 was slower at production tolerances but materially faster at relaxed
    tolerances on ordinary soft-float MCU intervals; relaxed Dormand--Prince was
    better for long gaps. Euler--Heun was rejected, Dormand--Prince FSAL saved

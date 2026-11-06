@@ -1,8 +1,10 @@
 mod dopri5;
 mod input;
+mod rk4;
 
 pub(crate) use dopri5::DormandPrinceRuntime;
 pub(crate) use input::InputSegment;
+pub(crate) use rk4::RungeKutta4Runtime;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverDiagnostics<T> {

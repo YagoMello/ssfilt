@@ -2,7 +2,7 @@ use approx::assert_relative_eq;
 use ssfilt::{
     BandPass, BuildError, DormandPrince54, HighPass, InputModel, IntegrationDiagnostics,
     Integrator, LowPass, MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, ResetError, Response,
-    StreamingFilter, UpdateError,
+    RungeKutta4, StreamingFilter, UpdateError,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -61,6 +61,307 @@ fn integrator_trait_supports_external_generic_callers() {
 
     let output = update_with_integrator(&mut filter, 1.0, 0.01).unwrap();
     assert!(output.is_finite());
+}
+
+#[test]
+fn fixed_runge_kutta_is_selectable_for_every_topology() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.001_f32,
+        max_steps: 64,
+    };
+    let mut low_pass = LowPass::<2, f32>::builder(20.0)
+        .integrator(policy)
+        .build()
+        .unwrap();
+    let mut high_pass = HighPass::<2, f32>::builder(20.0)
+        .integrator(policy)
+        .build()
+        .unwrap();
+    let mut band_pass = BandPass::<4, f32>::builder(10.0, 40.0)
+        .integrator(policy)
+        .build()
+        .unwrap();
+
+    for output in [
+        low_pass.update(1.0, 0.002).unwrap(),
+        high_pass.update(1.0, 0.002).unwrap(),
+        band_pass.update(1.0, 0.002).unwrap(),
+    ] {
+        assert!(output.is_finite());
+    }
+}
+
+#[test]
+fn fixed_runge_kutta_matches_a_first_order_step_and_reports_work() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.005_f64,
+        max_steps: 64,
+    };
+    let mut filter = LowPass::<1>::builder(3.0)
+        .input_model(InputModel::CurrentHold)
+        .integrator(policy)
+        .build()
+        .unwrap();
+
+    let actual = filter.update(1.0, 0.012).unwrap();
+    let expected = 1.0 - (-core::f64::consts::TAU * 3.0 * 0.012).exp();
+    assert_relative_eq!(actual, expected, epsilon = 2.0e-7);
+
+    let diagnostics = filter.last_diagnostics();
+    assert_eq!(diagnostics.accepted_steps(), 3);
+    assert_eq!(diagnostics.rejected_steps(), 0);
+    assert_eq!(diagnostics.derivative_evaluations(), 12);
+    assert_relative_eq!(
+        diagnostics.smallest_accepted_step_seconds().unwrap(),
+        0.004,
+        epsilon = 1.0e-15
+    );
+    assert_relative_eq!(
+        diagnostics.largest_accepted_step_seconds().unwrap(),
+        0.004,
+        epsilon = 1.0e-15
+    );
+}
+
+#[test]
+fn fixed_runge_kutta_rejects_invalid_configuration() {
+    for policy in [
+        RungeKutta4 {
+            max_step_seconds: 0.0,
+            max_steps: 64,
+        },
+        RungeKutta4 {
+            max_step_seconds: f64::NAN,
+            max_steps: 64,
+        },
+        RungeKutta4 {
+            max_step_seconds: 0.001,
+            max_steps: 0,
+        },
+    ] {
+        assert!(matches!(
+            LowPass::<2>::builder(20.0).integrator(policy).build(),
+            Err(BuildError::InvalidIntegrationConfig)
+        ));
+    }
+}
+
+#[test]
+fn fixed_runge_kutta_budget_failure_is_transactional() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.001_f64,
+        max_steps: 2,
+    };
+    let mut tested = LowPass::<2>::builder(20.0)
+        .input_model(InputModel::Linear)
+        .integrator(policy)
+        .build()
+        .unwrap();
+    tested.update(0.25, 0.001).unwrap();
+    let mut untouched = tested;
+
+    assert_eq!(
+        tested.update(1.0, 0.01),
+        Err(UpdateError::StepBudgetExceeded)
+    );
+    assert_eq!(
+        tested.update(-0.5, 0.001).unwrap(),
+        untouched.update(-0.5, 0.001).unwrap()
+    );
+    assert_eq!(tested.last_diagnostics(), untouched.last_diagnostics());
+}
+
+fn assert_rk4_tracks_reference<A, B>(mut reference: A, mut fixed: B, tolerance: f64)
+where
+    A: StreamingFilter<Scalar = f64>,
+    B: StreamingFilter<Scalar = f64>,
+{
+    let samples = [0.3, 1.0, -0.4, 0.7, -0.9, 0.2, 0.8, -0.1];
+    let intervals = [
+        0.000_7, 0.001_3, 0.002_1, 0.000_4, 0.001_8, 0.000_9, 0.002_4, 0.000_6,
+    ];
+    for (input, dt) in samples.into_iter().zip(intervals) {
+        let expected = reference.update(input, dt).unwrap();
+        let actual = fixed.update(input, dt).unwrap();
+        assert_relative_eq!(actual, expected, epsilon = tolerance);
+    }
+}
+
+#[test]
+fn fixed_runge_kutta_tracks_adaptive_reference_for_representative_filters() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.001,
+        max_steps: 8,
+    };
+
+    assert_rk4_tracks_reference(
+        LowPass::<4>::builder(20.0)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap(),
+        LowPass::<4>::builder(20.0)
+            .response(Response::Butterworth)
+            .integrator(policy)
+            .build()
+            .unwrap(),
+        1.0e-4,
+    );
+    assert_rk4_tracks_reference(
+        HighPass::<4>::builder(20.0)
+            .response(Response::Chebyshev1 { ripple_db: 0.5 })
+            .build()
+            .unwrap(),
+        HighPass::<4>::builder(20.0)
+            .response(Response::Chebyshev1 { ripple_db: 0.5 })
+            .integrator(policy)
+            .build()
+            .unwrap(),
+        1.0e-4,
+    );
+    assert_rk4_tracks_reference(
+        BandPass::<4>::builder(10.0, 40.0)
+            .response(Response::Bessel)
+            .build()
+            .unwrap(),
+        BandPass::<4>::builder(10.0, 40.0)
+            .response(Response::Bessel)
+            .integrator(policy)
+            .build()
+            .unwrap(),
+        1.0e-4,
+    );
+}
+
+fn first_order_rk4_error(max_step_seconds: f64) -> f64 {
+    let cutoff_hz = 3.0;
+    let dt = 0.05;
+    let mut filter = LowPass::<1>::builder(cutoff_hz)
+        .input_model(InputModel::CurrentHold)
+        .integrator(RungeKutta4 {
+            max_step_seconds,
+            max_steps: 128,
+        })
+        .build()
+        .unwrap();
+    let actual = filter.update(1.0, dt).unwrap();
+    let expected = 1.0 - (-core::f64::consts::TAU * cutoff_hz * dt).exp();
+    (actual - expected).abs()
+}
+
+#[test]
+fn fixed_runge_kutta_exhibits_fourth_order_convergence_and_f32_accuracy() {
+    let coarse = first_order_rk4_error(0.01);
+    let medium = first_order_rk4_error(0.005);
+    let fine = first_order_rk4_error(0.0025);
+    assert!(coarse / medium > 12.0, "coarse={coarse}, medium={medium}");
+    assert!(medium / fine > 12.0, "medium={medium}, fine={fine}");
+
+    let cutoff_hz = 3.0_f32;
+    let dt = 0.012_f32;
+    let mut filter = LowPass::<1, f32>::builder(cutoff_hz)
+        .input_model(InputModel::CurrentHold)
+        .integrator(RungeKutta4 {
+            max_step_seconds: 0.001,
+            max_steps: 16,
+        })
+        .build()
+        .unwrap();
+    let actual = filter.update(1.0, dt).unwrap();
+    let expected = 1.0 - (-core::f32::consts::TAU * cutoff_hz * dt).exp();
+    assert_relative_eq!(actual, expected, epsilon = 2.0e-6);
+}
+
+#[test]
+fn fixed_runge_kutta_model_cap_handles_narrow_and_wide_band_passes() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.1,
+        max_steps: 1_024,
+    };
+    for (lower, upper, dt) in [(55.0, 65.0, 0.01), (1.0, 1_000.0, 0.005)] {
+        let mut reference = BandPass::<4>::builder(lower, upper)
+            .response(Response::Butterworth)
+            .input_model(InputModel::CurrentHold)
+            .build()
+            .unwrap();
+        let mut fixed = BandPass::<4>::builder(lower, upper)
+            .response(Response::Butterworth)
+            .input_model(InputModel::CurrentHold)
+            .integrator(policy)
+            .build()
+            .unwrap();
+
+        let expected = reference.update(1.0, dt).unwrap();
+        let actual = fixed.update(1.0, dt).unwrap();
+        assert_relative_eq!(actual, expected, epsilon = 2.0e-3);
+        assert!(
+            fixed
+                .last_diagnostics()
+                .largest_accepted_step_seconds()
+                .unwrap()
+                < policy.max_step_seconds
+        );
+    }
+}
+
+#[test]
+fn fixed_runge_kutta_previous_hold_high_pass_preserves_endpoint_semantics() {
+    let policy = RungeKutta4 {
+        max_step_seconds: 0.001,
+        max_steps: 64,
+    };
+    let mut reference = HighPass::<4>::builder(20.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::PreviousHold)
+        .build()
+        .unwrap();
+    let mut fixed = HighPass::<4>::builder(20.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::PreviousHold)
+        .integrator(policy)
+        .build()
+        .unwrap();
+
+    assert_relative_eq!(
+        fixed.update(1.0, 0.002).unwrap(),
+        reference.update(1.0, 0.002).unwrap(),
+        epsilon = 1.0e-12
+    );
+    assert_relative_eq!(
+        fixed.update(0.5, 0.003).unwrap(),
+        reference.update(0.5, 0.003).unwrap(),
+        epsilon = 2.0e-5
+    );
+    assert!(fixed.last_diagnostics().derivative_evaluations() > 0);
+}
+
+#[test]
+fn fixed_runge_kutta_one_step_audio_workload_has_bounded_reference_error() {
+    const CUTOFF_HZ: f64 = 1_000.0;
+    const DT: f64 = 1.0 / 48_000.0;
+    const INPUTS: [f64; 8] = [0.8, -0.3, 1.0, -0.9, 0.2, 0.6, -0.7, 0.1];
+
+    let mut reference = LowPass::<4>::builder(CUTOFF_HZ)
+        .response(Response::Butterworth)
+        .build()
+        .unwrap();
+    let mut fixed = LowPass::<4>::builder(CUTOFF_HZ)
+        .response(Response::Butterworth)
+        .integrator(RungeKutta4 {
+            max_step_seconds: DT,
+            max_steps: 1,
+        })
+        .build()
+        .unwrap();
+    let mut max_error = 0.0_f64;
+
+    for index in 0..4_096 {
+        let input = INPUTS[index % INPUTS.len()];
+        let expected = reference.update(input, DT).unwrap();
+        let actual = fixed.update(input, DT).unwrap();
+        max_error = max_error.max((actual - expected).abs());
+    }
+
+    assert!(max_error < 2.0e-5, "maximum error was {max_error}");
 }
 
 #[test]

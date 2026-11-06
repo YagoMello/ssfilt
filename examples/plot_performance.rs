@@ -12,7 +12,10 @@ use std::time::Instant;
 use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
-use ssfilt::{BandPass, DormandPrince54, HighPass, InputModel, LowPass, Response, StreamingFilter};
+use ssfilt::{
+    BandPass, DormandPrince54, HighPass, InputModel, LowPass, Response, RungeKutta4,
+    StreamingFilter,
+};
 
 const CUTOFF_HZ: f64 = 1_000.0;
 const DT_SECONDS: f64 = 1.0 / (8.0 * CUTOFF_HZ);
@@ -65,12 +68,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     draw_panel(
         &panels[1],
-        "RK45 settings & input model",
+        "Integration policy & input model",
         &integrator_cases,
         RGBColor(36, 157, 92),
     )?;
     root.draw(&Text::new(
-        "Lower is faster. Host-local indicative timings, not a portable benchmark; only RK45 is currently implemented.",
+        "Lower is faster. Host-local indicative timings, not a portable benchmark; RK4 accuracy depends on its step cap.",
         (48, 804), ("sans-serif", 17).into_font().color(&RGBColor(90, 100, 110)),
     ))?;
     root.present()?;
@@ -140,6 +143,16 @@ fn integrator_cases() -> Result<Vec<Timing>, Box<dyn Error>> {
     };
     let integrator_cases = vec![
         timing("RK45 default / linear", base)?,
+        timing(
+            "RK4 cap = Δt / linear",
+            LowPass::<4>::builder(CUTOFF_HZ)
+                .response(Response::Butterworth)
+                .integrator(RungeKutta4 {
+                    max_step_seconds: DT_SECONDS,
+                    max_steps: 64,
+                })
+                .build()?,
+        )?,
         timing(
             "RK45 loose / linear",
             LowPass::<4>::builder(CUTOFF_HZ)

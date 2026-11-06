@@ -40,6 +40,25 @@ pub struct DormandPrince54<T> {
     pub max_step_attempts: usize,
 }
 
+/// Fixed-step classical fourth-order Runge–Kutta integration.
+///
+/// This policy performs four derivative evaluations per internal step and has
+/// no error estimator. `max_step_seconds` is therefore an application accuracy
+/// choice, not merely a work limit. The private model stability bound may
+/// subdivide the interval further. Step scheduling permits only a small
+/// machine-epsilon allowance at an exact floating-point cap boundary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RungeKutta4<T> {
+    /// Target upper bound for each internal integration step, in seconds.
+    ///
+    /// Equal-step endpoints cover the complete represented interval. Their
+    /// subtraction can differ slightly from this target through floating-point
+    /// rounding, particularly when many `f32` steps are required.
+    pub max_step_seconds: T,
+    /// Maximum number of internal steps used to cover one sample interval.
+    pub max_steps: usize,
+}
+
 impl Default for DormandPrince54<f32> {
     fn default() -> Self {
         Self {
@@ -193,5 +212,48 @@ impl<T: Scalar, const N: usize> private::IntegratorImpl<T, N> for DormandPrince5
             normalized_duration,
             time_scale,
         )
+    }
+}
+
+impl<T: Scalar, const N: usize> private::IntegratorImpl<T, N> for RungeKutta4<T> {
+    type Runtime = crate::solver::RungeKutta4Runtime<T>;
+
+    fn is_valid(self, _token: private::Token) -> bool {
+        self.max_step_seconds.is_finite() && self.max_step_seconds > T::zero() && self.max_steps > 0
+    }
+
+    fn into_runtime<M: ContinuousModel<T, N>>(
+        self,
+        _token: private::Token,
+        _model: &M,
+        _state: &[T; N],
+        _input: T,
+        _input_model: InputModel,
+    ) -> Self::Runtime {
+        crate::solver::RungeKutta4Runtime::new(self)
+    }
+
+    fn reset_runtime<M: ContinuousModel<T, N>>(
+        _token: private::Token,
+        runtime: &Self::Runtime,
+        _model: &M,
+        _state: &[T; N],
+        _input: T,
+        _input_model: InputModel,
+    ) -> Self::Runtime {
+        *runtime
+    }
+
+    fn integrate<M: ContinuousModel<T, N>>(
+        _token: private::Token,
+        runtime: &Self::Runtime,
+        model: &M,
+        initial_state: &[T; N],
+        input: InputSegment<T>,
+        _input_model: InputModel,
+        normalized_duration: T,
+        time_scale: T,
+    ) -> Result<private::IntegrationCandidate<T, N, Self::Runtime>, UpdateError> {
+        runtime.integrate(model, initial_state, input, normalized_duration, time_scale)
     }
 }

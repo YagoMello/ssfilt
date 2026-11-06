@@ -85,8 +85,8 @@ impl<T: Scalar, const N: usize> ContinuousModel<T, N> for Butterworth<T, N> {
 
     fn max_normalized_step(&self) -> T {
         // Every normalized Butterworth pole has unit magnitude. Keeping the
-        // step below one is conservative for Dormand-Prince and lightly damped
-        // sections alike.
+        // step below one is conservative for the supported explicit methods
+        // and lightly damped sections alike.
         T::one()
     }
 }

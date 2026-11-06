@@ -4,7 +4,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use ssfilt::{BandPass, HighPass, InputModel, LowPass, Response};
+use ssfilt::{BandPass, HighPass, InputModel, LowPass, Response, RungeKutta4};
 
 const CUTOFF_HZ: f64 = 1_000.0;
 const AUDIO_SAMPLE_INTERVAL: f64 = 1.0 / 48_000.0;
@@ -120,6 +120,46 @@ fn adaptive_work(criterion: &mut Criterion) {
     group.finish();
 }
 
+fn integration_methods(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("streaming/integrator");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("dormand-prince-54/default-tolerance", |bencher| {
+        let mut filter = LowPass::<4>::builder(CUTOFF_HZ)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap();
+        let mut index = 0;
+        bencher.iter(|| {
+            index = (index + 1) % INPUTS.len();
+            black_box(
+                filter
+                    .update(black_box(INPUTS[index]), black_box(AUDIO_SAMPLE_INTERVAL))
+                    .unwrap(),
+            )
+        });
+    });
+    group.bench_function("runge-kutta-4/one-step-cap", |bencher| {
+        let mut filter = LowPass::<4>::builder(CUTOFF_HZ)
+            .response(Response::Butterworth)
+            .integrator(RungeKutta4 {
+                max_step_seconds: AUDIO_SAMPLE_INTERVAL,
+                max_steps: 64,
+            })
+            .build()
+            .unwrap();
+        let mut index = 0;
+        bencher.iter(|| {
+            index = (index + 1) % INPUTS.len();
+            black_box(
+                filter
+                    .update(black_box(INPUTS[index]), black_box(AUDIO_SAMPLE_INTERVAL))
+                    .unwrap(),
+            )
+        });
+    });
+    group.finish();
+}
+
 fn topologies(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("streaming/topology");
     group.throughput(Throughput::Elements(1));
@@ -176,6 +216,7 @@ criterion_group!(
     order_scaling,
     input_models,
     adaptive_work,
+    integration_methods,
     topologies
 );
 criterion_main!(benches);

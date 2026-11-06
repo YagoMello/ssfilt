@@ -10,11 +10,11 @@ band-pass filters with four response families:
 
 - repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
-- adaptive Dormand-Prince 5(4) integration;
+- adaptive Dormand–Prince 5(4) and fixed-step classical RK4 integration;
 - linear, previous-value hold, and current-value hold input models;
 - `f32`, `f64`, `no_std`, and allocation-free operation;
 - transactional errors and explicit steady-state reset;
-- per-update integration diagnostics for observing adaptive work.
+- per-update integration diagnostics for observing numerical work.
 
 Explore the filters in the
 [interactive browser playground](https://yagomello.github.io/ssfilt/), or use
@@ -281,7 +281,14 @@ validated. Precision-specific integration defaults live in
 
 Dormand–Prince 5(4) remains the default, so the ordinary builder requires no
 integration configuration. Advanced callers can replace its public policy
-value while keeping the same static, allocation-free filter:
+value while keeping the same static, allocation-free filter.
+
+| Policy | Best fit | Primary controls |
+| --- | --- | --- |
+| `DormandPrince54<T>` | General irregular timing and automatic local-error control | absolute/relative tolerances, optional step cap, attempt budget |
+| `RungeKutta4<T>` | Lower, predictable work after validating a fixed step cap for the application | required step cap, step budget |
+
+To tune the adaptive default:
 
 ```rust
 use ssfilt::{DormandPrince54, LowPass};
@@ -301,9 +308,29 @@ let filter = LowPass::<4, f32>::builder(20.0)
 ```
 
 These tolerances control local state error; they are not direct output-error
-percentages. Every policy validates its own meaningful settings during
-`build()`. Numerical execution, models, and method-specific runtime caches
-remain private.
+percentages. Fixed-step RK4 instead requires an explicit maximum physical step:
+
+```rust
+use ssfilt::{LowPass, RungeKutta4};
+
+let policy = RungeKutta4 {
+    max_step_seconds: 0.000_25_f32,
+    max_steps: 64,
+};
+
+let filter = LowPass::<4, f32>::builder(20.0)
+    .integrator(policy)
+    .build()?;
+# let _ = filter;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+RK4 performs four derivative evaluations per step but does not estimate its
+error. Choose its target step cap from representative signal and gap tests; the
+model may subdivide further for stability. If `max_steps` cannot cover the complete
+elapsed interval, the update fails transactionally instead of discarding time.
+Every policy validates its own meaningful settings during `build()`.
+Numerical execution, models, and method-specific runtime storage remain private.
 
 During prerelease development this replaced `IntegrationConfig`, the nested
 `Tolerances` value, and `.integration(config)`. Advanced callers migrate by
@@ -362,8 +389,9 @@ equivalent filters: `ssfilt` is paying for measured elapsed-time integration,
 explicit input reconstruction, adaptive error control, and transactional
 failure. If the signal is truly fixed-rate and those contracts are unnecessary,
 a conventional digital IIR or moving average is usually the better embedded
-choice. Private experiments also found an 83--90 us relaxed RK23 path and a
-roughly 50 us fixed-RK4 ceiling, but neither is currently a selectable backend.
+choice. Private experiments also found an 83--90 us relaxed RK23 path. Fixed
+RK4's roughly 50 us research result motivated the selectable `RungeKutta4`
+policy; its accuracy still depends on the application-selected step cap.
 See [MCU performance and integrator findings](docs/mcu-performance.md) for the
 workload, host-FPU comparison, tolerance caveats, and alternatives that were
 evaluated.
@@ -436,10 +464,9 @@ high-order marker from blocking the plot. Such points remain in CSV with an
 explicit work-limit status and no fabricated measurement.
 
 The performance SVG is intentionally separate: it shows indicative median
-host timings for order-four response families/topologies and RK45 tolerance,
-step-cap, and input-reconstruction settings. There is no second production
-integrator to compare yet. Timings depend on the host and load and should not
-be treated as portable benchmarks.
+host timings for order-four response families/topologies, adaptive RK45
+settings, fixed RK4, and input reconstruction. Timings depend on the host and
+load and should not be treated as portable benchmarks.
 
 The GitHub Pages playground is built from `site/`. To run the same WebAssembly
 adapter and uPlot interface locally:

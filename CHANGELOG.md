@@ -17,6 +17,8 @@ The first public field-test release.
   irregular sample intervals.
 - Adaptive Dormand–Prince integration with transactional failures, bounded
   work, steady-state initialization and reset, and per-update diagnostics.
+- Selectable fixed-step classical RK4 for applications that can validate an
+  explicit accuracy step cap and prefer lower, predictable numerical work.
 - Validated `f32` and `f64` operation, including `no_std` builds through the
   `libm` feature.
 - Runnable examples and development tools for inspecting frequency, phase,

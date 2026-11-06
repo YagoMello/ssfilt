@@ -25,11 +25,12 @@ and was not subtracted.
 | fixed-rate Butterworth biquad O2 | 11 us | 1.1% |
 | 64-sample rolling `f32` average | 7 us | 0.7% |
 
-These rows do not have identical behavior. The RK23 implementation and RK4 row
-are private research prototypes, not selectable production backends. The
-fixed-rate filters do not use the measured interval, reconstruct the signal
-between samples, or adapt work to a local-error tolerance. They are useful
-references for the price of those contracts, not drop-in numerical
+These rows do not have identical behavior. The RK23 implementation remains a
+private research prototype. The RK4 measurement predates the public
+`RungeKutta4` policy and should be remeasured, but it uses the same classical
+four-stage method that motivated that policy. The fixed-rate filters do not use
+the measured interval or reconstruct the signal between samples. They are
+useful references for the price of those contracts, not drop-in numerical
 equivalents.
 
 The two relaxed presets were `(absolute, relative) = (1e-4, 1e-2)` and
@@ -52,9 +53,10 @@ sample interval.
   acceptable replacement.
 - Fixed-step classical RK4 established a useful ceiling of roughly 49--50
   us/update with small error on the nominal order-two workload. It does not
-  honor the configured tolerance and requires a conservative subdivision
-  policy for demanding responses and long gaps, so it remains a research
-  reference rather than a production backend.
+  honor an error tolerance and requires a validated step cap for demanding
+  responses and long gaps. This evidence motivated the public `RungeKutta4`
+  policy; the recorded target number remains a historical research measurement
+  until the public implementation is remeasured.
 - Adaptive RK23 at the production tolerance was much slower than
   Dormand--Prince because its lower order required many more attempts. At the
   relaxed 1% and 5% presets it took about 90 and 83 us/update on ordinary
@@ -77,9 +79,10 @@ sample interval.
   nothing, and a narrow 55--65 Hz band-pass became about 43% slower. A broad or
   hidden topology-specific rollout was therefore rejected.
 
-There is currently one production integrator: Dormand--Prince 5(4). The public
-sealed policy interface selects and configures it statically, but no alternative
-method is public until one demonstrates a distinct, validated workload benefit.
+The sealed public policy interface statically selects adaptive Dormand--Prince
+5(4) or fixed-step classical RK4. Dormand--Prince remains the general default;
+RK4 is the explicit lower-work choice when the application can validate a
+physical step cap against its signals, gaps, topology, and response.
 
 ## Hardware-FPU host reference
 
@@ -96,21 +99,21 @@ These host figures include construction amortized across each 4,096-update
 stream and are indicative rather than a portable guarantee. The fixed-rate
 filters implement different responses and timing semantics.
 
-## Accuracy profiles under consideration
+## Choosing an integration policy
 
-The measurements justify investigating an ergonomic performance choice, but
-not publishing `Low`, `Medium`, and `High` as if they were universal output
-accuracy guarantees. A preset changes local state-error tolerance, while a
-backend change also changes stage count, stability, long-gap behavior, and
-failure risk.
+The measurements do not justify publishing `Low`, `Medium`, and `High` as if
+they were universal output-accuracy guarantees. A tolerance changes local
+state-error control, while a backend change also changes stage count,
+stability, long-gap behavior, and failure risk.
 
 Before adding a public profile, compare a small representative matrix of
 low-, high-, and band-pass filters, ordinary and long intervals, and `f32` and
 `f64`. A useful interface must state whether it offers fixed effort or adaptive
 error control, retain complete-interval and transactional-failure semantics,
 and give diagnostics enough context to explain the work performed. The
-`DormandPrince54` remains the honest custom path in the meantime; its public
-fields name the local-error tolerances and work limits directly.
+`DormandPrince54` names its local-error tolerances and work limits directly.
+`RungeKutta4` instead requires `max_step_seconds` and `max_steps`, making the
+lack of automatic error estimation explicit.
 
 ## Equilibrium shortcut
 

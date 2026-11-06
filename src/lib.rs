@@ -76,7 +76,7 @@ pub use config::InputModel;
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use high_pass::{HighPass, HighPassBuilder};
-pub use integrator::{DormandPrince54, Integrator};
+pub use integrator::{DormandPrince54, Integrator, RungeKutta4};
 pub use low_pass::{LowPass, LowPassBuilder};
 pub use response::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
 pub use scalar::Scalar;
