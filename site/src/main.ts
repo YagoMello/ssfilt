@@ -109,6 +109,9 @@ const ui = {
   integrator: getElement<HTMLSelectElement>("integrator"),
   integratorSummary: getElement<HTMLElement>("integrator-summary"),
   integratorHint: getElement<HTMLParagraphElement>("integrator-hint"),
+  numericsDisclosure: getElement<HTMLElement>("numerics-disclosure"),
+  numericsToggle: getElement<HTMLButtonElement>("numerics-toggle"),
+  numericsContent: getElement<HTMLDivElement>("numerics-content"),
   rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
   rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
   rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
@@ -393,6 +396,14 @@ function updateIntegratorControls(): void {
   updateRk4DataHint();
 }
 
+function toggleNumerics(): void {
+  const expanded = ui.numericsToggle.getAttribute("aria-expanded") !== "true";
+  ui.numericsToggle.setAttribute("aria-expanded", String(expanded));
+  ui.numericsContent.setAttribute("aria-hidden", String(!expanded));
+  ui.numericsContent.toggleAttribute("inert", !expanded);
+  ui.numericsDisclosure.classList.toggle("is-open", expanded);
+}
+
 function updateRk4DataHint(): void {
   if (!loadedCsv) {
     ui.rk4DataHint.textContent = "The step budget must cover your longest expected sample interval; the model may subdivide further.";
@@ -405,8 +416,11 @@ function updateRk4DataHint(): void {
   const budget = Number(ui.rk4MaxSteps.value);
   if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) return;
   const capMinimum = Math.ceil(longest / stepSeconds - 8 * Number.EPSILON);
-  ui.rk4DataHint.textContent = `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. The selected cap alone needs at least ${capMinimum.toLocaleString()} steps; the model may need more.`;
-  ui.rk4DataHint.classList.toggle("is-warning", Number.isFinite(budget) && capMinimum > budget);
+  const provablyInsufficient = Number.isFinite(budget) && capMinimum > budget;
+  ui.rk4DataHint.textContent = provablyInsufficient
+    ? `Too few steps for the timestamps alone: the ${shortNumber(longest * 1_000, 4)} ms longest interval needs at least ${capMinimum.toLocaleString()}. The filter model may require more.`
+    : `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. The step cap alone needs at least ${capMinimum.toLocaleString()} steps; the filter model may still require more.`;
+  ui.rk4DataHint.classList.toggle("is-warning", provablyInsufficient);
 }
 
 function showError(message: string): void {
@@ -484,7 +498,7 @@ function validateConfiguration(): ResponseConfig | undefined {
       return undefined;
     }
     if (!Number.isInteger(maxSteps) || maxSteps <= 0) {
-      showError("RK4 steps per interval must be a positive integer.");
+      showError("RK4 max steps per interval must be a positive integer.");
       return undefined;
     }
     config.rk4_max_step_seconds = maxStepMilliseconds / 1_000;
@@ -1084,10 +1098,10 @@ function showFilterResult(): void {
   if (firstReveal) replayReveal(ui.filteredContent);
 }
 
-function showCsvError(message: string): void {
+function showCsvError(message: string, status = "CSV was not applied."): void {
   ui.csvError.textContent = message;
   ui.csvError.hidden = false;
-  ui.csvStatus.textContent = "CSV was not applied.";
+  ui.csvStatus.textContent = status;
   ui.csvStatus.classList.add("is-error");
 }
 
@@ -1257,12 +1271,14 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     showFilterPlaceholder("The startup state needs attention", "Correct the initial condition to filter these samples.");
     return;
   }
+  const previousResult = filterResult;
   const preservesDisplayedResult = filterResult !== undefined
     && filterPlot !== undefined
     && !ui.filteredContent.hidden;
   if (!preservesDisplayedResult) {
     showFilterPlaceholder("Filtering your signal…", "Every irregular interval is being integrated with the active setup.");
   }
+  clearCsvError();
   ui.csvStatus.textContent = "Filtering every elapsed interval…";
 
   try {
@@ -1272,6 +1288,7 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     if (requestId !== filterRequestId) return;
     assertFilterShape(result);
     filterResult = result;
+    clearCsvError();
     ui.csvStatus.textContent = `${loadedCsv.rowCount.toLocaleString()} samples filtered successfully.`;
     showFilterResult();
     showDiagnostics(result);
@@ -1280,9 +1297,21 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     if (frequencyGuideOpen) await updateFrequencyGuide(config);
   } catch (error) {
     if (requestId !== filterRequestId) return;
-    filterResult = undefined;
-    showFilterPlaceholder("This signal could not be filtered", "Review the CSV and filter settings, then try again.");
-    showCsvError(`Could not filter this signal: ${error instanceof Error ? error.message : String(error)}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    const actionableReason = reason.includes("configured work budget")
+      ? `${reason}. Increase Max steps / interval, or increase Maximum step only if your accuracy checks allow it`
+      : reason;
+    if (preservesDisplayedResult && previousResult) {
+      filterResult = previousResult;
+      showCsvError(
+        `Could not apply this filter setup: ${actionableReason}. The chart still shows the last successful result.`,
+        "Filter change was not applied.",
+      );
+    } else {
+      filterResult = undefined;
+      showFilterPlaceholder("This signal could not be filtered", "Review the CSV and filter settings, then try again.");
+      showCsvError(`Could not filter this signal: ${actionableReason}`, "Signal was not filtered.");
+    }
   }
 }
 
@@ -1733,6 +1762,7 @@ ui.integrator.addEventListener("change", () => {
   updateIntegratorControls();
   scheduleResponseUpdate(0);
 });
+ui.numericsToggle.addEventListener("click", toggleNumerics);
 [ui.rk4MaxStep, ui.rk4MaxSteps].forEach((input) => input.addEventListener("input", () => {
   updateRk4DataHint();
   scheduleResponseUpdate();
