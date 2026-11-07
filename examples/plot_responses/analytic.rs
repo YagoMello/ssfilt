@@ -166,6 +166,7 @@ pub(super) fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f
     if points.len() == 1 && points[0].gain_db >= MAGNITUDE_FLOOR_DB {
         visible.push((points[0].ratio, points[0].gain_db));
     }
+    visible.dedup();
     visible
 }
 
