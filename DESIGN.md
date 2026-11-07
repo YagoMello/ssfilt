@@ -165,6 +165,48 @@ filters without polynomial expansion or complex arithmetic. Low-Q sections
 are placed first, and every constant input has exactly zero output at
 equilibrium.
 
+### Band-stop transformation
+
+Band-stop models use the same center frequency, fractional bandwidth, and
+normalized time as band-pass models, with the reciprocal substitution:
+
+```text
+z = beta*s/(s^2 + 1)
+```
+
+A real prototype pole with rate `r` becomes
+
+```text
+(s^2 + 1) / (s^2 + (beta/r)*s + 1).
+```
+
+For a quadratic prototype factor `z^2 + a*z + b`, the denominator is the
+band-pass denominator factorization applied to the reciprocal prototype
+coefficients `a/b` and `1/b`. This produces reciprocal-frequency real
+sections without complex root subtraction. Each resulting section is scaled
+to unity DC gain:
+
+```text
+H_i(s) = w_i^2*(s^2 + 1) / (s^2 + d_i*s + w_i^2)
+
+x' = v
+v' = w_i^2*(u - x) - d_i*v
+y  = u + (w_i^2 - 1)*(u - x) - d_i*v
+```
+
+The difference form makes `x = u`, `v = 0`, and `y = u` exact in floating
+point at every constant-input equilibrium. Within each reciprocal pair the
+lower-frequency section remains first, attenuating high-frequency internal
+signals before the second section restores the total unity gain. The final
+order is twice the prototype order and must be even.
+
+The two public edges map to the prototype's −3 dB frequency, while the
+geometric center maps to its infinite-frequency zero. Phase and group delay
+are undefined at that exact transmission zero. A Bessel-derived band-stop does
+not retain the low-pass prototype's maximally flat group delay at DC, so the
+response-family name describes the prototype rather than promising that
+transformed property.
+
 ## Sample timing contract
 
 `update(u_new, dt)` advances from the preceding sample to the new sample.

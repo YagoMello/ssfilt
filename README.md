@@ -5,8 +5,8 @@ irregularly sampled signals. Instead of designing a digital filter for one
 fixed sample rate, every update advances a normalized state-space model by the
 elapsed time supplied with that sample.
 
-The current milestone provides carefully tested low-pass, high-pass, and
-band-pass filters with four response families:
+The current milestone provides carefully tested low-pass, high-pass,
+band-pass, and band-stop filters with four response families:
 
 - repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
 - total-filter cutoff normalized to -3 dB;
@@ -91,8 +91,9 @@ is demonstrated separately in
   Try Bessel when preserving pulse or motion shape matters more than a sharp
   cutoff; use repeated-pole for a simple monotonic response. Chebyshev I
   trades passband ripple and more ringing for a sharper transition.
-- To remove slow baseline drift, use `HighPass`. To keep a frequency range
-  between two edges, use `BandPass` (with an even final order).
+- To remove slow baseline drift, use `HighPass`. To keep or reject a frequency
+  range between two edges, use `BandPass` or `BandStop` respectively; both use
+  an even final order.
 - Choose the input model based on what happened *between* timestamps, not on
   the sensor name. `PreviousHold` fits a value held until the next sample;
   `Linear` fits a smoothly changing estimate; `CurrentHold` treats the newly
@@ -152,6 +153,34 @@ the analog transformation doubles the prototype order, so `BandPass::<4>`
 uses a second-order low-pass prototype. The geometric center is available from
 `center_hz()`. Constant-input equilibrium has zero output. Bessel band-pass
 orders are supported through `MAX_BESSEL_BAND_PASS_ORDER` (currently 50).
+
+### Band-stop
+
+`BandStop`—also called band-reject—takes the rejected band's complete-response
+lower and upper −3 dB edges:
+
+```rust
+use ssfilt::{BandStop, Response};
+
+let mut filter = BandStop::<4>::builder(10.0, 40.0)
+    .response(Response::Butterworth)
+    .initial_input(0.0)
+    .build()?;
+
+let value = filter.update(1.0, 0.012)?;
+# assert!(value.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The final order is positive and even, and the analog transformation doubles
+the prototype order just as it does for `BandPass`. The ideal continuous
+response has a transmission zero at `center_hz()`, while DC and constant-input
+equilibrium pass unchanged. `BandStop` has direct feedthrough: with
+`PreviousHold`, the preceding sample drives the interval and the newly arriving
+sample participates in the returned endpoint output. Bessel-derived band-stop
+filters are supported through `MAX_BESSEL_BAND_STOP_ORDER` (currently 50), but
+the low-pass prototype's flat-delay property is not preserved by the band-stop
+frequency transformation.
 
 ### Runtime-selected order
 
@@ -221,21 +250,23 @@ application instead.
 ## Response families
 
 `Response::RepeatedPole` is the default and preserves the library's original
-design. Every pole is real and identical. The complete filter is normalized to
-the requested -3 dB cutoff.
+low-pass prototype. Every prototype pole is real and identical. The complete
+filter is normalized to the requested −3 dB cutoff or edges; frequency
+transformations do not leave those poles real or repeated in general.
 
 `Response::Butterworth` provides a maximally flat passband. It is realized as
 a cascade of normalized real first-/second-order continuous sections rather
 than an expanded denominator polynomial. Low-Q sections precede high-Q
 sections to reduce internal peaking.
 
-`Response::Bessel` provides maximally flat group delay at DC, prioritizing
-waveform shape and low transient ringing over transition sharpness. It uses
-prevalidated magnitude-normalized prototypes, also realized as real sections
-with unity DC gain. Bessel orders 1 through `MAX_BESSEL_ORDER` (currently 25)
-are supported; construction returns `BuildError::UnsupportedBesselOrder`
-beyond that limit. The bounded table avoids allocation and unreliable
-high-order polynomial root finding in user code.
+`Response::Bessel` selects a magnitude-normalized Bessel prototype. The
+low-pass response has maximally flat group delay at DC and prioritizes waveform
+shape over transition sharpness; frequency transformations do not generally
+preserve that property. Bessel prototype orders 1 through `MAX_BESSEL_ORDER`
+(currently 25) are supported; construction returns
+`BuildError::UnsupportedBesselOrder` beyond that limit. The bounded table
+avoids allocation and unreliable high-order polynomial root finding in user
+code.
 
 `Response::Chebyshev1 { ripple_db }` provides a steeper transition at the cost
 of equiripple passband gain and greater ringing. `ripple_db` is the peak-to-peak
@@ -271,6 +302,12 @@ is the center frequency, and their difference determines the bandwidth. The
 implementation factors the transformed model into real second-order sections
 without expanding a high-order polynomial or subtracting nearly equal complex
 roots.
+
+Band-stop responses use the reciprocal wideband transformation. Their two
+public cutoffs are complete-filter −3 dB points surrounding an ideal
+transmission zero at the geometric center. DC and infinite-frequency gain are
+unity. The implementation reuses the cancellation-resistant reciprocal-section
+factorization and keeps every section at exact constant-input equilibrium.
 
 ## Scalar types
 

@@ -2,8 +2,8 @@
 //!
 //! `ssfilt` advances a continuous-time filter model by the elapsed time supplied
 //! with each sample. It provides allocation-free [`LowPass`], [`HighPass`], and
-//! [`BandPass`] filters and supports `no_std`. This prerelease API is intended
-//! for field testing rather than a production-readiness claim.
+//! [`BandPass`] and [`BandStop`] filters and supports `no_std`. This prerelease
+//! API is intended for field testing rather than a production-readiness claim.
 //!
 //! # Quick start
 //!
@@ -34,6 +34,8 @@
 //!   feedthrough.
 //! - [`BandPass`] keeps a range between two complete-response −3 dB edges. Its
 //!   final order must be positive and even.
+//! - [`BandStop`] rejects a range between two complete-response −3 dB edges.
+//!   Its final order must be positive and even.
 //!
 //! Every public cutoff denotes the complete filter's −3 dB frequency. The
 //! [`Response`] selects repeated-pole, Butterworth, Bessel, or Chebyshev Type I
@@ -59,6 +61,7 @@ extern crate std;
 compile_error!("enable either the `std` or `libm` feature");
 
 mod band_pass;
+mod band_stop;
 mod config;
 mod diagnostics;
 mod error;
@@ -72,13 +75,16 @@ mod solver;
 mod streaming;
 
 pub use band_pass::{BandPass, BandPassBuilder};
+pub use band_stop::{BandStop, BandStopBuilder};
 pub use config::InputModel;
 pub use diagnostics::IntegrationDiagnostics;
 pub use error::{BuildError, ResetError, UpdateError};
 pub use high_pass::{HighPass, HighPassBuilder};
 pub use integrator::{DormandPrince54, Integrator, RungeKutta4};
 pub use low_pass::{LowPass, LowPassBuilder};
-pub use response::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
+pub use response::{
+    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER, Response,
+};
 pub use scalar::Scalar;
 
 /// Common behavior for a stateful streaming filter.

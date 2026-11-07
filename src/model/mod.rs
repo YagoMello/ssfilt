@@ -1,4 +1,5 @@
 mod band_pass;
+mod band_stop;
 mod band_transform;
 mod bessel;
 mod bessel_table;
@@ -25,4 +26,5 @@ pub trait ContinuousModel<T: Scalar, const N: usize> {
     fn max_normalized_step(&self) -> T;
 }
 pub(crate) use band_pass::BandPassModel;
+pub(crate) use band_stop::BandStopModel;
 pub(crate) use bessel::Bessel;

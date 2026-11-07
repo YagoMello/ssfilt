@@ -23,6 +23,10 @@ pub enum BuildError {
     InvalidBandPassOrder,
     /// Band-pass edge frequencies were invalid or numerically unsupported.
     InvalidBandPassEdges,
+    /// A band-stop filter's final order was not positive and even.
+    InvalidBandStopOrder,
+    /// Band-stop edge frequencies were invalid or numerically unsupported.
+    InvalidBandStopEdges,
 }
 
 impl fmt::Display for BuildError {
@@ -42,6 +46,10 @@ impl fmt::Display for BuildError {
             Self::InvalidBandPassOrder => "band-pass filter order must be positive and even",
             Self::InvalidBandPassEdges => {
                 "band-pass edges must be finite, positive, ordered, and numerically supported"
+            }
+            Self::InvalidBandStopOrder => "band-stop filter order must be positive and even",
+            Self::InvalidBandStopEdges => {
+                "band-stop edges must be finite, positive, ordered, and numerically supported"
             }
         };
         formatter.write_str(message)

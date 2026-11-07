@@ -1,8 +1,8 @@
 use approx::assert_relative_eq;
 use ssfilt::{
-    BandPass, BuildError, DormandPrince54, HighPass, InputModel, IntegrationDiagnostics,
-    Integrator, LowPass, MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, ResetError, Response,
-    RungeKutta4, StreamingFilter, UpdateError,
+    BandPass, BandStop, BuildError, DormandPrince54, HighPass, InputModel, IntegrationDiagnostics,
+    Integrator, LowPass, MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER,
+    ResetError, Response, RungeKutta4, StreamingFilter, UpdateError,
 };
 
 fn update_generic<F>(filter: &mut F, input: F::Scalar, dt: F::Scalar) -> F::Scalar
@@ -81,11 +81,16 @@ fn fixed_runge_kutta_is_selectable_for_every_topology() {
         .integrator(policy)
         .build()
         .unwrap();
+    let mut band_stop = BandStop::<4, f32>::builder(10.0, 40.0)
+        .integrator(policy)
+        .build()
+        .unwrap();
 
     for output in [
         low_pass.update(1.0, 0.002).unwrap(),
         high_pass.update(1.0, 0.002).unwrap(),
         band_pass.update(1.0, 0.002).unwrap(),
+        band_stop.update(1.0, 0.002).unwrap(),
     ] {
         assert!(output.is_finite());
     }
@@ -230,6 +235,79 @@ fn fixed_runge_kutta_tracks_adaptive_reference_for_representative_filters() {
             .unwrap(),
         1.0e-4,
     );
+    assert_rk4_tracks_reference(
+        BandStop::<4>::builder(10.0, 40.0)
+            .response(Response::Butterworth)
+            .build()
+            .unwrap(),
+        BandStop::<4>::builder(10.0, 40.0)
+            .response(Response::Butterworth)
+            .integrator(policy)
+            .build()
+            .unwrap(),
+        1.0e-4,
+    );
+}
+
+#[test]
+fn band_stop_uses_final_order_two_edges_and_streaming_trait() {
+    let mut filter = BandStop::<4, f32>::builder(10.0, 40.0)
+        .response(Response::Butterworth)
+        .input_model(InputModel::PreviousHold)
+        .initial_input(2.0)
+        .build()
+        .unwrap();
+
+    assert_eq!(filter.lower_cutoff_hz(), 10.0);
+    assert_eq!(filter.upper_cutoff_hz(), 40.0);
+    assert_eq!(filter.center_hz(), 20.0);
+    assert_eq!(filter.response(), Response::Butterworth);
+    assert_eq!(filter.output(), 2.0);
+    assert!(update_generic(&mut filter, 1.0, 0.002).is_finite());
+}
+
+#[test]
+fn band_stop_rejects_invalid_order_edges_and_bessel_limit() {
+    assert!(matches!(
+        BandStop::<3>::builder(10.0, 40.0).build(),
+        Err(BuildError::InvalidBandStopOrder)
+    ));
+    assert!(matches!(
+        BandStop::<4>::builder(40.0, 10.0).build(),
+        Err(BuildError::InvalidBandStopEdges)
+    ));
+    assert!(
+        BandStop::<MAX_BESSEL_BAND_STOP_ORDER>::builder(10.0, 40.0)
+            .response(Response::Bessel)
+            .build()
+            .is_ok()
+    );
+    assert!(matches!(
+        BandStop::<52>::builder(10.0, 40.0)
+            .response(Response::Bessel)
+            .build(),
+        Err(BuildError::UnsupportedBesselOrder)
+    ));
+}
+
+#[test]
+fn band_stop_errors_are_transactional() {
+    let mut tested = BandStop::<4>::builder(10.0, 40.0)
+        .response(Response::Chebyshev1 { ripple_db: 0.5 })
+        .build()
+        .unwrap();
+    tested.update(0.25, 0.001).unwrap();
+    let mut untouched = tested;
+
+    assert_eq!(
+        tested.update(f64::INFINITY, 0.001),
+        Err(UpdateError::NonFiniteInput)
+    );
+    assert_eq!(
+        tested.update(-0.5, 0.001).unwrap(),
+        untouched.update(-0.5, 0.001).unwrap()
+    );
+    assert_eq!(tested.last_diagnostics(), untouched.last_diagnostics());
 }
 
 fn first_order_rk4_error(max_step_seconds: f64) -> f64 {

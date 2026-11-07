@@ -8,6 +8,11 @@ pub const MAX_BESSEL_ORDER: usize = 25;
 /// Band-pass transformation doubles the prototype order.
 pub const MAX_BESSEL_BAND_PASS_ORDER: usize = 2 * MAX_BESSEL_ORDER;
 
+/// Largest final band-stop order supported by [`Response::Bessel`].
+///
+/// Band-stop transformation doubles the prototype order.
+pub const MAX_BESSEL_BAND_STOP_ORDER: usize = 2 * MAX_BESSEL_ORDER;
+
 /// Analog response family used by the supported filter topologies.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[non_exhaustive]
@@ -18,12 +23,14 @@ pub enum Response<T = f64> {
     RepeatedPole,
     /// Maximally flat passband with −3 dB gain at the requested cutoff.
     Butterworth,
-    /// Maximally flat group delay at DC with little transient ringing.
+    /// Magnitude-normalized Bessel prototype.
     ///
-    /// The response has unity DC gain and is magnitude-normalized to −3 dB at
-    /// the requested cutoff. Low-pass and high-pass orders through
-    /// [`MAX_BESSEL_ORDER`] are supported; band-pass uses
-    /// [`MAX_BESSEL_BAND_PASS_ORDER`].
+    /// Its low-pass response has maximally flat group delay at DC; frequency
+    /// transformations do not generally preserve that property. The prototype
+    /// has unity DC gain and is magnitude-normalized to −3 dB at its cutoff.
+    /// Low-pass and high-pass orders through [`MAX_BESSEL_ORDER`] are
+    /// supported; band-pass and band-stop use [`MAX_BESSEL_BAND_PASS_ORDER`]
+    /// and [`MAX_BESSEL_BAND_STOP_ORDER`].
     Bessel,
     /// Equiripple passband with a steeper transition than Butterworth.
     ///

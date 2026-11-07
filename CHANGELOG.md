@@ -10,7 +10,8 @@ The first public field-test release.
 
 ### Added
 
-- Allocation-free continuous-time low-pass, high-pass, and band-pass filters.
+- Allocation-free continuous-time low-pass, high-pass, band-pass, and
+  band-stop filters.
 - Repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses with a
   consistent whole-filter −3 dB cutoff convention.
 - Explicit linear, previous-hold, and current-hold input reconstruction for
@@ -40,7 +41,7 @@ The first public field-test release.
 - The public filter order is a const generic; runtime selection requires an
   enum or an allocator-backed trait object over a finite set of orders.
 - Bessel filters are limited to validated order 25 prototypes (final order 50
-  for band-pass filters).
+  for band-pass and band-stop filters).
 - Fixed-point arithmetic, streaming phase correction, and offline zero-phase
   filtering are not part of this release.
 - No minimum supported Rust version is promised before 1.0; current stable
