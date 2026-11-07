@@ -128,16 +128,26 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
     fn sort_low_q_first(&mut self, section_count: usize) {
         for index in 1..section_count {
             let mut position = index;
-            while position > 0
-                && self.damping[position - 1] / self.frequency_squared[position - 1].sqrt()
-                    < self.damping[position] / self.frequency_squared[position].sqrt()
-            {
+            while position > 0 && self.section_has_meaningfully_lower_q(position - 1, position) {
                 self.damping.swap(position - 1, position);
                 self.frequency_squared.swap(position - 1, position);
                 self.gain.swap(position - 1, position);
                 position -= 1;
             }
         }
+    }
+
+    fn section_has_meaningfully_lower_q(&self, current: usize, candidate: usize) -> bool {
+        let current_inverse_q = self.damping[current] / self.frequency_squared[current].sqrt();
+        let candidate_inverse_q =
+            self.damping[candidate] / self.frequency_squared[candidate].sqrt();
+        let scale = current_inverse_q.max(candidate_inverse_q);
+        // Reciprocal sections from one transformed quadratic have equal Q in
+        // exact arithmetic. Preserve their low-frequency-first construction
+        // order when platform sqrt/division rounding differs by a few ulps.
+        let tie_tolerance = from_f64::<T>(8.0) * T::epsilon() * scale;
+
+        candidate_inverse_q - current_inverse_q > tie_tolerance
     }
 
     #[cfg(test)]
@@ -243,6 +253,36 @@ mod tests {
         model.derivative(&state, 3.0, &mut derivative);
         assert_eq!(derivative, [0.0; 6]);
         assert_eq!(model.output(&state, 3.0), 0.0);
+    }
+
+    #[test]
+    fn reciprocal_sections_with_roundoff_equal_q_keep_their_factorization_order() {
+        let one_ulp_above_one = f64::from_bits(1.0_f64.to_bits() + 1);
+        let mut model = BandPassModel::<f64, 4> {
+            damping: [0.5, 2.0 * one_ulp_above_one, 0.0, 0.0],
+            frequency_squared: [0.25, 4.0, 0.0, 0.0],
+            gain: [1.0, 1.0, 0.0, 0.0],
+            max_pole_magnitude: 1.0,
+        };
+
+        model.sort_low_q_first(2);
+
+        assert_eq!(model.frequency_squared[..2], [0.25, 4.0]);
+    }
+
+    #[test]
+    fn meaningfully_lower_q_section_still_moves_first() {
+        let mut model = BandPassModel::<f64, 4> {
+            damping: [0.5, 2.1, 0.0, 0.0],
+            frequency_squared: [0.25, 4.0, 0.0, 0.0],
+            gain: [1.0, 2.0, 0.0, 0.0],
+            max_pole_magnitude: 1.0,
+        };
+
+        model.sort_low_q_first(2);
+
+        assert_eq!(model.frequency_squared[..2], [4.0, 0.25]);
+        assert_eq!(model.gain[..2], [2.0, 1.0]);
     }
 
     #[test]
