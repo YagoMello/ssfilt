@@ -1,7 +1,8 @@
-use crate::scalar::{from_f64, from_usize};
+use crate::scalar::from_f64;
 use crate::{BuildError, Response, Scalar};
 
-use super::{ContinuousModel, bessel_table};
+use super::ContinuousModel;
+use super::band_transform::{PrototypeFactor, PrototypeFactors, factor_transformed_quadratic};
 
 /// Cascade of real second-order band-pass sections in center-frequency time.
 #[derive(Clone, Copy, Debug)]
@@ -21,119 +22,34 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
             gain: [T::zero(); N],
             max_pole_magnitude: T::zero(),
         };
-        let result = match response {
-            Response::RepeatedPole => {
-                Ok(model.add_repeated_poles(prototype_order, fractional_bandwidth))
+        let factors = PrototypeFactors::<T, N>::new(
+            response,
+            prototype_order,
+            BuildError::InvalidBandPassEdges,
+        )?;
+        let mut section_count = 0;
+        for factor in factors.iter() {
+            match factor {
+                PrototypeFactor::Real { rate } => {
+                    model.add_real_pole(section_count, rate, fractional_bandwidth);
+                    section_count += 1;
+                }
+                PrototypeFactor::Quadratic {
+                    damping,
+                    frequency_squared,
+                } => model.add_complex_pair(
+                    &mut section_count,
+                    damping,
+                    frequency_squared,
+                    fractional_bandwidth,
+                )?,
             }
-            Response::Butterworth => model.add_butterworth(prototype_order, fractional_bandwidth),
-            Response::Bessel => model.add_bessel(prototype_order, fractional_bandwidth),
-            Response::Chebyshev1 { ripple_db } => {
-                model.add_chebyshev1(prototype_order, fractional_bandwidth, ripple_db)
-            }
-        };
-        let section_count = result?;
+        }
         if section_count != prototype_order || !model.is_valid(section_count) {
             return Err(BuildError::InvalidBandPassEdges);
         }
         model.sort_low_q_first(section_count);
         Ok(model)
-    }
-
-    fn add_repeated_poles(&mut self, order: usize, fractional_bandwidth: T) -> usize {
-        let low_pass_rate = T::one() / (T::LN_2() / from_usize::<T>(order)).exp_m1().sqrt();
-        let coefficient = fractional_bandwidth * low_pass_rate;
-        for index in 0..order {
-            self.damping[index] = coefficient;
-            self.frequency_squared[index] = T::one();
-            self.gain[index] = coefficient;
-        }
-        order
-    }
-
-    fn add_butterworth(
-        &mut self,
-        order: usize,
-        fractional_bandwidth: T,
-    ) -> Result<usize, BuildError> {
-        let mut section = 0;
-        if order % 2 == 1 {
-            self.add_real_pole(section, T::one(), fractional_bandwidth);
-            section += 1;
-        }
-        let denominator = from_f64::<T>(2.0) * from_usize::<T>(order);
-        for index in 0..order / 2 {
-            let angle = T::PI() * from_usize::<T>(2 * index + 1) / denominator;
-            let damping = from_f64::<T>(2.0) * angle.sin();
-            self.add_complex_pair(&mut section, damping, T::one(), fractional_bandwidth)?;
-        }
-        Ok(section)
-    }
-
-    fn add_bessel(&mut self, order: usize, fractional_bandwidth: T) -> Result<usize, BuildError> {
-        let prototype = bessel_table::prototype(order).ok_or(BuildError::UnsupportedBesselOrder)?;
-        let mut section = 0;
-        if order % 2 == 1 {
-            self.add_real_pole(section, from_f64(prototype.real_rate), fractional_bandwidth);
-            section += 1;
-        }
-        for (&damping, &frequency_squared) in
-            prototype.damping.iter().zip(prototype.frequency_squared)
-        {
-            self.add_complex_pair(
-                &mut section,
-                from_f64(damping),
-                from_f64(frequency_squared),
-                fractional_bandwidth,
-            )?;
-        }
-        Ok(section)
-    }
-
-    fn add_chebyshev1(
-        &mut self,
-        order: usize,
-        fractional_bandwidth: T,
-        ripple_db: T,
-    ) -> Result<usize, BuildError> {
-        let max_ripple_db = from_f64(3.010_299_956_639_812);
-        if !ripple_db.is_finite() || ripple_db <= T::zero() || ripple_db >= max_ripple_db {
-            return Err(BuildError::InvalidPassbandRipple);
-        }
-
-        let order_scalar = from_usize::<T>(order);
-        let epsilon_squared = (T::LN_10() * ripple_db / from_f64(10.0)).exp_m1();
-        let epsilon = epsilon_squared.sqrt();
-        let mu = (T::one() / epsilon).asinh() / order_scalar;
-        let sinh_mu = mu.sinh();
-        let cosh_mu = mu.cosh();
-        let chebyshev_at_cutoff = if order.is_multiple_of(2) {
-            (T::one() / epsilon_squared + from_f64(2.0)).sqrt()
-        } else {
-            T::one() / epsilon
-        };
-        let cutoff_scale = (chebyshev_at_cutoff.acosh() / order_scalar).cosh();
-        if !cutoff_scale.is_finite() || cutoff_scale <= T::zero() {
-            return Err(BuildError::InvalidPassbandRipple);
-        }
-
-        let mut section = 0;
-        if order % 2 == 1 {
-            self.add_real_pole(section, sinh_mu / cutoff_scale, fractional_bandwidth);
-            section += 1;
-        }
-        let denominator = from_f64::<T>(2.0) * order_scalar;
-        for index in 0..order / 2 {
-            let angle = T::PI() * from_usize::<T>(2 * index + 1) / denominator;
-            let real = sinh_mu * angle.sin() / cutoff_scale;
-            let imaginary = cosh_mu * angle.cos() / cutoff_scale;
-            self.add_complex_pair(
-                &mut section,
-                from_f64::<T>(2.0) * real,
-                real.mul_add(real, imaginary * imaginary),
-                fractional_bandwidth,
-            )?;
-        }
-        Ok(section)
     }
 
     fn add_real_pole(&mut self, section: usize, rate: T, fractional_bandwidth: T) {
@@ -150,10 +66,6 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
         low_pass_frequency_squared: T,
         fractional_bandwidth: T,
     ) -> Result<(), BuildError> {
-        let two = from_f64::<T>(2.0);
-        let four = from_f64::<T>(4.0);
-        let bandwidth_squared = fractional_bandwidth * fractional_bandwidth;
-
         // Factoring the transformed fourth-order denominator through its
         // complex roots loses accuracy for narrow bands: each mapped root is
         // obtained by subtracting nearly equal complex numbers. Instead, use
@@ -167,43 +79,19 @@ impl<T: Scalar, const N: usize> BandPassModel<T, N> {
         // Its real factors have natural frequencies W and 1/W and damping
         // coefficients c W and c/W. Solving for y = W + 1/W gives the
         // expressions below without constructing complex roots.
-        let middle = four + low_pass_frequency_squared * bandwidth_squared;
-        let discriminant = middle.mul_add(
-            middle,
-            -(four * low_pass_damping * low_pass_damping * bandwidth_squared),
-        );
-        if !discriminant.is_finite() || discriminant < T::zero() {
-            return Err(BuildError::InvalidBandPassEdges);
-        }
-
-        let discriminant_root = discriminant.sqrt();
-        // Compute y² - 4 directly. Forming y² first and then subtracting four
-        // discards most of the useful bits when beta is small.
-        let separation_squared = bandwidth_squared
-            * (low_pass_frequency_squared
-                + (from_f64::<T>(8.0) * low_pass_frequency_squared
-                    - four * low_pass_damping * low_pass_damping
-                    + low_pass_frequency_squared * low_pass_frequency_squared * bandwidth_squared)
-                    / (discriminant_root + four))
-            / two;
-        if !separation_squared.is_finite() || separation_squared < T::zero() {
-            return Err(BuildError::InvalidBandPassEdges);
-        }
-        let y = (four + separation_squared).sqrt();
-        let separation = separation_squared.sqrt();
-        let high_frequency = (y + separation) / two;
-        let low_frequency = T::one() / high_frequency;
-        let damping_scale = low_pass_damping * fractional_bandwidth / y;
+        let transformed = factor_transformed_quadratic(
+            low_pass_damping,
+            low_pass_frequency_squared,
+            fractional_bandwidth,
+        )
+        .ok_or(BuildError::InvalidBandPassEdges)?;
         let section_gain = fractional_bandwidth * low_pass_frequency_squared.sqrt();
-
-        self.damping[*section] = damping_scale * low_frequency;
-        self.frequency_squared[*section] = low_frequency * low_frequency;
-        self.gain[*section] = section_gain;
-        *section += 1;
-        self.damping[*section] = damping_scale * high_frequency;
-        self.frequency_squared[*section] = high_frequency * high_frequency;
-        self.gain[*section] = section_gain;
-        *section += 1;
+        for coefficients in transformed {
+            self.damping[*section] = coefficients.damping;
+            self.frequency_squared[*section] = coefficients.frequency_squared;
+            self.gain[*section] = section_gain;
+            *section += 1;
+        }
         Ok(())
     }
 

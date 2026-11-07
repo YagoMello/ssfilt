@@ -1,4 +1,5 @@
 mod band_pass;
+mod band_transform;
 mod bessel;
 mod bessel_table;
 mod butterworth;
