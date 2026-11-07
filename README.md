@@ -383,15 +383,15 @@ for high orders and integration. The fixed-size enum above also works
 without `std` or an allocator.
 
 On a measured 160 MHz ESP32-C3, an order-two 20 Hz Butterworth update took
-about 155 us for the representative irregular 1 kHz workload. A fixed-rate
-biquad took about 11 us and a 64-sample moving average about 7 us. Those are not
+about 148 us with default adaptive integration and 53 us with public RK4 using
+one step per update. A 64-sample moving average took about 7 us. Those are not
 equivalent filters: `ssfilt` is paying for measured elapsed-time integration,
-explicit input reconstruction, adaptive error control, and transactional
-failure. If the signal is truly fixed-rate and those contracts are unnecessary,
-a conventional digital IIR or moving average is usually the better embedded
-choice. Private experiments also found an 83--90 us relaxed RK23 path. Fixed
-RK4's roughly 50 us research result motivated the selectable `RungeKutta4`
-policy; its accuracy still depends on the application-selected step cap.
+explicit input reconstruction, and transactional failure; the default also
+pays for adaptive error control. If the signal is truly fixed-rate and those
+contracts are unnecessary, a conventional digital IIR or moving average is
+usually the better embedded choice. RK4's accuracy depends on the
+application-selected step cap: in the same test an order-four 100 Hz filter
+took 82 us with a coarse cap and 381 us with a more accurate 250 us cap.
 See [MCU performance and integrator findings](docs/mcu-performance.md) for the
 workload, host-FPU comparison, tolerance caveats, and alternatives that were
 evaluated.

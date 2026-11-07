@@ -8,30 +8,40 @@ can decide whether the library fits their workload.
 
 ## Measured target and workload
 
-The measurements below used a 160 MHz ESP32-C3 (RV32IMC, no floating-point
+The current measurements used a 160 MHz ESP32-C3 (RV32IMC, no floating-point
 unit), release optimization for size, `f32`, `libm`, and `InputModel::Linear`.
 The deterministic stream contained 4,096 updates with intervals from 800 to
 1,311 microseconds and a square-wave-plus-noise input. Reported time includes
-input generation and a checksum; the common baseline was about 5.3 us/update
-and was not subtracted.
+input generation and a checksum; the common baseline was 5.3 us/update and was
+not subtracted. The public-policy run was captured from commit `be7fa00`.
 
-| Workload | Time/update | Approximate CPU at 1 kHz |
-| --- | ---: | ---: |
-| `ssfilt` Butterworth O2, 20 Hz | 155 us | 15.5% |
-| relaxed RK23, 1% local tolerance preset | 90 us | 9.0% |
-| relaxed RK23, 5% local tolerance preset | 83 us | 8.3% |
-| fixed-step RK4 research reference | 50 us | 5.0% |
-| `ssfilt` Chebyshev I O2, 20 Hz | 162 us | 16.2% |
-| fixed-rate Butterworth biquad O2 | 11 us | 1.1% |
-| 64-sample rolling `f32` average | 7 us | 0.7% |
+| Workload | Policy and RK4 cap | Time/update | CPU at 1 kHz | Maximum difference from default |
+| --- | --- | ---: | ---: | ---: |
+| Butterworth O2, 20 Hz | default DOPRI | 148 us | 14.8% | reference |
+| Butterworth O2, 20 Hz | RK4, 2 ms | 53 us | 5.3% | `8.3e-6` |
+| Butterworth O4, 20 Hz | default DOPRI | 258 us | 25.8% | reference |
+| Butterworth O4, 20 Hz | RK4, 2 ms | 81 us | 8.1% | `6.6e-6` |
+| Butterworth O8, 20 Hz | default DOPRI | 486 us | 48.6% | reference |
+| Butterworth O8, 20 Hz | RK4, 2 ms | 138 us | 13.8% | `4.9e-6` |
+| Butterworth O4, 100 Hz | default DOPRI | 1,085 us | 108.5% | reference |
+| Butterworth O4, 100 Hz | RK4, 2 ms | 82 us | 8.2% | `8.5e-3` |
+| Butterworth O4, 100 Hz | RK4, 250 us | 381 us | 38.1% | `1.1e-5` |
+| 64-sample rolling `f32` average | fixed-rate reference | 6.6 us | 0.7% | not equivalent |
 
-These rows do not have identical behavior. The RK23 implementation remains a
-private research prototype. The RK4 measurement predates the public
-`RungeKutta4` policy and should be remeasured, but it uses the same classical
-four-stage method that motivated that policy. The fixed-rate filters do not use
-the measured interval or reconstruct the signal between samples. They are
-useful references for the price of those contracts, not drop-in numerical
-equivalents.
+The 20 Hz RK4 cases used one step per update and `max_steps = 1`. The 100 Hz
+cases used budgets of eight and six steps respectively; the coarse 2 ms cap
+still completed in one step, while the 250 us cap averaged 4.7 steps. The
+differences compare endpoint output with the default Dormand--Prince policy on
+this one stream. They are useful application evidence, not general error
+bounds or proof that the adaptive output is exact. The corresponding RMS
+differences were `1.3e-6` to `1.6e-6` at 20 Hz, `8.9e-4` for coarse 100 Hz RK4,
+and `1.0e-6` for the 250 us case.
+
+The rows do not all have identical behavior. A moving average does not use the
+measured interval or reconstruct the signal between samples. It is a useful
+reference for the price of those contracts, not a drop-in numerical
+equivalent. Earlier research also measured a conventional fixed-rate
+Butterworth biquad at about 11 us/update on this target.
 
 The two relaxed presets were `(absolute, relative) = (1e-4, 1e-2)` and
 `(5e-4, 5e-2)`. These are componentwise *local state-error* controls. Calling
@@ -51,12 +61,13 @@ sample interval.
 - Forward Euler was fast (about 11 us/update in a specialized order-two
   comparison) but its maximum output error was about `7.9e-2`; it is not an
   acceptable replacement.
-- Fixed-step classical RK4 established a useful ceiling of roughly 49--50
-  us/update with small error on the nominal order-two workload. It does not
-  honor an error tolerance and requires a validated step cap for demanding
-  responses and long gaps. This evidence motivated the public `RungeKutta4`
-  policy; the recorded target number remains a historical research measurement
-  until the public implementation is remeasured.
+- The public fixed-step RK4 policy measured 53 us/update for the nominal
+  order-two workload, close to the earlier 49--50 us research prototype. It
+  does not honor an error tolerance and requires a validated step cap for
+  demanding responses and long gaps. The 100 Hz pair above demonstrates both
+  sides of that choice: the coarse cap is inexpensive but visibly less
+  accurate, while 250 us recovers close agreement at substantially higher
+  cost.
 - Adaptive RK23 at the production tolerance was much slower than
   Dormand--Prince because its lower order required many more attempts. At the
   relaxed 1% and 5% presets it took about 90 and 83 us/update on ordinary
