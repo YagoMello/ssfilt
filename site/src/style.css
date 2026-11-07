@@ -1094,6 +1094,10 @@ p {
   line-height: 1.45;
 }
 
+.tolerance-field + .tolerance-field {
+  margin-top: 17px;
+}
+
 .tolerance-control {
   display: grid;
   min-width: 0;
@@ -1244,6 +1248,10 @@ p {
 
 .max-step-control:has(input:disabled) {
   border-color: #e4e9e6;
+  background: #f5f7f5;
+}
+
+.max-step-control:has(input:disabled) .max-step-value {
   background: #f5f7f5;
 }
 
