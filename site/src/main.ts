@@ -461,7 +461,7 @@ function toggleNumerics(): void {
 
 function updateRk4DataHint(): void {
   if (!loadedCsv) {
-    ui.rk4DataHint.textContent = "RK4 must cover every sample gap completely. The filter’s fastest pole can require steps smaller than Maximum step, so the required budget may exceed gap ÷ Maximum step.";
+    ui.rk4DataHint.textContent = "Every sample gap must be covered completely. The filter’s fastest pole may require steps smaller than Maximum step, so the required budget can exceed the sample gap divided by Maximum step.";
     ui.rk4DataHint.classList.remove("is-warning");
     return;
   }
@@ -474,7 +474,7 @@ function updateRk4DataHint(): void {
   const provablyInsufficient = Number.isFinite(budget) && capMinimum > budget;
   ui.rk4DataHint.textContent = provablyInsufficient
     ? `Too few steps for the timestamps alone: the ${shortNumber(longest * 1_000, 4)} ms longest interval needs at least ${capMinimum.toLocaleString()}. The filter’s fastest pole can require smaller steps and a larger budget.`
-    : `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. Gap ÷ Maximum step gives at least ${capMinimum.toLocaleString()} steps; the filter’s fastest pole can require more.`;
+    : `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. Dividing the sample gap by Maximum step gives a lower bound of ${capMinimum.toLocaleString()} steps; the filter’s fastest pole can require more.`;
   ui.rk4DataHint.classList.toggle("is-warning", provablyInsufficient);
 }
 

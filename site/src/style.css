@@ -1025,7 +1025,7 @@ p {
 
 #rk4-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
+  grid-template-columns: 1fr;
   gap: 10px;
   padding: 12px;
   border: 1px solid #e1e8e4;
@@ -1043,10 +1043,6 @@ p {
 
 #rk4-fields > .rk4-panel-heading {
   grid-column: 1 / -1;
-}
-
-#rk4-fields > .field-hint {
-  align-self: center;
 }
 
 #dopri-fields[hidden],

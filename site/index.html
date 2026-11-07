@@ -265,7 +265,7 @@
                 <div id="rk4-fields" hidden>
                   <div class="dopri-panel-heading rk4-panel-heading">
                     <strong>Fixed-step limits</strong>
-                    <p>Choose the physical step cap and the budget for one sample interval.</p>
+                    <p>Set a physical step cap and interval budget. RK4 has no error estimator, so validate the choice on representative signals.</p>
                   </div>
                   <div class="field-row">
                     <div class="field-group">
@@ -277,8 +277,7 @@
                       <input id="rk4-max-steps" type="number" min="1" step="1" value="256" inputmode="numeric" />
                     </div>
                   </div>
-                  <p class="field-hint">RK4 has no error estimator. Treat the step cap as an application accuracy choice and validate it on representative signals.</p>
-                  <p class="rk4-data-hint" id="rk4-data-hint">RK4 must cover every sample gap completely. The filter’s fastest pole can require steps smaller than Maximum step, so the required budget may exceed gap ÷ Maximum step.</p>
+                  <p class="rk4-data-hint" id="rk4-data-hint">Every sample gap must be covered completely. The filter’s fastest pole may require steps smaller than Maximum step, so the required budget can exceed the sample gap divided by Maximum step.</p>
                 </div>
               </div>
             </div>
