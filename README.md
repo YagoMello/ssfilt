@@ -76,11 +76,14 @@ The first interval begins at `initial_input`, which defaults to zero.
 | Smooth timestamped sensor readings | `cargo run --example irregular_sensor` |
 | Inspect high-pass endpoint timing | `cargo run --example high_pass_endpoint` |
 | Select order 2 or 4 without allocating | `cargo run --example runtime_order -- 2` |
+| Select adaptive or fixed integration without allocating | `cargo run --example runtime_integrator -- rk4` |
 
 The corresponding sources are
 [`irregular_sensor.rs`](examples/irregular_sensor.rs),
 [`high_pass_endpoint.rs`](examples/high_pass_endpoint.rs), and
-[`runtime_order.rs`](examples/runtime_order.rs).
+[`runtime_order.rs`](examples/runtime_order.rs). Integration-policy selection
+is demonstrated separately in
+[`runtime_integrator.rs`](examples/runtime_integrator.rs).
 
 ### Choosing a starting point
 
@@ -288,6 +291,13 @@ value while keeping the same static, allocation-free filter.
 | `DormandPrince54<T>` | General irregular timing and automatic local-error control | absolute/relative tolerances, optional step cap, attempt budget |
 | `RungeKutta4<T>` | Lower, predictable work after validating a fixed step cap for the application | required step cap, step budget |
 
+Start with the adaptive default when timing gaps or required accuracy are not
+yet characterized. Choose RK4 only after replaying representative signals and
+the longest expected gaps. Its step budget must cover at least
+`ceil(longest_gap / max_step_seconds)` steps, with additional room in case the
+model's private stability bound is smaller. `last_diagnostics()` shows the
+step count and range actually used during that validation.
+
 To tune the adaptive default:
 
 ```rust
@@ -302,9 +312,9 @@ let policy = DormandPrince54::<f32> {
 
 let filter = LowPass::<4, f32>::builder(20.0)
     .integrator(policy)
-    .build()?;
+    .build()
+    .expect("valid filter configuration");
 # let _ = filter;
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 These tolerances control local state error; they are not direct output-error
@@ -320,9 +330,9 @@ let policy = RungeKutta4 {
 
 let filter = LowPass::<4, f32>::builder(20.0)
     .integrator(policy)
-    .build()?;
+    .build()
+    .expect("valid filter configuration");
 # let _ = filter;
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 RK4 performs four derivative evaluations per step but does not estimate its
@@ -331,6 +341,11 @@ model may subdivide further for stability. If `max_steps` cannot cover the compl
 elapsed interval, the update fails transactionally instead of discarding time.
 Every policy validates its own meaningful settings during `build()`.
 Numerical execution, models, and method-specific runtime storage remain private.
+
+When the policy itself is selected at runtime, store the two concrete filter
+types in an application enum. The
+[`runtime_integrator`](examples/runtime_integrator.rs) example shows the exact
+types and a shared update method without allocation or dynamic dispatch.
 
 During prerelease development this replaced `IntegrationConfig`, the nested
 `Tolerances` value, and `.integration(config)`. Advanced callers migrate by
@@ -381,6 +396,12 @@ the target's precision and range. The `f32` choice does not guarantee speed on
 an MCU without a floating-point unit: benchmark the actual target, especially
 for high orders and integration. The fixed-size enum above also works
 without `std` or an allocator.
+
+With the `std` feature disabled, handle `BuildError` and `UpdateError`
+directly or map them into the application's own error enum. Their
+`std::error::Error` implementations are intentionally available only with
+`std`, so a `Box<dyn std::error::Error>` harness is not portable to this
+configuration.
 
 On a measured 160 MHz ESP32-C3, an order-two 20 Hz Butterworth update took
 about 148 us with default adaptive integration and 53 us with public RK4 using
