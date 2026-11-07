@@ -14,6 +14,10 @@ export interface ResponseConfig {
   ripple_db?: number;
   input_model: InputModel;
   integrator: IntegratorPolicy;
+  dopri_absolute_tolerance?: number;
+  dopri_relative_tolerance?: number;
+  dopri_max_step_seconds?: number | null;
+  dopri_max_step_attempts?: number;
   rk4_max_step_seconds?: number;
   rk4_max_steps?: number;
 }

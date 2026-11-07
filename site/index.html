@@ -193,6 +193,37 @@
                   </select>
                   <p class="field-hint" id="integrator-hint">Adapts internal work to the model and requested accuracy.</p>
                 </div>
+                <div id="dopri-fields">
+                  <div class="field-group">
+                    <div class="field-label-row">
+                      <label for="dopri-relative-tolerance">Relative tolerance</label>
+                      <button class="field-reset" type="button" data-reset-target="dopri-relative-tolerance" aria-label="Reset relative tolerance to 1e-7" title="Reset to 1e-7" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                    </div>
+                    <input id="dopri-relative-tolerance" type="number" min="0" step="any" value="1e-7" inputmode="decimal" />
+                  </div>
+                  <div class="field-group">
+                    <div class="field-label-row">
+                      <label for="dopri-absolute-tolerance">Absolute tolerance</label>
+                      <button class="field-reset" type="button" data-reset-target="dopri-absolute-tolerance" aria-label="Reset absolute tolerance to 1e-10" title="Reset to 1e-10" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                    </div>
+                    <input id="dopri-absolute-tolerance" type="number" min="0" step="any" value="1e-10" inputmode="decimal" />
+                  </div>
+                  <div class="field-group">
+                    <div class="field-label-row">
+                      <label for="dopri-max-step">Maximum step <span class="optional-marker">Optional</span></label>
+                      <button class="field-reset" type="button" data-reset-target="dopri-max-step" aria-label="Reset maximum step to automatic" title="Reset to automatic" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                    </div>
+                    <div class="unit-input"><input id="dopri-max-step" type="number" min="0" step="any" placeholder="Automatic" inputmode="decimal" /><span>ms</span></div>
+                  </div>
+                  <div class="field-group">
+                    <div class="field-label-row">
+                      <label for="dopri-max-attempts">Maximum attempts per interval</label>
+                      <button class="field-reset" type="button" data-reset-target="dopri-max-attempts" aria-label="Reset maximum attempts per interval to 4096" title="Reset to 4096" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                    </div>
+                    <input id="dopri-max-attempts" type="number" min="1" step="1" value="4096" inputmode="numeric" />
+                  </div>
+                  <p class="field-hint integrator-detail-hint">Tolerances control local state error, not guaranteed output error. Maximum step is optional; the attempt budget counts accepted and rejected tries.</p>
+                </div>
                 <div id="rk4-fields" hidden>
                   <div class="field-row">
                     <div class="field-group">
@@ -200,12 +231,12 @@
                       <div class="unit-input"><input id="rk4-max-step" type="number" min="0" step="any" value="2" inputmode="decimal" /><span>ms</span></div>
                     </div>
                     <div class="field-group">
-                      <label for="rk4-max-steps">Max steps / interval</label>
+                      <label for="rk4-max-steps">Maximum steps per interval</label>
                       <input id="rk4-max-steps" type="number" min="1" step="1" value="256" inputmode="numeric" />
                     </div>
                   </div>
                   <p class="field-hint">RK4 has no error estimator. Treat the step cap as an application accuracy choice and validate it on representative signals.</p>
-                  <p class="rk4-data-hint" id="rk4-data-hint">The step budget must cover your longest expected sample interval; the model may subdivide further.</p>
+                  <p class="rk4-data-hint" id="rk4-data-hint">RK4 must cover every sample gap completely. The filter’s fastest pole can require steps smaller than Maximum step, so the required budget may exceed gap ÷ Maximum step.</p>
                 </div>
               </div>
             </div>

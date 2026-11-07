@@ -63,9 +63,12 @@ The playground supports:
   step cap and per-interval work budget.
 
 Integrator selection is progressively disclosed because DOPRI5(4) remains the
-recommended default. RK4's maximum step is an application accuracy choice, not
-an accuracy guarantee. The browser reports integration work but does not infer
-MCU time from it.
+recommended default. Its advanced controls expose the public absolute and
+relative local-state tolerances, optional physical step cap, and per-interval
+attempt budget; modified fields can be reset independently. The site does not
+present those tolerances as output-error guarantees. RK4's maximum step is an
+application accuracy choice, not an accuracy guarantee. The browser reports
+integration work but does not infer MCU time from it.
 
 The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only

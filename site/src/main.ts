@@ -94,6 +94,12 @@ const exampleSignalSpecs: Record<ExampleSignal, ExampleSignalSpec> = {
 };
 
 const MAGNITUDE_DISPLAY_FLOOR_DB = -140;
+const DOPRI_DEFAULTS = {
+  absoluteTolerance: 1e-10,
+  relativeTolerance: 1e-7,
+  maxStepMilliseconds: "",
+  maxStepAttempts: 4_096,
+} as const;
 
 hljs.registerLanguage("rust", rust);
 
@@ -112,6 +118,12 @@ const ui = {
   numericsDisclosure: getElement<HTMLElement>("numerics-disclosure"),
   numericsToggle: getElement<HTMLButtonElement>("numerics-toggle"),
   numericsContent: getElement<HTMLDivElement>("numerics-content"),
+  dopriFields: getElement<HTMLDivElement>("dopri-fields"),
+  dopriAbsoluteTolerance: getElement<HTMLInputElement>("dopri-absolute-tolerance"),
+  dopriRelativeTolerance: getElement<HTMLInputElement>("dopri-relative-tolerance"),
+  dopriMaxStep: getElement<HTMLInputElement>("dopri-max-step"),
+  dopriMaxAttempts: getElement<HTMLInputElement>("dopri-max-attempts"),
+  dopriResetButtons: [...document.querySelectorAll<HTMLButtonElement>(".field-reset[data-reset-target]")],
   rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
   rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
   rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
@@ -388,12 +400,35 @@ function updateConditionalControls(): void {
 
 function updateIntegratorControls(): void {
   const rk4 = currentIntegrator() === "rk4";
+  ui.dopriFields.hidden = rk4;
   ui.rk4Fields.hidden = !rk4;
   ui.integratorSummary.textContent = rk4 ? "Fixed-step RK4" : "Adaptive DOPRI5(4)";
   ui.integratorHint.textContent = rk4
     ? "Predictable work per internal step, with no error estimator."
-    : "Adapts internal work to the model and requested accuracy.";
+    : "Adapts internal work to local state-error tolerances.";
+  updateDopriResetButtons();
   updateRk4DataHint();
+}
+
+function dopriDefaultValue(input: HTMLInputElement): string {
+  if (input === ui.dopriAbsoluteTolerance) return String(DOPRI_DEFAULTS.absoluteTolerance);
+  if (input === ui.dopriRelativeTolerance) return String(DOPRI_DEFAULTS.relativeTolerance);
+  if (input === ui.dopriMaxStep) return DOPRI_DEFAULTS.maxStepMilliseconds;
+  return String(DOPRI_DEFAULTS.maxStepAttempts);
+}
+
+function updateDopriResetButtons(): void {
+  for (const button of ui.dopriResetButtons) {
+    const targetId = button.dataset.resetTarget;
+    const input = targetId ? document.getElementById(targetId) : undefined;
+    if (!(input instanceof HTMLInputElement)) continue;
+    const defaultValue = dopriDefaultValue(input);
+    const currentValue = input.value.trim();
+    const isDefault = defaultValue === ""
+      ? currentValue === ""
+      : Number(currentValue) === Number(defaultValue);
+    button.hidden = isDefault;
+  }
 }
 
 function toggleNumerics(): void {
@@ -406,7 +441,7 @@ function toggleNumerics(): void {
 
 function updateRk4DataHint(): void {
   if (!loadedCsv) {
-    ui.rk4DataHint.textContent = "The step budget must cover your longest expected sample interval; the model may subdivide further.";
+    ui.rk4DataHint.textContent = "RK4 must cover every sample gap completely. The filter’s fastest pole can require steps smaller than Maximum step, so the required budget may exceed gap ÷ Maximum step.";
     ui.rk4DataHint.classList.remove("is-warning");
     return;
   }
@@ -418,8 +453,8 @@ function updateRk4DataHint(): void {
   const capMinimum = Math.ceil(longest / stepSeconds - 8 * Number.EPSILON);
   const provablyInsufficient = Number.isFinite(budget) && capMinimum > budget;
   ui.rk4DataHint.textContent = provablyInsufficient
-    ? `Too few steps for the timestamps alone: the ${shortNumber(longest * 1_000, 4)} ms longest interval needs at least ${capMinimum.toLocaleString()}. The filter model may require more.`
-    : `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. The step cap alone needs at least ${capMinimum.toLocaleString()} steps; the filter model may still require more.`;
+    ? `Too few steps for the timestamps alone: the ${shortNumber(longest * 1_000, 4)} ms longest interval needs at least ${capMinimum.toLocaleString()}. The filter’s fastest pole can require smaller steps and a larger budget.`
+    : `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. Gap ÷ Maximum step gives at least ${capMinimum.toLocaleString()} steps; the filter’s fastest pole can require more.`;
   ui.rk4DataHint.classList.toggle("is-warning", provablyInsufficient);
 }
 
@@ -490,7 +525,33 @@ function validateConfiguration(): ResponseConfig | undefined {
     config.cutoff_hz = cutoff;
   }
 
-  if (config.integrator === "rk4") {
+  if (config.integrator === "dopri5") {
+    const absoluteTolerance = Number(ui.dopriAbsoluteTolerance.value);
+    const relativeTolerance = Number(ui.dopriRelativeTolerance.value);
+    const maxStepText = ui.dopriMaxStep.value.trim();
+    const maxStepMilliseconds = maxStepText === "" ? undefined : Number(maxStepText);
+    const maxStepAttempts = Number(ui.dopriMaxAttempts.value);
+    if (!Number.isFinite(absoluteTolerance) || absoluteTolerance <= 0) {
+      showError("DOPRI absolute tolerance must be a positive, finite number.");
+      return undefined;
+    }
+    if (!Number.isFinite(relativeTolerance) || relativeTolerance <= 0) {
+      showError("DOPRI relative tolerance must be a positive, finite number.");
+      return undefined;
+    }
+    if (maxStepMilliseconds !== undefined && (!Number.isFinite(maxStepMilliseconds) || maxStepMilliseconds <= 0)) {
+      showError("DOPRI maximum step must be empty for automatic control or a positive, finite number of milliseconds.");
+      return undefined;
+    }
+    if (!Number.isInteger(maxStepAttempts) || maxStepAttempts <= 0) {
+      showError("DOPRI max attempts per interval must be a positive integer.");
+      return undefined;
+    }
+    config.dopri_absolute_tolerance = absoluteTolerance;
+    config.dopri_relative_tolerance = relativeTolerance;
+    config.dopri_max_step_seconds = maxStepMilliseconds === undefined ? null : maxStepMilliseconds / 1_000;
+    config.dopri_max_step_attempts = maxStepAttempts;
+  } else {
     const maxStepMilliseconds = Number(ui.rk4MaxStep.value);
     const maxSteps = Number(ui.rk4MaxSteps.value);
     if (!Number.isFinite(maxStepMilliseconds) || maxStepMilliseconds <= 0) {
@@ -926,10 +987,19 @@ function renderCode(config = validateConfiguration()): void {
     ? `    // Advance the custom state to sample 0 over this full interval.\n    let first_sample = 0.0; // Replace with the first CSV value.\n    let first_interval_seconds = ${rustNumber(Number(ui.firstInterval.value))};\n    let output = filter.update(first_sample, first_interval_seconds)?;`
     : `    // Start in steady state at sample 0, then advance to sample 1.\n    let next_sample = 0.0; // Replace with the next CSV value.\n    let elapsed_seconds = 0.01; // Difference between adjacent timestamps.\n    let output = filter.update(next_sample, elapsed_seconds)?;`;
   const rk4 = config.integrator === "rk4";
-  const imports = `use ssfilt::{${topologyType}, InputModel, Response${rk4 ? ", RungeKutta4" : ""}};`;
+  const customDopri = config.integrator === "dopri5" && (
+    config.dopri_absolute_tolerance !== DOPRI_DEFAULTS.absoluteTolerance
+    || config.dopri_relative_tolerance !== DOPRI_DEFAULTS.relativeTolerance
+    || config.dopri_max_step_seconds !== null
+    || config.dopri_max_step_attempts !== DOPRI_DEFAULTS.maxStepAttempts
+  );
+  const policyImport = rk4 ? ", RungeKutta4" : customDopri ? ", DormandPrince54" : "";
+  const imports = `use ssfilt::{${topologyType}, InputModel, Response${policyImport}};`;
   const integrator = rk4
     ? `\n        .integrator(RungeKutta4 {\n            max_step_seconds: ${rustNumber(config.rk4_max_step_seconds ?? 0.002)},\n            max_steps: ${config.rk4_max_steps ?? 256},\n        })`
-    : "";
+    : customDopri
+      ? `\n        .integrator(DormandPrince54 {\n            absolute_tolerance: ${rustNumber(config.dopri_absolute_tolerance ?? DOPRI_DEFAULTS.absoluteTolerance)},\n            relative_tolerance: ${rustNumber(config.dopri_relative_tolerance ?? DOPRI_DEFAULTS.relativeTolerance)},\n            max_step_seconds: ${config.dopri_max_step_seconds === null ? "None" : `Some(${rustNumber(config.dopri_max_step_seconds ?? 0)})`},\n            max_step_attempts: ${config.dopri_max_step_attempts ?? DOPRI_DEFAULTS.maxStepAttempts},\n        })`
+      : "";
   const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})${integrator}\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
   ui.code.innerHTML = hljs.highlight(code, { language: "rust" }).value;
 }
@@ -975,9 +1045,21 @@ function updateUrl(config: ResponseConfig): void {
   if (config.integrator === "rk4") {
     url.searchParams.set("rk4_max_step_ms", ui.rk4MaxStep.value);
     url.searchParams.set("rk4_max_steps", ui.rk4MaxSteps.value);
+    url.searchParams.delete("dopri_abs_tol");
+    url.searchParams.delete("dopri_rel_tol");
+    url.searchParams.delete("dopri_max_step_ms");
+    url.searchParams.delete("dopri_max_attempts");
   } else {
     url.searchParams.delete("rk4_max_step_ms");
     url.searchParams.delete("rk4_max_steps");
+    if (config.dopri_absolute_tolerance === DOPRI_DEFAULTS.absoluteTolerance) url.searchParams.delete("dopri_abs_tol");
+    else url.searchParams.set("dopri_abs_tol", ui.dopriAbsoluteTolerance.value);
+    if (config.dopri_relative_tolerance === DOPRI_DEFAULTS.relativeTolerance) url.searchParams.delete("dopri_rel_tol");
+    else url.searchParams.set("dopri_rel_tol", ui.dopriRelativeTolerance.value);
+    if (config.dopri_max_step_seconds === null) url.searchParams.delete("dopri_max_step_ms");
+    else url.searchParams.set("dopri_max_step_ms", ui.dopriMaxStep.value);
+    if (config.dopri_max_step_attempts === DOPRI_DEFAULTS.maxStepAttempts) url.searchParams.delete("dopri_max_attempts");
+    else url.searchParams.set("dopri_max_attempts", ui.dopriMaxAttempts.value);
   }
   if (config.cutoff_hz !== undefined) {
     url.searchParams.set("cutoff_hz", String(config.cutoff_hz));
@@ -1017,6 +1099,14 @@ function restoreUrl(): void {
   if (["repeated-pole", "butterworth", "bessel", "chebyshev1"].includes(response ?? "")) ui.response.value = response ?? "butterworth";
   if (["linear", "previous-hold", "current-hold"].includes(inputModel ?? "")) ui.inputModel.value = inputModel ?? "linear";
   if (integrator === "dopri5" || integrator === "rk4") ui.integrator.value = integrator;
+  const dopriAbsoluteTolerance = Number(params.get("dopri_abs_tol"));
+  const dopriRelativeTolerance = Number(params.get("dopri_rel_tol"));
+  const dopriMaxStep = Number(params.get("dopri_max_step_ms"));
+  const dopriMaxAttempts = Number(params.get("dopri_max_attempts"));
+  if (Number.isFinite(dopriAbsoluteTolerance) && dopriAbsoluteTolerance > 0) ui.dopriAbsoluteTolerance.value = String(dopriAbsoluteTolerance);
+  if (Number.isFinite(dopriRelativeTolerance) && dopriRelativeTolerance > 0) ui.dopriRelativeTolerance.value = String(dopriRelativeTolerance);
+  if (Number.isFinite(dopriMaxStep) && dopriMaxStep > 0) ui.dopriMaxStep.value = String(dopriMaxStep);
+  if (Number.isInteger(dopriMaxAttempts) && dopriMaxAttempts > 0) ui.dopriMaxAttempts.value = String(dopriMaxAttempts);
   const rk4MaxStep = Number(params.get("rk4_max_step_ms"));
   const rk4MaxSteps = Number(params.get("rk4_max_steps"));
   if (Number.isFinite(rk4MaxStep) && rk4MaxStep > 0) ui.rk4MaxStep.value = String(rk4MaxStep);
@@ -1299,7 +1389,7 @@ async function runFilter(baseConfig?: ResponseConfig): Promise<void> {
     if (requestId !== filterRequestId) return;
     const reason = error instanceof Error ? error.message : String(error);
     const actionableReason = reason.includes("configured work budget")
-      ? `${reason}. Increase Max steps / interval, or increase Maximum step only if your accuracy checks allow it`
+      ? `${reason}. Increase Maximum steps per interval, or increase Maximum step only if your accuracy checks allow it`
       : reason;
     if (preservesDisplayedResult && previousResult) {
       filterResult = previousResult;
@@ -1763,6 +1853,18 @@ ui.integrator.addEventListener("change", () => {
   scheduleResponseUpdate(0);
 });
 ui.numericsToggle.addEventListener("click", toggleNumerics);
+[ui.dopriAbsoluteTolerance, ui.dopriRelativeTolerance, ui.dopriMaxStep, ui.dopriMaxAttempts].forEach((input) => input.addEventListener("input", () => {
+  updateDopriResetButtons();
+  scheduleResponseUpdate();
+}));
+ui.dopriResetButtons.forEach((button) => button.addEventListener("click", () => {
+  const targetId = button.dataset.resetTarget;
+  const input = targetId ? document.getElementById(targetId) : undefined;
+  if (!(input instanceof HTMLInputElement)) return;
+  input.value = dopriDefaultValue(input);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+}));
 [ui.rk4MaxStep, ui.rk4MaxSteps].forEach((input) => input.addEventListener("input", () => {
   updateRk4DataHint();
   scheduleResponseUpdate();

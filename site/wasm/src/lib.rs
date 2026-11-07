@@ -9,8 +9,8 @@
 use js_sys::Float64Array;
 use serde::{Deserialize, Serialize};
 use ssfilt::{
-    BandPass, BandStop, HighPass, InputModel, IntegrationDiagnostics, Integrator, LowPass,
-    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER, Response,
+    BandPass, BandStop, DormandPrince54, HighPass, InputModel, IntegrationDiagnostics, Integrator,
+    LowPass, MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER, Response,
     RungeKutta4,
 };
 use wasm_bindgen::prelude::*;
@@ -82,6 +82,14 @@ struct FilterConfig {
     input_model: InputPolicy,
     #[serde(default = "default_integrator_policy")]
     integrator: IntegratorPolicy,
+    #[serde(default = "default_dopri_absolute_tolerance")]
+    dopri_absolute_tolerance: f64,
+    #[serde(default = "default_dopri_relative_tolerance")]
+    dopri_relative_tolerance: f64,
+    #[serde(default)]
+    dopri_max_step_seconds: Option<f64>,
+    #[serde(default = "default_dopri_max_step_attempts")]
+    dopri_max_step_attempts: usize,
     #[serde(default = "default_rk4_max_step_seconds")]
     rk4_max_step_seconds: f64,
     #[serde(default = "default_rk4_max_steps")]
@@ -503,12 +511,27 @@ fn validate_config(config: FilterConfig) -> Result<(), String> {
             }
         }
     }
-    if matches!(config.integrator, IntegratorPolicy::Rk4) {
-        if !config.rk4_max_step_seconds.is_finite() || config.rk4_max_step_seconds <= 0.0 {
-            return Err("RK4 maximum step must be finite and positive".to_owned());
+    match config.integrator {
+        IntegratorPolicy::Dopri5 => {
+            if !config.dopri_absolute_tolerance.is_finite()
+                || config.dopri_absolute_tolerance <= 0.0
+                || !config.dopri_relative_tolerance.is_finite()
+                || config.dopri_relative_tolerance <= 0.0
+                || config
+                    .dopri_max_step_seconds
+                    .is_some_and(|step| !step.is_finite() || step <= 0.0)
+                || config.dopri_max_step_attempts == 0
+            {
+                return Err("DOPRI integration controls are invalid".to_owned());
+            }
         }
-        if config.rk4_max_steps == 0 {
-            return Err("RK4 step budget must be positive".to_owned());
+        IntegratorPolicy::Rk4 => {
+            if !config.rk4_max_step_seconds.is_finite() || config.rk4_max_step_seconds <= 0.0 {
+                return Err("RK4 maximum step must be finite and positive".to_owned());
+            }
+            if config.rk4_max_steps == 0 {
+                return Err("RK4 step budget must be positive".to_owned());
+            }
         }
     }
     response(config)?;
@@ -726,6 +749,7 @@ fn build_low_pass<const N: usize>(
             .response(response)
             .input_model(input_model(config.input_model))
             .initial_input(initial_input)
+            .integrator(dopri_policy(config))
             .build()
             .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
             .map_err(|error| error.to_string()),
@@ -751,6 +775,7 @@ fn build_high_pass<const N: usize>(
             .response(response)
             .input_model(input_model(config.input_model))
             .initial_input(initial_input)
+            .integrator(dopri_policy(config))
             .build()
             .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
             .map_err(|error| error.to_string()),
@@ -777,6 +802,7 @@ fn build_band_pass<const N: usize>(
             .response(response)
             .input_model(input_model(config.input_model))
             .initial_input(initial_input)
+            .integrator(dopri_policy(config))
             .build()
             .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
             .map_err(|error| error.to_string()),
@@ -803,6 +829,7 @@ fn build_band_stop<const N: usize>(
             .response(response)
             .input_model(input_model(config.input_model))
             .initial_input(initial_input)
+            .integrator(dopri_policy(config))
             .build()
             .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
             .map_err(|error| error.to_string()),
@@ -821,6 +848,15 @@ fn rk4_policy(config: FilterConfig) -> RungeKutta4<f64> {
     RungeKutta4 {
         max_step_seconds: config.rk4_max_step_seconds,
         max_steps: config.rk4_max_steps,
+    }
+}
+
+fn dopri_policy(config: FilterConfig) -> DormandPrince54<f64> {
+    DormandPrince54 {
+        absolute_tolerance: config.dopri_absolute_tolerance,
+        relative_tolerance: config.dopri_relative_tolerance,
+        max_step_seconds: config.dopri_max_step_seconds,
+        max_step_attempts: config.dopri_max_step_attempts,
     }
 }
 
@@ -869,6 +905,18 @@ const fn default_integrator_policy() -> IntegratorPolicy {
     IntegratorPolicy::Dopri5
 }
 
+const fn default_dopri_absolute_tolerance() -> f64 {
+    1.0e-10
+}
+
+const fn default_dopri_relative_tolerance() -> f64 {
+    1.0e-7
+}
+
+const fn default_dopri_max_step_attempts() -> usize {
+    4_096
+}
+
 const fn default_rk4_max_step_seconds() -> f64 {
     0.002
 }
@@ -900,6 +948,10 @@ mod tests {
             ripple_db: 0.5,
             input_model: InputPolicy::Linear,
             integrator: IntegratorPolicy::Dopri5,
+            dopri_absolute_tolerance: default_dopri_absolute_tolerance(),
+            dopri_relative_tolerance: default_dopri_relative_tolerance(),
+            dopri_max_step_seconds: None,
+            dopri_max_step_attempts: default_dopri_max_step_attempts(),
             rk4_max_step_seconds: default_rk4_max_step_seconds(),
             rk4_max_steps: default_rk4_max_steps(),
             initial_mode: InitialMode::Sample0,
@@ -1036,6 +1088,38 @@ mod tests {
         assert_eq!(data.output.len(), 4);
         assert_eq!(data.rejected_steps, 0);
         assert_eq!(data.derivative_evaluations, 4 * data.accepted_steps);
+    }
+
+    #[test]
+    fn custom_dopri_step_cap_changes_observed_integration_work() {
+        let times = [0.0, 0.01, 0.02];
+        let values = [0.0, 1.0, -0.25];
+        let default = filter_uploaded_data(low_pass_config(), &times, &values).unwrap();
+        let mut configured = low_pass_config();
+        configured.dopri_max_step_seconds = Some(0.000_5);
+        let capped = filter_uploaded_data(configured, &times, &values).unwrap();
+
+        assert!(capped.accepted_steps > default.accepted_steps);
+        assert!(capped.output.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn invalid_dopri_controls_are_rejected_at_the_adapter_boundary() {
+        let mut config = low_pass_config();
+        config.dopri_absolute_tolerance = 0.0;
+        assert!(validate_config(config).unwrap_err().contains("DOPRI"));
+
+        config = low_pass_config();
+        config.dopri_relative_tolerance = f64::NAN;
+        assert!(validate_config(config).unwrap_err().contains("DOPRI"));
+
+        config = low_pass_config();
+        config.dopri_max_step_seconds = Some(0.0);
+        assert!(validate_config(config).unwrap_err().contains("DOPRI"));
+
+        config = low_pass_config();
+        config.dopri_max_step_attempts = 0;
+        assert!(validate_config(config).unwrap_err().contains("DOPRI"));
     }
 
     #[test]

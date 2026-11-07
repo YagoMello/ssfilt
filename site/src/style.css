@@ -943,22 +943,91 @@ p {
   align-self: start;
 }
 
+#dopri-fields,
 #rk4-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
   gap: 10px;
 }
 
+#dopri-fields > .field-group,
 #rk4-fields > .field-row {
   align-self: start;
+}
+
+#dopri-fields > .integrator-detail-hint,
+#rk4-fields > .rk4-data-hint {
+  grid-column: 1 / -1;
 }
 
 #rk4-fields > .field-hint {
   align-self: center;
 }
 
+#dopri-fields[hidden],
 #rk4-fields[hidden] {
   display: none;
+}
+
+.field-label-row {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.optional-marker {
+  margin-left: 3px;
+  color: #839094;
+  font-family: var(--mono);
+  font-size: 7px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.field-reset {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  padding: 0;
+  place-items: center;
+  color: #4f7770;
+  border: 1px solid #d5e2dc;
+  border-radius: 4px;
+  background: #f7faf7;
+  cursor: pointer;
+}
+
+.field-reset:hover {
+  color: #235f53;
+  border-color: #a9c6b8;
+  background: #fff;
+}
+
+.field-reset svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.field-reset[hidden] {
+  display: none;
+}
+
+.integrator-detail-hint {
+  margin: 0;
+  padding: 8px 9px;
+  color: #607176;
+  border-left: 2px solid #c8d5cf;
+  background: #f7f9f7;
 }
 
 .rk4-data-hint {
@@ -2411,6 +2480,10 @@ p {
 
   #rk4-fields {
     grid-template-columns: 1fr;
+  }
+
+  #dopri-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .controls-card {
