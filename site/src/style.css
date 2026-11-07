@@ -943,6 +943,80 @@ p {
   align-self: start;
 }
 
+.integrator-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.integrator-choice label {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.integrator-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.integrator-choice label > span {
+  display: flex;
+  min-height: 55px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 9px;
+  color: #5d6d72;
+  border: 1px solid #dce5e0;
+  border-radius: 5px;
+  background: #f7f9f7;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.integrator-choice label:hover > span {
+  border-color: #b8ccc2;
+  background: #fff;
+}
+
+.integrator-choice input:checked + span {
+  color: #1f554c;
+  border-color: #8fb9a7;
+  background: #eef6f0;
+  box-shadow: inset 0 -2px 0 #168779;
+}
+
+.integrator-choice input:focus-visible + span {
+  outline: 3px solid #8bba20;
+  outline-offset: 2px;
+}
+
+.integrator-choice strong,
+.integrator-choice small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.integrator-choice strong {
+  font-size: 9px;
+}
+
+.integrator-choice small {
+  margin-top: 2px;
+  color: #718084;
+  font-family: var(--mono);
+  font-size: 7px;
+  font-weight: 400;
+}
+
+.integrator-choice-hint {
+  margin-top: 9px;
+}
+
 #dopri-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -953,6 +1027,10 @@ p {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
   gap: 10px;
+  padding: 12px;
+  border: 1px solid #e1e8e4;
+  border-radius: 6px;
+  background: #fbfcfa;
 }
 
 #rk4-fields > .field-row {
@@ -960,6 +1038,10 @@ p {
 }
 
 #rk4-fields > .rk4-data-hint {
+  grid-column: 1 / -1;
+}
+
+#rk4-fields > .rk4-panel-heading {
   grid-column: 1 / -1;
 }
 
@@ -1051,15 +1133,17 @@ p {
 .tolerance-step {
   display: inline-flex;
   min-width: 0;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 0 7px;
-  color: #41675f;
+  gap: 1px;
+  padding: 3px 7px 2px;
+  color: #6d7c80;
   border: 0;
   background: #f4f8f5;
-  font-size: 8px;
-  font-weight: 700;
+  font-family: var(--mono);
+  font-weight: 400;
+  line-height: 1;
   cursor: pointer;
   transition: color 150ms ease, background-color 150ms ease;
 }
@@ -1090,10 +1174,82 @@ p {
   opacity: 0.55;
 }
 
-.tolerance-step span[aria-hidden="true"] {
-  font-family: var(--mono);
-  font-size: 11px;
+.step-symbol {
+  color: #315f56;
+  font-size: 12px;
   font-weight: 500;
+}
+
+.step-label {
+  color: #75858a;
+  font-size: 7px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.automatic-choice {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 15px auto 1fr;
+  gap: 0 7px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid #e0e7e3;
+  border-radius: 5px;
+  background: #f7f9f7;
+  cursor: pointer;
+}
+
+.field-group .automatic-choice input {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: #168779;
+}
+
+.automatic-choice span {
+  color: #31564f;
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.automatic-choice small {
+  color: #7a888d;
+  font-size: 8px;
+  font-weight: 400;
+  justify-self: end;
+}
+
+.max-step-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  background: #fff;
+}
+
+.max-step-value input {
+  min-width: 0;
+}
+
+.max-step-value span {
+  flex: 0 0 auto;
+  padding-right: 7px;
+  color: #7a888d;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.max-step-control:has(input:disabled) {
+  border-color: #e4e9e6;
+  background: #f5f7f5;
+}
+
+.field-group .max-step-control input:disabled {
+  color: #8b9699;
+  background: #f5f7f5;
 }
 
 .tolerance-accuracy-note,
@@ -1137,6 +1293,9 @@ p {
   border-radius: 4px;
   background: #f7faf7;
   cursor: pointer;
+  opacity: 1;
+  transform: scale(1);
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 
 .field-reset:hover {
@@ -1156,8 +1315,10 @@ p {
   stroke-width: 1.25;
 }
 
-.field-reset[hidden] {
-  display: none;
+.field-reset.is-concealed {
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.82);
 }
 
 .rk4-data-hint {

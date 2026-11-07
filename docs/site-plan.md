@@ -68,9 +68,11 @@ relative local-state tolerances, optional physical step cap, and per-interval
 attempt budget; modified fields can be reset independently. Tolerances remain
 free-form scientific values, with explicit tighter and looser controls that
 move through a 1–2–5 sequence without snapping typed or linked custom values.
-The site does not present those tolerances as output-error guarantees. RK4's
-maximum step is an application accuracy choice, not an accuracy guarantee. The
-browser reports integration work but does not infer MCU time from it.
+The optional DOPRI step cap uses the same sequence when Automatic step choice
+is disabled. The site does not present tolerances or step caps as output-error
+guarantees. RK4's maximum step is an application accuracy choice, not an
+accuracy guarantee. The browser reports integration work but does not infer
+MCU time from it.
 
 The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only

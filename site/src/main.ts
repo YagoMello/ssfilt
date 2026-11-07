@@ -113,7 +113,7 @@ const ui = {
   upperCutoff: getElement<HTMLInputElement>("upper-cutoff"),
   ripple: getElement<HTMLInputElement>("ripple"),
   inputModel: getElement<HTMLSelectElement>("input-model"),
-  integrator: getElement<HTMLSelectElement>("integrator"),
+  integrators: [...document.querySelectorAll<HTMLInputElement>('input[name="integrator"]')],
   integratorSummary: getElement<HTMLElement>("integrator-summary"),
   integratorHint: getElement<HTMLParagraphElement>("integrator-hint"),
   numericsDisclosure: getElement<HTMLElement>("numerics-disclosure"),
@@ -123,9 +123,10 @@ const ui = {
   dopriAbsoluteTolerance: getElement<HTMLInputElement>("dopri-absolute-tolerance"),
   dopriRelativeTolerance: getElement<HTMLInputElement>("dopri-relative-tolerance"),
   dopriMaxStep: getElement<HTMLInputElement>("dopri-max-step"),
+  dopriMaxStepAutomatic: getElement<HTMLInputElement>("dopri-max-step-automatic"),
   dopriMaxAttempts: getElement<HTMLInputElement>("dopri-max-attempts"),
   dopriResetButtons: [...document.querySelectorAll<HTMLButtonElement>(".field-reset[data-reset-target]")],
-  dopriStepButtons: [...document.querySelectorAll<HTMLButtonElement>(".tolerance-step[data-tolerance-target]")],
+  dopriStepButtons: [...document.querySelectorAll<HTMLButtonElement>(".tolerance-step[data-step-target]")],
   rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
   rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
   rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
@@ -212,6 +213,7 @@ let filterRequestId = 0;
 let resizeFrame = 0;
 let responseContainerWidth = 0;
 let filterContainerWidth = 0;
+let lastManualDopriMaxStep = "1";
 
 function getElement<T extends Element>(id: string): T {
   const element = document.getElementById(id);
@@ -339,7 +341,7 @@ function currentResponse(): ResponseFamily {
 }
 
 function currentIntegrator(): IntegratorPolicy {
-  return ui.integrator.value as IntegratorPolicy;
+  return (ui.integrators.find((input) => input.checked)?.value ?? "dopri5") as IntegratorPolicy;
 }
 
 function isBandTopology(topology: Topology): boolean {
@@ -425,26 +427,27 @@ function updateDopriResetButtons(): void {
     const targetId = button.dataset.resetTarget;
     const input = targetId ? document.getElementById(targetId) : undefined;
     if (!(input instanceof HTMLInputElement)) continue;
-    const defaultValue = dopriDefaultValue(input);
-    const currentValue = input.value.trim();
-    const isDefault = defaultValue === ""
-      ? currentValue === ""
-      : Number(currentValue) === Number(defaultValue);
-    button.hidden = isDefault;
+    const isDefault = input === ui.dopriMaxStep
+      ? ui.dopriMaxStepAutomatic.checked
+      : Number(input.value.trim()) === Number(dopriDefaultValue(input));
+    button.classList.toggle("is-concealed", isDefault);
+    button.setAttribute("aria-hidden", String(isDefault));
+    button.tabIndex = isDefault ? -1 : 0;
   }
 }
 
 function updateDopriStepButtons(): void {
   for (const button of ui.dopriStepButtons) {
-    const targetId = button.dataset.toleranceTarget;
+    const targetId = button.dataset.stepTarget;
     const input = targetId ? document.getElementById(targetId) : undefined;
     const direction = button.dataset.direction as ToleranceDirection | undefined;
     if (!(input instanceof HTMLInputElement) || (direction !== "tighter" && direction !== "looser")) {
       button.disabled = true;
       continue;
     }
+    const automatic = input === ui.dopriMaxStep && ui.dopriMaxStepAutomatic.checked;
     const value = parsePositiveDecimal(input.value);
-    button.disabled = value === undefined || stepTolerance(value, direction) === undefined;
+    button.disabled = automatic || value === undefined || stepTolerance(value, direction) === undefined;
   }
 }
 
@@ -545,8 +548,8 @@ function validateConfiguration(): ResponseConfig | undefined {
   if (config.integrator === "dopri5") {
     const absoluteTolerance = parsePositiveDecimal(ui.dopriAbsoluteTolerance.value);
     const relativeTolerance = parsePositiveDecimal(ui.dopriRelativeTolerance.value);
-    const maxStepText = ui.dopriMaxStep.value.trim();
-    const maxStepMilliseconds = maxStepText === "" ? undefined : Number(maxStepText);
+    const maxStepText = ui.dopriMaxStepAutomatic.checked ? "" : ui.dopriMaxStep.value.trim();
+    const maxStepMilliseconds = maxStepText === "" ? undefined : parsePositiveDecimal(maxStepText);
     const maxStepAttempts = Number(ui.dopriMaxAttempts.value);
     if (absoluteTolerance === undefined) {
       showError("DOPRI absolute tolerance must be a positive decimal or scientific-notation value.");
@@ -556,8 +559,8 @@ function validateConfiguration(): ResponseConfig | undefined {
       showError("DOPRI relative tolerance must be a positive decimal or scientific-notation value.");
       return undefined;
     }
-    if (maxStepMilliseconds !== undefined && (!Number.isFinite(maxStepMilliseconds) || maxStepMilliseconds <= 0)) {
-      showError("DOPRI maximum step must be empty for automatic control or a positive, finite number of milliseconds.");
+    if (maxStepText !== "" && maxStepMilliseconds === undefined) {
+      showError("Enter a positive decimal maximum step in milliseconds, or turn on Automatic to omit the cap.");
       return undefined;
     }
     if (!Number.isInteger(maxStepAttempts) || maxStepAttempts <= 0) {
@@ -1116,14 +1119,21 @@ function restoreUrl(): void {
   if (["low-pass", "high-pass", "band-pass", "band-stop"].includes(topology ?? "")) ui.topology.value = topology ?? "low-pass";
   if (["repeated-pole", "butterworth", "bessel", "chebyshev1"].includes(response ?? "")) ui.response.value = response ?? "butterworth";
   if (["linear", "previous-hold", "current-hold"].includes(inputModel ?? "")) ui.inputModel.value = inputModel ?? "linear";
-  if (integrator === "dopri5" || integrator === "rk4") ui.integrator.value = integrator;
+  if (integrator === "dopri5" || integrator === "rk4") {
+    ui.integrators.forEach((input) => { input.checked = input.value === integrator; });
+  }
   const dopriAbsoluteTolerance = Number(params.get("dopri_abs_tol"));
   const dopriRelativeTolerance = Number(params.get("dopri_rel_tol"));
   const dopriMaxStep = Number(params.get("dopri_max_step_ms"));
   const dopriMaxAttempts = Number(params.get("dopri_max_attempts"));
   if (Number.isFinite(dopriAbsoluteTolerance) && dopriAbsoluteTolerance > 0) ui.dopriAbsoluteTolerance.value = String(dopriAbsoluteTolerance);
   if (Number.isFinite(dopriRelativeTolerance) && dopriRelativeTolerance > 0) ui.dopriRelativeTolerance.value = String(dopriRelativeTolerance);
-  if (Number.isFinite(dopriMaxStep) && dopriMaxStep > 0) ui.dopriMaxStep.value = String(dopriMaxStep);
+  if (Number.isFinite(dopriMaxStep) && dopriMaxStep > 0) {
+    ui.dopriMaxStep.value = String(dopriMaxStep);
+    ui.dopriMaxStepAutomatic.checked = false;
+    ui.dopriMaxStep.disabled = false;
+    lastManualDopriMaxStep = String(dopriMaxStep);
+  }
   if (Number.isInteger(dopriMaxAttempts) && dopriMaxAttempts > 0) ui.dopriMaxAttempts.value = String(dopriMaxAttempts);
   const rk4MaxStep = Number(params.get("rk4_max_step_ms"));
   const rk4MaxSteps = Number(params.get("rk4_max_steps"));
@@ -1866,18 +1876,30 @@ ui.inputModel.addEventListener("change", () => {
   updateConditionalControls();
   scheduleResponseUpdate(0);
 });
-ui.integrator.addEventListener("change", () => {
+ui.integrators.forEach((input) => input.addEventListener("change", () => {
+  if (!input.checked) return;
   updateIntegratorControls();
   scheduleResponseUpdate(0);
-});
+}));
 ui.numericsToggle.addEventListener("click", toggleNumerics);
 [ui.dopriAbsoluteTolerance, ui.dopriRelativeTolerance, ui.dopriMaxStep, ui.dopriMaxAttempts].forEach((input) => input.addEventListener("input", () => {
+  if (input === ui.dopriMaxStep && parsePositiveDecimal(input.value) !== undefined) lastManualDopriMaxStep = input.value;
   updateDopriResetButtons();
   updateDopriStepButtons();
   scheduleResponseUpdate();
 }));
+ui.dopriMaxStepAutomatic.addEventListener("change", () => {
+  if (ui.dopriMaxStepAutomatic.checked) {
+    if (parsePositiveDecimal(ui.dopriMaxStep.value) !== undefined) lastManualDopriMaxStep = ui.dopriMaxStep.value;
+    ui.dopriMaxStep.value = "";
+  } else {
+    ui.dopriMaxStep.value = lastManualDopriMaxStep;
+  }
+  ui.dopriMaxStep.disabled = ui.dopriMaxStepAutomatic.checked;
+  ui.dopriMaxStep.dispatchEvent(new Event("input", { bubbles: true }));
+});
 ui.dopriStepButtons.forEach((button) => button.addEventListener("click", () => {
-  const targetId = button.dataset.toleranceTarget;
+  const targetId = button.dataset.stepTarget;
   const input = targetId ? document.getElementById(targetId) : undefined;
   const direction = button.dataset.direction as ToleranceDirection | undefined;
   if (!(input instanceof HTMLInputElement) || (direction !== "tighter" && direction !== "looser")) return;
@@ -1885,13 +1907,21 @@ ui.dopriStepButtons.forEach((button) => button.addEventListener("click", () => {
   if (value === undefined) return;
   const stepped = stepTolerance(value, direction);
   if (stepped === undefined) return;
-  input.value = formatTolerance(stepped);
+  input.value = input === ui.dopriMaxStep ? stepped.toString() : formatTolerance(stepped);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }));
 ui.dopriResetButtons.forEach((button) => button.addEventListener("click", () => {
   const targetId = button.dataset.resetTarget;
   const input = targetId ? document.getElementById(targetId) : undefined;
   if (!(input instanceof HTMLInputElement)) return;
+  if (input === ui.dopriMaxStep) {
+    ui.dopriMaxStepAutomatic.checked = true;
+    ui.dopriMaxStep.disabled = true;
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    ui.dopriMaxStepAutomatic.focus();
+    return;
+  }
   input.value = dopriDefaultValue(input);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.focus();

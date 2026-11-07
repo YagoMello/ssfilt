@@ -185,13 +185,22 @@
             </button>
             <div class="numerics-expander" id="numerics-content" aria-hidden="true" inert>
               <div class="numerics-controls">
-                <div class="field-group numerics-integrator-field">
-                  <label for="integrator">Integrator</label>
-                  <select id="integrator" name="integrator">
-                    <option value="dopri5">Adaptive DOPRI5(4) — recommended</option>
-                    <option value="rk4">Fixed-step RK4</option>
-                  </select>
-                  <p class="field-hint" id="integrator-hint">Adapts internal work to the model and requested accuracy.</p>
+                <div class="numerics-integrator-field dopri-panel">
+                  <div class="dopri-panel-heading">
+                    <strong id="integrator-choice-title">Integrator</strong>
+                    <p>Choose adaptive error control or predictable fixed steps.</p>
+                  </div>
+                  <div class="integrator-choice" role="radiogroup" aria-labelledby="integrator-choice-title">
+                    <label>
+                      <input type="radio" name="integrator" value="dopri5" checked />
+                      <span><strong>Adaptive</strong><small>DOPRI5(4) · recommended</small></span>
+                    </label>
+                    <label>
+                      <input type="radio" name="integrator" value="rk4" />
+                      <span><strong>Fixed-step</strong><small>RK4 · predictable work</small></span>
+                    </label>
+                  </div>
+                  <p class="field-hint integrator-choice-hint" id="integrator-hint">Adapts internal work to the model and requested accuracy.</p>
                 </div>
                 <div id="dopri-fields">
                   <section class="dopri-panel tolerance-panel" aria-labelledby="tolerance-panel-title">
@@ -202,25 +211,25 @@
                     <div class="field-group tolerance-field">
                       <div class="field-label-row">
                         <label for="dopri-relative-tolerance">Relative tolerance</label>
-                        <button class="field-reset" type="button" data-reset-target="dopri-relative-tolerance" aria-label="Reset relative tolerance to 1e-7" title="Reset to 1e-7" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                        <button class="field-reset is-concealed" type="button" data-reset-target="dopri-relative-tolerance" aria-label="Reset relative tolerance to 1e-7" aria-hidden="true" tabindex="-1" title="Reset to 1e-7"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
                       </div>
                       <p class="field-hint" id="relative-tolerance-hint">Scales with the magnitude of each internal state.</p>
                       <div class="tolerance-control">
-                        <button class="tolerance-step" type="button" data-tolerance-target="dopri-relative-tolerance" data-direction="tighter" aria-label="Use a smaller relative tolerance" title="Next tighter 1–2–5 value"><span aria-hidden="true">−</span><span>Tighter</span></button>
+                        <button class="tolerance-step" type="button" data-step-target="dopri-relative-tolerance" data-direction="tighter" aria-label="Use a smaller relative tolerance" title="Next tighter 1–2–5 value"><span class="step-symbol" aria-hidden="true">−</span><span class="step-label">Tighter</span></button>
                         <input id="dopri-relative-tolerance" type="text" value="1e-7" inputmode="text" autocapitalize="off" spellcheck="false" aria-describedby="relative-tolerance-hint tolerance-accuracy-note" />
-                        <button class="tolerance-step" type="button" data-tolerance-target="dopri-relative-tolerance" data-direction="looser" aria-label="Use a larger relative tolerance" title="Next looser 1–2–5 value"><span>Looser</span><span aria-hidden="true">+</span></button>
+                        <button class="tolerance-step" type="button" data-step-target="dopri-relative-tolerance" data-direction="looser" aria-label="Use a larger relative tolerance" title="Next looser 1–2–5 value"><span class="step-symbol" aria-hidden="true">+</span><span class="step-label">Looser</span></button>
                       </div>
                     </div>
                     <div class="field-group tolerance-field">
                       <div class="field-label-row">
                         <label for="dopri-absolute-tolerance">Absolute tolerance</label>
-                        <button class="field-reset" type="button" data-reset-target="dopri-absolute-tolerance" aria-label="Reset absolute tolerance to 1e-10" title="Reset to 1e-10" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                        <button class="field-reset is-concealed" type="button" data-reset-target="dopri-absolute-tolerance" aria-label="Reset absolute tolerance to 1e-10" aria-hidden="true" tabindex="-1" title="Reset to 1e-10"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
                       </div>
                       <p class="field-hint" id="absolute-tolerance-hint">Sets the local error scale near zero.</p>
                       <div class="tolerance-control">
-                        <button class="tolerance-step" type="button" data-tolerance-target="dopri-absolute-tolerance" data-direction="tighter" aria-label="Use a smaller absolute tolerance" title="Next tighter 1–2–5 value"><span aria-hidden="true">−</span><span>Tighter</span></button>
+                        <button class="tolerance-step" type="button" data-step-target="dopri-absolute-tolerance" data-direction="tighter" aria-label="Use a smaller absolute tolerance" title="Next tighter 1–2–5 value"><span class="step-symbol" aria-hidden="true">−</span><span class="step-label">Tighter</span></button>
                         <input id="dopri-absolute-tolerance" type="text" value="1e-10" inputmode="text" autocapitalize="off" spellcheck="false" aria-describedby="absolute-tolerance-hint tolerance-accuracy-note" />
-                        <button class="tolerance-step" type="button" data-tolerance-target="dopri-absolute-tolerance" data-direction="looser" aria-label="Use a larger absolute tolerance" title="Next looser 1–2–5 value"><span>Looser</span><span aria-hidden="true">+</span></button>
+                        <button class="tolerance-step" type="button" data-step-target="dopri-absolute-tolerance" data-direction="looser" aria-label="Use a larger absolute tolerance" title="Next looser 1–2–5 value"><span class="step-symbol" aria-hidden="true">+</span><span class="step-label">Looser</span></button>
                       </div>
                     </div>
                     <p class="tolerance-accuracy-note" id="tolerance-accuracy-note">These are local state-error targets, not guaranteed output accuracy.</p>
@@ -233,14 +242,20 @@
                     <div class="field-group">
                       <div class="field-label-row">
                         <label for="dopri-max-step">Maximum step <span class="optional-marker">Optional</span></label>
-                        <button class="field-reset" type="button" data-reset-target="dopri-max-step" aria-label="Reset maximum step to automatic" title="Reset to automatic" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                        <button class="field-reset is-concealed" type="button" data-reset-target="dopri-max-step" aria-label="Reset maximum step to automatic" aria-hidden="true" tabindex="-1" title="Reset to automatic"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
                       </div>
-                      <div class="unit-input"><input id="dopri-max-step" type="number" min="0" step="any" placeholder="Automatic" inputmode="decimal" /><span>ms</span></div>
+                      <label class="automatic-choice"><input id="dopri-max-step-automatic" type="checkbox" checked /><span>Automatic</span><small>Let DOPRI choose each step</small></label>
+                      <div class="tolerance-control max-step-control">
+                        <button class="tolerance-step" type="button" data-step-target="dopri-max-step" data-direction="tighter" aria-label="Use a smaller maximum step" title="Next smaller 1–2–5 value"><span class="step-symbol" aria-hidden="true">−</span><span class="step-label">Smaller</span></button>
+                        <div class="max-step-value"><input id="dopri-max-step" type="text" placeholder="—" inputmode="decimal" disabled aria-describedby="max-step-hint" /><span>ms</span></div>
+                        <button class="tolerance-step" type="button" data-step-target="dopri-max-step" data-direction="looser" aria-label="Use a larger maximum step" title="Next larger 1–2–5 value"><span class="step-symbol" aria-hidden="true">+</span><span class="step-label">Larger</span></button>
+                      </div>
+                      <p class="field-hint" id="max-step-hint">Turn off Automatic to set a physical upper bound.</p>
                     </div>
                     <div class="field-group">
                       <div class="field-label-row">
                         <label for="dopri-max-attempts">Maximum attempts per interval</label>
-                        <button class="field-reset" type="button" data-reset-target="dopri-max-attempts" aria-label="Reset maximum attempts per interval to 4096" title="Reset to 4096" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
+                        <button class="field-reset is-concealed" type="button" data-reset-target="dopri-max-attempts" aria-label="Reset maximum attempts per interval to 4096" aria-hidden="true" tabindex="-1" title="Reset to 4096"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 4.5A4 4 0 1 0 10 7M9.5 1.75V4.5H6.75" /></svg></button>
                       </div>
                       <input id="dopri-max-attempts" type="number" min="1" step="1" value="4096" inputmode="numeric" />
                     </div>
@@ -248,6 +263,10 @@
                   </section>
                 </div>
                 <div id="rk4-fields" hidden>
+                  <div class="dopri-panel-heading rk4-panel-heading">
+                    <strong>Fixed-step limits</strong>
+                    <p>Choose the physical step cap and the budget for one sample interval.</p>
+                  </div>
                   <div class="field-row">
                     <div class="field-group">
                       <label for="rk4-max-step">Maximum step</label>

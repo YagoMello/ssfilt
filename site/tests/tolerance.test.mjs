@@ -10,6 +10,8 @@ assert.equal(stepTolerance(5e-11, "tighter"), 2e-11);
 assert.equal(stepTolerance(5e-11, "looser"), 1e-10);
 assert.equal(stepTolerance(5e-6, "tighter"), 2e-6);
 assert.equal(stepTolerance(5e-15, "looser"), 1e-14);
+assert.equal(stepTolerance(1, "tighter"), 0.5);
+assert.equal(stepTolerance(1, "looser"), 2);
 
 assert.equal(stepTolerance(3.7e-7, "tighter"), 2e-7);
 assert.equal(stepTolerance(3.7e-7, "looser"), 5e-7);
