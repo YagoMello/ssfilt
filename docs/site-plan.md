@@ -60,6 +60,10 @@ The playground supports:
 - Chebyshev passband ripple; and
 - linear, previous-value hold, and current-value hold reconstruction.
 
+The native `plot_responses` tool also covers the newer band-stop topology.
+Bringing band-stop to the browser is a bounded follow-up, not a reason to delay
+or complicate the streaming filter API.
+
 The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only
 public API available in the current prerelease.

@@ -57,7 +57,7 @@ pub(super) fn draw<const N: usize>(
         .into_drawing_area();
     root.fill(&WHITE)?;
     let order_label = match topology {
-        Topology::BandPass => format!(
+        Topology::BandPass | Topology::BandStop => format!(
             "final order {N} (prototype order {})",
             topology.prototype_order(N)
         ),
@@ -189,13 +189,14 @@ fn draw_phase(
         ))?;
     }
     for response in responses {
-        chart.draw_series(LineSeries::new(
-            response
-                .frequency
-                .iter()
-                .map(|point| (point.ratio, point.phase_radians.to_degrees())),
-            response.spec.color.stroke_width(scaled(2)),
-        ))?;
+        for segment in defined_curve_segments(&response.frequency, |point| {
+            point.phase_radians.map(f64::to_degrees)
+        }) {
+            chart.draw_series(LineSeries::new(
+                segment,
+                response.spec.color.stroke_width(scaled(2)),
+            ))?;
+        }
         draw_phase_markers(&mut chart, response)?;
     }
     Ok(())
@@ -209,9 +210,10 @@ fn draw_phase_markers(
         inspection
             .measured
             .filter(|point| point.phase_is_resolved())
-            .map(|point| {
+            .and_then(|point| point.unwrapped_phase_radians)
+            .map(|phase| {
                 Circle::new(
-                    (inspection.ratio, point.unwrapped_phase_radians.to_degrees()),
+                    (inspection.ratio, phase.to_degrees()),
                     scaled(3),
                     response.spec.color.filled(),
                 )
@@ -232,7 +234,7 @@ fn draw_group_delay(
             response
                 .frequency
                 .iter()
-                .map(|point| point.normalized_group_delay)
+                .filter_map(|point| point.normalized_group_delay)
         })
         .fold(0.5_f64, f64::max);
     let upper = delay_maximum.mul_add(1.05, 0.05);
@@ -250,13 +252,14 @@ fn draw_group_delay(
         ))?;
     }
     for response in responses {
-        chart.draw_series(LineSeries::new(
-            response
-                .frequency
-                .iter()
-                .map(|point| (point.ratio, point.normalized_group_delay)),
-            response.spec.color.stroke_width(scaled(2)),
-        ))?;
+        for segment in
+            defined_curve_segments(&response.frequency, |point| point.normalized_group_delay)
+        {
+            chart.draw_series(LineSeries::new(
+                segment,
+                response.spec.color.stroke_width(scaled(2)),
+            ))?;
+        }
     }
     Ok(())
 }
@@ -293,7 +296,7 @@ fn draw_step(
         .configure_mesh()
         .x_desc(match topology {
             Topology::LowPass | Topology::HighPass => "time × whole-filter cutoff frequency",
-            Topology::BandPass => "time × geometric band-center frequency",
+            Topology::BandPass | Topology::BandStop => "time × geometric band-center frequency",
         })
         .y_desc("output")
         .x_labels(9)
@@ -326,7 +329,7 @@ where
     DB::ErrorType: Error + 'static,
 {
     let x_label = match topology {
-        Topology::BandPass => "frequency / geometric band center",
+        Topology::BandPass | Topology::BandStop => "frequency / geometric band center",
         Topology::LowPass | Topology::HighPass => "frequency / whole-filter −3 dB cutoff",
     };
     chart
@@ -347,7 +350,9 @@ where
 fn gain_label(topology: Topology) -> &'static str {
     match topology {
         Topology::LowPass => "gain relative to DC (dB)",
-        Topology::HighPass | Topology::BandPass => "gain relative to passband (dB)",
+        Topology::HighPass | Topology::BandPass | Topology::BandStop => {
+            "gain relative to passband (dB)"
+        }
     }
 }
 
@@ -355,6 +360,9 @@ fn magnitude_caption(topology: Topology) -> &'static str {
     match topology {
         Topology::BandPass => {
             "Magnitude: analytic curves and public-stream inspection markers where within work limit (whole-filter −3 dB edges at 0.5 and 2 Hz)"
+        }
+        Topology::BandStop => {
+            "Magnitude: analytic curves and public-stream inspection markers (−3 dB edges at 0.5 and 2 Hz; ideal center is zero)"
         }
         Topology::LowPass | Topology::HighPass => {
             "Magnitude: analytic curves and public-stream inspection markers where within work limit (whole-filter −3 dB cutoff at 1 Hz)"
@@ -365,7 +373,7 @@ fn magnitude_caption(topology: Topology) -> &'static str {
 fn cutoff_edges(topology: Topology) -> &'static [f64] {
     match topology {
         Topology::LowPass | Topology::HighPass => &[1.0],
-        Topology::BandPass => &[0.5, 2.0],
+        Topology::BandPass | Topology::BandStop => &[0.5, 2.0],
     }
 }
 
@@ -376,14 +384,14 @@ fn phase_range(responses: &[ResponseData]) -> (f64, f64) {
             response
                 .frequency
                 .iter()
-                .map(|point| point.phase_radians.to_degrees())
+                .filter_map(|point| point.phase_radians.map(f64::to_degrees))
                 .chain(
                     response
                         .measurements
                         .iter()
                         .filter_map(|point| point.measured)
                         .filter(|point| point.phase_is_resolved())
-                        .map(|point| point.unwrapped_phase_radians.to_degrees()),
+                        .filter_map(|point| point.unwrapped_phase_radians.map(f64::to_degrees)),
                 )
         })
         .fold((0.0_f64, 0.0_f64), |(low, high), value| {
@@ -391,4 +399,55 @@ fn phase_range(responses: &[ResponseData]) -> (f64, f64) {
         });
     let span = (maximum - minimum).max(20.0);
     (minimum - 0.08 * span, maximum + 0.08 * span)
+}
+
+fn defined_curve_segments<F>(points: &[FrequencyPoint], value: F) -> Vec<Vec<(f64, f64)>>
+where
+    F: Fn(&FrequencyPoint) -> Option<f64>,
+{
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+    for point in points {
+        if let Some(value) = value(point) {
+            current.push((point.ratio, value));
+        } else if !current.is_empty() {
+            segments.push(core::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::defined_curve_segments;
+    use crate::analytic::FrequencyPoint;
+
+    #[test]
+    fn undefined_notch_center_splits_phase_into_two_paths() {
+        let points = [
+            FrequencyPoint {
+                ratio: 0.9,
+                gain_db: -40.0,
+                phase_radians: Some(-1.0),
+                normalized_group_delay: Some(1.0),
+            },
+            FrequencyPoint {
+                ratio: 1.0,
+                gain_db: f64::NEG_INFINITY,
+                phase_radians: None,
+                normalized_group_delay: None,
+            },
+            FrequencyPoint {
+                ratio: 1.1,
+                gain_db: -40.0,
+                phase_radians: Some(1.0),
+                normalized_group_delay: Some(1.0),
+            },
+        ];
+        let segments = defined_curve_segments(&points, |point| point.phase_radians);
+        assert_eq!(segments, vec![vec![(0.9, -1.0)], vec![(1.1, 1.0)]]);
+    }
 }

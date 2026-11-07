@@ -239,15 +239,17 @@ documentation whenever practical.
 
 ## Current boundaries
 
-The implemented public topologies are low-pass, high-pass, and band-pass with
-repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses. Runtime
-scalars are sealed to validated `f32` and `f64` implementations. The adaptive
-Dormand-Prince integrator and continuous models remain private.
+The implemented public topologies are low-pass, high-pass, band-pass, and
+band-stop with repeated-pole, Butterworth, Bessel, and Chebyshev Type I
+responses. Runtime scalars are sealed to validated `f32` and `f64`
+implementations. Dormand-Prince 5(4) and fixed-step RK4 are selectable through
+public sealed policies; method-specific runtimes and continuous models remain
+private.
 
 Phase correction and offline batch filtering are not part of the public API.
 Their investigations remain preserved on the research branch and in Git
 history; do not move a partial design into the streaming crate. Reconsider
 either only from a concrete user workload with a complete interface and clear
 latency, useful-band, magnitude, and boundary semantics. Fixed point, custom
-public kernels, alternative public integrators, and a possible separate batch
+public kernels, additional public integrators, and a possible separate batch
 crate likewise remain deferred until a measured use case justifies them.

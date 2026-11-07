@@ -102,14 +102,24 @@ fn write_row<W: std::io::Write>(
             ]
         },
         |measured| {
+            let gain_error = if analytic.gain_db.is_finite() {
+                float(measured.gain_db - analytic.gain_db)
+            } else {
+                String::new()
+            };
+            let phase_error = measured
+                .unwrapped_phase_radians
+                .zip(analytic.phase_radians)
+                .map(|(measured, analytic)| float(measured - analytic))
+                .unwrap_or_default();
             [
                 float(measured.gain),
                 float(measured.gain_db),
-                float(measured.gain_db - analytic.gain_db),
+                gain_error,
                 float(measured.wrapped_phase_radians),
-                float(measured.unwrapped_phase_radians),
-                float(measured.unwrapped_phase_radians - analytic.phase_radians),
-                measured.phase_is_resolved().to_string(),
+                float_option(measured.unwrapped_phase_radians),
+                phase_error,
+                (measured.phase_is_resolved() && analytic.phase_radians.is_some()).to_string(),
                 float(measured.fit_offset),
                 float(measured.fit_rms),
                 measured.fit_sample_count.to_string(),
@@ -131,11 +141,11 @@ fn write_row<W: std::io::Write>(
         measured_fields[0].clone(),
         measured_fields[1].clone(),
         measured_fields[2].clone(),
-        float(analytic.phase_radians),
+        float_option(analytic.phase_radians),
         measured_fields[3].clone(),
         measured_fields[4].clone(),
         measured_fields[5].clone(),
-        float(analytic.normalized_group_delay),
+        float_option(analytic.normalized_group_delay),
         measured_fields[6].clone(),
         measured_fields[7].clone(),
         measured_fields[8].clone(),
@@ -148,6 +158,10 @@ fn write_row<W: std::io::Write>(
 
 fn float(value: f64) -> String {
     format!("{value:.17}")
+}
+
+fn float_option(value: Option<f64>) -> String {
+    value.map(float).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -168,8 +182,8 @@ mod tests {
             frequency: vec![FrequencyPoint {
                 ratio: 1.0,
                 gain_db: -3.010_299_956_639_812,
-                phase_radians: -1.0,
-                normalized_group_delay: 0.5,
+                phase_radians: Some(-1.0),
+                normalized_group_delay: Some(0.5),
             }],
             measurements: vec![
                 InspectionPoint {
@@ -177,15 +191,15 @@ mod tests {
                     analytic: FrequencyPoint {
                         ratio: 1.0,
                         gain_db: -3.010_299_956_639_812,
-                        phase_radians: -1.0,
-                        normalized_group_delay: 0.5,
+                        phase_radians: Some(-1.0),
+                        normalized_group_delay: Some(0.5),
                     },
                     measured: Some(MeasuredFrequencyPoint {
                         gain: 0.707_106_781_186_547_6,
                         gain_db: -3.010_299_956_639_812,
                         fit_offset: 0.0,
                         wrapped_phase_radians: -1.0,
-                        unwrapped_phase_radians: -1.0,
+                        unwrapped_phase_radians: Some(-1.0),
                         fit_rms: 1.0e-8,
                         fit_sample_count: 1_024,
                     }),
@@ -197,8 +211,8 @@ mod tests {
                     analytic: FrequencyPoint {
                         ratio: 2.0,
                         gain_db: -12.0,
-                        phase_radians: -2.0,
-                        normalized_group_delay: 0.25,
+                        phase_radians: Some(-2.0),
+                        normalized_group_delay: Some(0.25),
                     },
                     measured: None,
                     public_update_count: 2_000_000,
@@ -243,5 +257,45 @@ mod tests {
         assert_eq!(row.get(3), Some("2"));
         assert_eq!(row.get(4), Some("0.50000000000000000"));
         assert_eq!(row.get(5), Some("2.00000000000000000"));
+    }
+
+    #[test]
+    fn band_stop_center_keeps_gain_evidence_without_inventing_phase() {
+        let responses = [ResponseData {
+            spec: ResponseSpec::new("Butterworth", Response::Butterworth, RGBColor(0, 0, 0)),
+            frequency: Vec::new(),
+            measurements: vec![InspectionPoint {
+                ratio: 1.0,
+                analytic: FrequencyPoint {
+                    ratio: 1.0,
+                    gain_db: f64::NEG_INFINITY,
+                    phase_radians: None,
+                    normalized_group_delay: None,
+                },
+                measured: Some(MeasuredFrequencyPoint {
+                    gain: 1.0e-5,
+                    gain_db: -100.0,
+                    fit_offset: 0.0,
+                    wrapped_phase_radians: 0.75,
+                    unwrapped_phase_radians: None,
+                    fit_rms: 1.0e-8,
+                    fit_sample_count: 1_024,
+                }),
+                public_update_count: 2_000,
+                status: InspectionStatus::Measured,
+            }],
+            step: Vec::new(),
+        }];
+        let bytes = csv_bytes(Topology::BandStop, 4, &responses).unwrap();
+        let mut reader = csv::Reader::from_reader(bytes.as_slice());
+        let row = reader.records().next().unwrap().unwrap();
+        assert_eq!(row.get(10), Some("-inf"));
+        assert_eq!(row.get(11), Some("0.00001000000000000"));
+        assert_eq!(row.get(13), Some(""));
+        assert_eq!(row.get(14), Some(""));
+        assert_eq!(row.get(16), Some(""));
+        assert_eq!(row.get(17), Some(""));
+        assert_eq!(row.get(18), Some(""));
+        assert_eq!(row.get(19), Some("false"));
     }
 }

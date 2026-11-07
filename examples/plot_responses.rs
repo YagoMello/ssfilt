@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use render::{ResponseData, ResponseSpec};
-use ssfilt::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_ORDER, Response};
+use ssfilt::{MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER, Response};
 
 const MEASUREMENT_FREQUENCY_RATIOS: [f64; 15] = [
     0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0,
@@ -48,6 +48,7 @@ enum Topology {
     LowPass,
     HighPass,
     BandPass,
+    BandStop,
 }
 
 impl Topology {
@@ -56,13 +57,14 @@ impl Topology {
             Self::LowPass => "low-pass",
             Self::HighPass => "high-pass",
             Self::BandPass => "band-pass",
+            Self::BandStop => "band-stop",
         }
     }
 
     const fn prototype_order(self, final_order: usize) -> usize {
         match self {
             Self::LowPass | Self::HighPass => final_order,
-            Self::BandPass => final_order / 2,
+            Self::BandPass | Self::BandStop => final_order / 2,
         }
     }
 
@@ -70,12 +72,13 @@ impl Topology {
         match self {
             Self::LowPass | Self::HighPass => MAX_BESSEL_ORDER,
             Self::BandPass => MAX_BESSEL_BAND_PASS_ORDER,
+            Self::BandStop => MAX_BESSEL_BAND_STOP_ORDER,
         }
     }
 
     const fn steady_step_value(self) -> f64 {
         match self {
-            Self::LowPass => 1.0,
+            Self::LowPass | Self::BandStop => 1.0,
             Self::HighPass | Self::BandPass => 0.0,
         }
     }
@@ -83,14 +86,14 @@ impl Topology {
     const fn minus_three_db_edges(self) -> (f64, f64) {
         match self {
             Self::LowPass | Self::HighPass => (1.0, 1.0),
-            Self::BandPass => (0.5, 2.0),
+            Self::BandPass | Self::BandStop => (0.5, 2.0),
         }
     }
 
     const fn frequency_reference(self) -> &'static str {
         match self {
             Self::LowPass | Self::HighPass => "whole-filter −3 dB cutoff",
-            Self::BandPass => "geometric band center",
+            Self::BandPass | Self::BandStop => "geometric band center",
         }
     }
 }
@@ -109,7 +112,7 @@ enum ResponseChoice {
 #[command(
     name = "plot_responses",
     about = "Plot filter responses and measurements from the public streaming API.",
-    after_help = "Legacy positional form: [ORDER] [OUTPUT.svg]\nDefaults: order 4, low-pass, all supported response families, target/filter-responses.svg, and a sibling CSV file. Band-pass order is the final even order; its default −3 dB edges are 0.5 Hz and 2 Hz."
+    after_help = "Legacy positional form: [ORDER] [OUTPUT.svg]\nDefaults: order 4, low-pass, all supported response families, target/filter-responses.svg, and a sibling CSV file. Band-pass and band-stop orders are final even orders; their default −3 dB edges are 0.5 Hz and 2 Hz."
 )]
 struct Cli {
     /// Legacy positional order. Prefer --order.
@@ -169,8 +172,13 @@ impl Cli {
         if csv_path == output_path {
             bail!("SVG and CSV output paths must be different");
         }
-        if self.topology == Topology::BandPass && !order.is_multiple_of(2) {
-            bail!("band-pass final order must be positive and even, got {order}");
+        if matches!(self.topology, Topology::BandPass | Topology::BandStop)
+            && !order.is_multiple_of(2)
+        {
+            bail!(
+                "{} final order must be positive and even, got {order}",
+                self.topology.label()
+            );
         }
         if self.response == ResponseChoice::Bessel && order > self.topology.bessel_limit() {
             bail!(
@@ -193,7 +201,7 @@ impl Cli {
 fn default_output_path(topology: Topology) -> PathBuf {
     match topology {
         Topology::LowPass => PathBuf::from("target/filter-responses.svg"),
-        Topology::HighPass | Topology::BandPass => {
+        Topology::HighPass | Topology::BandPass | Topology::BandStop => {
             PathBuf::from(format!("target/{}-responses.svg", topology.label()))
         }
     }
@@ -427,6 +435,16 @@ mod tests {
     }
 
     #[test]
+    fn band_stop_requires_an_even_final_order() {
+        let error =
+            Cli::try_parse_from(["plot_responses", "--topology", "band-stop", "--order", "5"])
+                .unwrap()
+                .normalize()
+                .unwrap_err();
+        assert!(error.to_string().contains("positive and even"));
+    }
+
+    #[test]
     fn explicitly_selected_bessel_reports_the_topology_limit() {
         let error = Cli::try_parse_from([
             "plot_responses",
@@ -450,6 +468,13 @@ mod tests {
     #[test]
     fn all_responses_keep_bessel_at_the_final_band_pass_limit() {
         let specs = response_specs(ResponseChoice::All, Topology::BandPass, 50);
+        assert_eq!(specs.len(), 4);
+        assert_eq!(specs[2].label, "Bessel");
+    }
+
+    #[test]
+    fn all_responses_keep_bessel_at_the_final_band_stop_limit() {
+        let specs = response_specs(ResponseChoice::All, Topology::BandStop, 50);
         assert_eq!(specs.len(), 4);
         assert_eq!(specs[2].label, "Bessel");
     }

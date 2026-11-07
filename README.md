@@ -393,11 +393,11 @@ expression and its numerical defaults are unchanged.
 ## Error behavior
 
 Construction rejects zero order, non-positive or non-finite cutoff, odd
-band-pass order, invalid or reversed band-pass edges, invalid Chebyshev ripple,
-unsupported Bessel order, non-finite initial input, and invalid integration
-controls. It also rejects a finite initial input when its equilibrium state or
-output cannot be represented. Updates reject non-finite input and non-positive
-or non-finite elapsed time.
+band-pass or band-stop order, invalid or reversed band edges, invalid
+Chebyshev ripple, unsupported Bessel order, non-finite initial input, and
+invalid integration controls. It also rejects a finite initial input when its
+equilibrium state or output cannot be represented. Updates reject non-finite
+input and non-positive or non-finite elapsed time.
 
 An update is transactional: if integration cannot finish, the state,
 output, and preceding input remain unchanged. The maximum internal timestep
@@ -428,10 +428,10 @@ the pure-Rust math backend:
 ssfilt = { version = "0.1.0-beta.1", default-features = false, features = ["libm"] }
 ```
 
-Use `LowPass::<N, f32>` (or `HighPass`/`BandPass`) when `f32` is appropriate for
-the target's precision and range. The `f32` choice does not guarantee speed on
-an MCU without a floating-point unit: benchmark the actual target, especially
-for high orders and integration. The fixed-size enum above also works
+Use `LowPass::<N, f32>` (or `HighPass`/`BandPass`/`BandStop`) when `f32` is
+appropriate for the target's precision and range. The `f32` choice does not
+guarantee speed on an MCU without a floating-point unit: benchmark the actual
+target, especially for high orders and integration. The fixed-size enum above also works
 without `std` or an allocator.
 
 With the `std` feature disabled, handle `BuildError` and `UpdateError`
@@ -491,6 +491,7 @@ Select a topology, response family, or order with named options:
 ```text
 cargo run --release --example plot_responses -- --topology high-pass --order 4 --output target/high-pass-responses.svg
 cargo run --release --example plot_responses -- --topology band-pass --response bessel --order 8 --output target/band-pass-bessel.svg
+cargo run --release --example plot_responses -- --topology band-stop --response butterworth --order 4 --output target/band-stop-butterworth.svg
 cargo run --release --example plot_responses -- --response chebyshev1 --order 12 --output target/chebyshev-12.svg --csv target/chebyshev-12.csv
 cargo run --release --example plot_performance -- target/filter-performance.svg
 ```
@@ -500,16 +501,16 @@ The commonly used flags are:
 
 | Flag | Values and behavior |
 | --- | --- |
-| `--topology` | `low-pass` (default), `high-pass`, or `band-pass` |
+| `--topology` | `low-pass` (default), `high-pass`, `band-pass`, or `band-stop` |
 | `--response` | `all` (default), `repeated-pole`, `butterworth`, `bessel`, or `chebyshev1` |
-| `--order` | Final order 1–50; band-pass orders must be even |
+| `--order` | Final order 1–50; band-pass and band-stop orders must be even |
 | `--output` | SVG path; parent directories are created |
 | `--csv` | Measurement report path; defaults beside the SVG |
 
 The legacy low-pass form `[ORDER] [OUTPUT.svg]` remains available. Band-pass
-uses −3 dB edges at 0.5 and 2 times the geometric center. Explicit Bessel
-orders above the supported limit fail clearly; `--response all` omits Bessel
-when the selected order exceeds its limit.
+and band-stop use −3 dB edges at 0.5 and 2 times the geometric center.
+Explicit Bessel orders above the supported limit fail clearly; `--response
+all` omits Bessel when the selected order exceeds its limit.
 
 Analytic lines represent ideal continuous-time sine responses. Circular
 markers are inspection measurements using the public filter,
@@ -520,6 +521,12 @@ legitimately sit above the analytic line; this shows what that sampling setup
 actually achieves. A two-million-update limit prevents one expensive
 high-order marker from blocking the plot. Such points remain in CSV with an
 explicit work-limit status and no fabricated measurement.
+
+For band-stop plots, the ideal center gain is recorded as `-inf`. Phase and
+group delay are undefined at that exact zero, so their curves break at the
+center and the corresponding CSV fields are blank. The streamed center marker
+still reports the residual gain produced by the selected input reconstruction
+and sample rate.
 
 The performance SVG is intentionally separate: it shows indicative median
 host timings for order-four response families/topologies, adaptive RK45

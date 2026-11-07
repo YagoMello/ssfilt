@@ -1,7 +1,7 @@
 //! Deterministic sine measurements made with public streaming updates.
 
 use anyhow::{Result, bail};
-use ssfilt::{BandPass, HighPass, InputModel, LowPass, Response, StreamingFilter};
+use ssfilt::{BandPass, BandStop, HighPass, InputModel, LowPass, Response, StreamingFilter};
 
 use crate::Topology;
 use crate::analytic::{self, FrequencyPoint};
@@ -23,7 +23,7 @@ pub(super) struct MeasuredFrequencyPoint {
     pub(super) gain_db: f64,
     pub(super) fit_offset: f64,
     pub(super) wrapped_phase_radians: f64,
-    pub(super) unwrapped_phase_radians: f64,
+    pub(super) unwrapped_phase_radians: Option<f64>,
     pub(super) fit_rms: f64,
     pub(super) fit_sample_count: usize,
 }
@@ -285,10 +285,9 @@ pub(super) fn measure<const N: usize>(
             gain_db: 20.0 * gain.log10(),
             fit_offset: fit.offset,
             wrapped_phase_radians: fit.wrapped_phase(),
-            unwrapped_phase_radians: analytic::phase_near(
-                fit.wrapped_phase(),
-                analytic_point.phase_radians,
-            ),
+            unwrapped_phase_radians: analytic_point
+                .phase_radians
+                .map(|phase| analytic::phase_near(fit.wrapped_phase(), phase)),
             fit_rms: fit.rms,
             fit_sample_count,
         },
@@ -319,6 +318,13 @@ pub(super) fn build_filter<const N: usize>(
         ),
         Topology::BandPass => Box::new(
             BandPass::<N>::builder(0.5, 2.0)
+                .response(response)
+                .input_model(input_model)
+                .initial_input(initial_input)
+                .build()?,
+        ),
+        Topology::BandStop => Box::new(
+            BandStop::<N>::builder(0.5, 2.0)
                 .response(response)
                 .input_model(input_model)
                 .initial_input(initial_input)
@@ -454,8 +460,38 @@ mod tests {
             assert_relative_eq!(measured.gain_db, analytic_point.gain_db, epsilon = 0.025);
             assert!(measured.phase_is_resolved());
             assert!(
-                (measured.unwrapped_phase_radians - analytic_point.phase_radians).abs() < 1.0e-3
+                (measured.unwrapped_phase_radians.unwrap() - analytic_point.phase_radians.unwrap())
+                    .abs()
+                    < 1.0e-3
             );
+        }
+    }
+
+    #[test]
+    fn band_stop_streaming_tracks_both_edges_and_reports_center_residual() {
+        for ratio in [0.5, 1.0, 2.0] {
+            let analytic_point =
+                analytic::frequency_point(Topology::BandStop, Response::Butterworth, 2, ratio)
+                    .unwrap();
+            let measured = match measure::<2>(
+                Topology::BandStop,
+                Response::Butterworth,
+                ratio,
+                analytic_point,
+            )
+            .unwrap()
+            {
+                MeasurementResult::Measured { point, .. } => point,
+                MeasurementResult::WorkLimitExceeded { .. } => {
+                    panic!("a low-order band-stop inspection point should fit the work limit")
+                }
+            };
+            if ratio == 1.0 {
+                assert!(measured.gain < 1.0e-3);
+                assert_eq!(measured.unwrapped_phase_radians, None);
+            } else {
+                assert_relative_eq!(measured.gain_db, analytic_point.gain_db, epsilon = 0.025);
+            }
         }
     }
 

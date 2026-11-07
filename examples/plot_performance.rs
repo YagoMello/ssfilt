@@ -13,7 +13,7 @@ use num_traits::ToPrimitive;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use ssfilt::{
-    BandPass, DormandPrince54, HighPass, InputModel, LowPass, Response, RungeKutta4,
+    BandPass, BandStop, DormandPrince54, HighPass, InputModel, LowPass, Response, RungeKutta4,
     StreamingFilter,
 };
 
@@ -116,6 +116,12 @@ fn kernel_cases() -> Result<Vec<Timing>, Box<dyn Error>> {
         timing(
             "Butterworth BP",
             BandPass::<4>::builder(CUTOFF_HZ / 2.0, CUTOFF_HZ * 2.0)
+                .response(Response::Butterworth)
+                .build()?,
+        )?,
+        timing(
+            "Butterworth BS",
+            BandStop::<4>::builder(CUTOFF_HZ / 2.0, CUTOFF_HZ * 2.0)
                 .response(Response::Butterworth)
                 .build()?,
         )?,

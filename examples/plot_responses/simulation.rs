@@ -36,7 +36,12 @@ mod tests {
 
     #[test]
     fn each_topology_has_a_public_streamed_step_trace() {
-        for topology in [Topology::LowPass, Topology::HighPass, Topology::BandPass] {
+        for topology in [
+            Topology::LowPass,
+            Topology::HighPass,
+            Topology::BandPass,
+            Topology::BandStop,
+        ] {
             let points = measure_step_response::<2>(topology, Response::Butterworth).unwrap();
             assert_eq!(points.len(), 1_601);
             assert_eq!(points.first().unwrap().0, 0.0);
@@ -55,5 +60,12 @@ mod tests {
         assert!(points[1].1 > 0.95);
         assert!(points[1].1 <= 1.0);
         assert!(points.last().unwrap().1.abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn band_stop_step_uses_direct_feedthrough_and_returns_to_unity() {
+        let points = measure_step_response::<2>(Topology::BandStop, Response::Butterworth).unwrap();
+        assert!(points[1].1 > 0.95);
+        assert!((points.last().unwrap().1 - 1.0).abs() < 1.0e-4);
     }
 }

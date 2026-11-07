@@ -13,14 +13,14 @@ const BAND_FRACTIONAL_BANDWIDTH: f64 = 1.5;
 pub(super) struct FrequencyPoint {
     pub(super) ratio: f64,
     pub(super) gain_db: f64,
-    pub(super) phase_radians: f64,
-    pub(super) normalized_group_delay: f64,
+    pub(super) phase_radians: Option<f64>,
+    pub(super) normalized_group_delay: Option<f64>,
 }
 
 pub(super) fn frequency_range(topology: Topology) -> (f64, f64) {
     match topology {
         Topology::LowPass | Topology::HighPass => (0.01, 20.0),
-        Topology::BandPass => (0.05, 20.0),
+        Topology::BandPass | Topology::BandStop => (0.05, 20.0),
     }
 }
 
@@ -57,8 +57,8 @@ pub(super) fn frequency_point(
             return Ok(FrequencyPoint {
                 ratio,
                 gain_db: low_pass.gain_db,
-                phase_radians: -low_pass.phase_radians,
-                normalized_group_delay: low_pass.normalized_group_delay / (ratio * ratio),
+                phase_radians: Some(-low_pass.phase_radians),
+                normalized_group_delay: Some(low_pass.normalized_group_delay / (ratio * ratio)),
             });
         }
         Topology::BandPass => {
@@ -70,18 +70,46 @@ pub(super) fn frequency_point(
             return Ok(FrequencyPoint {
                 ratio,
                 gain_db: low_pass.gain_db,
-                phase_radians: low_pass.phase_radians * mapped.signum(),
-                normalized_group_delay: low_pass.normalized_group_delay
-                    * (1.0 + 1.0 / (ratio * ratio))
-                    / BAND_FRACTIONAL_BANDWIDTH,
+                phase_radians: Some(low_pass.phase_radians * mapped.signum()),
+                normalized_group_delay: Some(
+                    low_pass.normalized_group_delay * (1.0 + 1.0 / (ratio * ratio))
+                        / BAND_FRACTIONAL_BANDWIDTH,
+                ),
+            });
+        }
+        Topology::BandStop => {
+            if final_order == 0 || !final_order.is_multiple_of(2) {
+                bail!("band-stop final order must be positive and even");
+            }
+            if ratio.to_bits() == 1.0_f64.to_bits() {
+                return Ok(FrequencyPoint {
+                    ratio,
+                    gain_db: f64::NEG_INFINITY,
+                    phase_radians: None,
+                    normalized_group_delay: None,
+                });
+            }
+            let denominator = 1.0 - ratio * ratio;
+            let mapped = BAND_FRACTIONAL_BANDWIDTH * ratio / denominator;
+            let low_pass = transfer::low_pass(response, prototype_order, mapped.abs())?;
+            return Ok(FrequencyPoint {
+                ratio,
+                gain_db: low_pass.gain_db,
+                phase_radians: Some(low_pass.phase_radians * mapped.signum()),
+                normalized_group_delay: Some(
+                    low_pass.normalized_group_delay
+                        * BAND_FRACTIONAL_BANDWIDTH
+                        * (1.0 + ratio * ratio)
+                        / (denominator * denominator),
+                ),
             });
         }
     };
     Ok(FrequencyPoint {
         ratio,
         gain_db: point.gain_db,
-        phase_radians: point.phase_radians,
-        normalized_group_delay: point.normalized_group_delay,
+        phase_radians: Some(point.phase_radians),
+        normalized_group_delay: Some(point.normalized_group_delay),
     })
 }
 
@@ -92,7 +120,7 @@ pub(super) fn minimum_settling_time_seconds(
 ) -> Result<f64> {
     let prototype_order = topology.prototype_order(final_order);
     let decay = transfer::slowest_normalized_decay(response, prototype_order)?;
-    let topology_scale = if topology == Topology::BandPass {
+    let topology_scale = if matches!(topology, Topology::BandPass | Topology::BandStop) {
         2.0
     } else {
         1.0
@@ -115,13 +143,21 @@ pub(super) fn visible_magnitude_points(points: &[FrequencyPoint]) -> Vec<(f64, f
         let preceding_visible = preceding.gain_db >= MAGNITUDE_FLOOR_DB;
         let current_visible = current.gain_db >= MAGNITUDE_FLOOR_DB;
         if preceding_visible != current_visible {
-            let fraction =
-                (MAGNITUDE_FLOOR_DB - preceding.gain_db) / (current.gain_db - preceding.gain_db);
-            let log_ratio = fraction.mul_add(
-                current.ratio.ln() - preceding.ratio.ln(),
-                preceding.ratio.ln(),
-            );
-            visible.push((log_ratio.exp(), MAGNITUDE_FLOOR_DB));
+            let crossing_ratio = if preceding.gain_db.is_finite() && current.gain_db.is_finite() {
+                let fraction = (MAGNITUDE_FLOOR_DB - preceding.gain_db)
+                    / (current.gain_db - preceding.gain_db);
+                fraction
+                    .mul_add(
+                        current.ratio.ln() - preceding.ratio.ln(),
+                        preceding.ratio.ln(),
+                    )
+                    .exp()
+            } else if preceding_visible {
+                current.ratio
+            } else {
+                preceding.ratio
+            };
+            visible.push((crossing_ratio, MAGNITUDE_FLOOR_DB));
         }
         if current_visible {
             visible.push((current.ratio, current.gain_db));
@@ -155,12 +191,24 @@ mod tests {
 
     #[test]
     fn log_frequency_grids_are_monotonic_and_cover_the_view_range() {
-        for topology in [Topology::LowPass, Topology::HighPass, Topology::BandPass] {
+        for topology in [
+            Topology::LowPass,
+            Topology::HighPass,
+            Topology::BandPass,
+            Topology::BandStop,
+        ] {
             let ratios = frequency_ratios(topology).collect::<Vec<_>>();
             assert_eq!(ratios.len(), 1_601);
             assert_eq!(ratios.first().copied(), Some(frequency_range(topology).0));
             assert_eq!(ratios.last().copied(), Some(frequency_range(topology).1));
             assert!(ratios.windows(2).all(|pair| pair[0] < pair[1]));
+            if topology == Topology::BandStop {
+                assert!(
+                    ratios
+                        .iter()
+                        .any(|ratio| ratio.to_bits() == 1.0_f64.to_bits())
+                );
+            }
         }
     }
 
@@ -181,20 +229,27 @@ mod tests {
             }
             for final_order in [2, 4, 8] {
                 for edge in [0.5, 2.0] {
-                    let point =
-                        frequency_point(Topology::BandPass, response, final_order, edge).unwrap();
-                    assert_relative_eq!(point.gain_db, -3.010_299_956_639_812, epsilon = 3.0e-11);
+                    for topology in [Topology::BandPass, Topology::BandStop] {
+                        let point = frequency_point(topology, response, final_order, edge).unwrap();
+                        assert_relative_eq!(
+                            point.gain_db,
+                            -3.010_299_956_639_812,
+                            epsilon = 3.0e-11
+                        );
+                    }
                 }
             }
         }
         for edge in [0.5, 2.0] {
-            assert_relative_eq!(
-                frequency_point(Topology::BandPass, Response::Bessel, 50, edge)
-                    .unwrap()
-                    .gain_db,
-                -3.010_299_956_639_812,
-                epsilon = 5.0e-11
-            );
+            for topology in [Topology::BandPass, Topology::BandStop] {
+                assert_relative_eq!(
+                    frequency_point(topology, Response::Bessel, 50, edge)
+                        .unwrap()
+                        .gain_db,
+                    -3.010_299_956_639_812,
+                    epsilon = 5.0e-11
+                );
+            }
         }
     }
 
@@ -206,15 +261,30 @@ mod tests {
             (Topology::HighPass, 8, 0.73),
             (Topology::BandPass, 8, 0.8),
             (Topology::BandPass, 8, 1.3),
+            (Topology::BandStop, 8, 0.8),
+            (Topology::BandStop, 8, 1.3),
         ] {
             let point = frequency_point(topology, Response::Butterworth, order, ratio).unwrap();
             let before =
                 frequency_point(topology, Response::Butterworth, order, ratio - step).unwrap();
             let after =
                 frequency_point(topology, Response::Butterworth, order, ratio + step).unwrap();
-            let derivative = -(after.phase_radians - before.phase_radians) / (2.0 * step);
-            assert_relative_eq!(point.normalized_group_delay, derivative, epsilon = 2.0e-7);
+            let derivative =
+                -(after.phase_radians.unwrap() - before.phase_radians.unwrap()) / (2.0 * step);
+            assert_relative_eq!(
+                point.normalized_group_delay.unwrap(),
+                derivative,
+                epsilon = 2.0e-7
+            );
         }
+    }
+
+    #[test]
+    fn band_stop_center_has_zero_gain_and_undefined_phase() {
+        let point = frequency_point(Topology::BandStop, Response::Butterworth, 4, 1.0).unwrap();
+        assert_eq!(point.gain_db, f64::NEG_INFINITY);
+        assert_eq!(point.phase_radians, None);
+        assert_eq!(point.normalized_group_delay, None);
     }
 
     #[test]
@@ -226,8 +296,8 @@ mod tests {
             .map(|(index, ratio)| super::FrequencyPoint {
                 ratio: *ratio,
                 gain_db: [-140.0, -3.0, 0.0, -3.0, -140.0][index],
-                phase_radians: 0.0,
-                normalized_group_delay: 0.0,
+                phase_radians: Some(0.0),
+                normalized_group_delay: Some(0.0),
             })
             .collect::<Vec<_>>();
         let visible = visible_magnitude_points(&points);
@@ -235,6 +305,37 @@ mod tests {
         assert!((0.1..0.5).contains(&visible.first().unwrap().0));
         assert_eq!(visible.last().unwrap().1, -120.0);
         assert!(visible.len() < points.len() + 2);
+    }
+
+    #[test]
+    fn clipped_magnitude_curve_handles_an_ideal_zero_without_non_finite_coordinates() {
+        let points = [
+            super::FrequencyPoint {
+                ratio: 0.9,
+                gain_db: -40.0,
+                phase_radians: Some(-1.0),
+                normalized_group_delay: Some(1.0),
+            },
+            super::FrequencyPoint {
+                ratio: 1.0,
+                gain_db: f64::NEG_INFINITY,
+                phase_radians: None,
+                normalized_group_delay: None,
+            },
+            super::FrequencyPoint {
+                ratio: 1.1,
+                gain_db: -40.0,
+                phase_radians: Some(1.0),
+                normalized_group_delay: Some(1.0),
+            },
+        ];
+        let visible = visible_magnitude_points(&points);
+        assert_eq!(visible, vec![(0.9, -40.0), (1.0, -120.0), (1.1, -40.0)]);
+        assert!(
+            visible
+                .iter()
+                .all(|(ratio, gain)| ratio.is_finite() && gain.is_finite())
+        );
     }
 
     #[test]
