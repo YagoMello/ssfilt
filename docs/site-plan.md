@@ -52,17 +52,20 @@ in [`frequency-guide-spike.md`](frequency-guide-spike.md).
 
 The playground supports:
 
-- low-pass, high-pass, and band-pass topologies;
+- low-pass, high-pass, band-pass, and band-stop topologies;
 - repeated-pole, Butterworth, Bessel, and Chebyshev Type I responses;
-- final orders 1 through 50, subject to even band-pass order and documented
+- final orders 1 through 50, subject to even band-pass and band-stop orders and documented
   Bessel limits;
 - whole-filter −3 dB cutoff values or band edges;
 - Chebyshev passband ripple; and
-- linear, previous-value hold, and current-value hold reconstruction.
+- linear, previous-value hold, and current-value hold reconstruction; and
+- adaptive Dormand–Prince 5(4), or fixed-step RK4 with an explicit physical
+  step cap and per-interval work budget.
 
-The native `plot_responses` tool also covers the newer band-stop topology.
-Bringing band-stop to the browser is a bounded follow-up, not a reason to delay
-or complicate the streaming filter API.
+Integrator selection is progressively disclosed because DOPRI5(4) remains the
+recommended default. RK4's maximum step is an application accuracy choice, not
+an accuracy guarantee. The browser reports integration work but does not infer
+MCU time from it.
 
 The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only
@@ -82,6 +85,11 @@ adapter accepts at most 50,000 rows.
 Visitors without a capture can generate one of a few deterministic example
 signals. These use irregular timestamps, are created locally, and pass through
 the same CSV parser and public filtering path as pasted or uploaded data.
+The examples include a wideband signal with strong 60 Hz pickup for band-stop
+tuning and a slow signal with a deliberate sampling pause. The pause example
+demonstrates complete-interval integration under the selected reconstruction;
+it does not claim to recover signal detail that was never sampled. Sparse
+intervals are marked on the time-domain and frequency-guide plots.
 
 Two initial-state modes make the first interval unambiguous:
 

@@ -9,8 +9,9 @@
 use js_sys::Float64Array;
 use serde::{Deserialize, Serialize};
 use ssfilt::{
-    BandPass, HighPass, InputModel, IntegrationDiagnostics, LowPass, MAX_BESSEL_BAND_PASS_ORDER,
-    MAX_BESSEL_ORDER, Response,
+    BandPass, BandStop, HighPass, InputModel, IntegrationDiagnostics, Integrator, LowPass,
+    MAX_BESSEL_BAND_PASS_ORDER, MAX_BESSEL_BAND_STOP_ORDER, MAX_BESSEL_ORDER, Response,
+    RungeKutta4,
 };
 use wasm_bindgen::prelude::*;
 
@@ -33,6 +34,7 @@ enum Topology {
     LowPass,
     HighPass,
     BandPass,
+    BandStop,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -60,6 +62,13 @@ enum InitialMode {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum IntegratorPolicy {
+    Dopri5,
+    Rk4,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
 struct FilterConfig {
     topology: Topology,
     response: ResponseFamily,
@@ -71,6 +80,12 @@ struct FilterConfig {
     ripple_db: f64,
     #[serde(default = "default_input_policy")]
     input_model: InputPolicy,
+    #[serde(default = "default_integrator_policy")]
+    integrator: IntegratorPolicy,
+    #[serde(default = "default_rk4_max_step_seconds")]
+    rk4_max_step_seconds: f64,
+    #[serde(default = "default_rk4_max_steps")]
+    rk4_max_steps: usize,
     #[serde(default = "default_initial_mode")]
     initial_mode: InitialMode,
     #[serde(default)]
@@ -131,7 +146,7 @@ trait BrowserFilter {
     fn diagnostics(&self) -> IntegrationDiagnostics<f64>;
 }
 
-impl<const N: usize> BrowserFilter for LowPass<N> {
+impl<const N: usize, I: Integrator<f64, N>> BrowserFilter for LowPass<N, f64, I> {
     fn update(&mut self, input: f64, dt_seconds: f64) -> Result<f64, String> {
         LowPass::update(self, input, dt_seconds).map_err(|error| error.to_string())
     }
@@ -145,7 +160,7 @@ impl<const N: usize> BrowserFilter for LowPass<N> {
     }
 }
 
-impl<const N: usize> BrowserFilter for HighPass<N> {
+impl<const N: usize, I: Integrator<f64, N>> BrowserFilter for HighPass<N, f64, I> {
     fn update(&mut self, input: f64, dt_seconds: f64) -> Result<f64, String> {
         HighPass::update(self, input, dt_seconds).map_err(|error| error.to_string())
     }
@@ -159,13 +174,27 @@ impl<const N: usize> BrowserFilter for HighPass<N> {
     }
 }
 
-impl<const N: usize> BrowserFilter for BandPass<N> {
+impl<const N: usize, I: Integrator<f64, N>> BrowserFilter for BandPass<N, f64, I> {
     fn update(&mut self, input: f64, dt_seconds: f64) -> Result<f64, String> {
         BandPass::update(self, input, dt_seconds).map_err(|error| error.to_string())
     }
 
     fn output(&self) -> f64 {
         BandPass::output(self)
+    }
+
+    fn diagnostics(&self) -> IntegrationDiagnostics<f64> {
+        self.last_diagnostics()
+    }
+}
+
+impl<const N: usize, I: Integrator<f64, N>> BrowserFilter for BandStop<N, f64, I> {
+    fn update(&mut self, input: f64, dt_seconds: f64) -> Result<f64, String> {
+        BandStop::update(self, input, dt_seconds).map_err(|error| error.to_string())
+    }
+
+    fn output(&self) -> f64 {
+        BandStop::output(self)
     }
 
     fn diagnostics(&self) -> IntegrationDiagnostics<f64> {
@@ -306,6 +335,27 @@ fn transfer_point(
                     / fractional_bandwidth,
             })
         }
+        Topology::BandStop => {
+            if ratio.to_bits() == 1.0_f64.to_bits() {
+                return Ok(TransferPoint {
+                    gain_db: f64::NEG_INFINITY,
+                    phase_radians: 0.0,
+                    normalized_group_delay: 0.0,
+                });
+            }
+            let denominator = 1.0 - ratio * ratio;
+            let mapped = fractional_bandwidth * ratio / denominator;
+            let point = transfer::low_pass(response, prototype_order, mapped.abs())
+                .map_err(|error| error.to_string())?;
+            Ok(TransferPoint {
+                gain_db: point.gain_db,
+                phase_radians: point.phase_radians * mapped.signum(),
+                normalized_group_delay: point.normalized_group_delay
+                    * fractional_bandwidth
+                    * (1.0 + ratio * ratio)
+                    / denominator.powi(2),
+            })
+        }
     }
 }
 
@@ -424,13 +474,16 @@ fn validate_config(config: FilterConfig) -> Result<(), String> {
             config.order
         ));
     }
-    if matches!(config.topology, Topology::BandPass) && !config.order.is_multiple_of(2) {
-        return Err("band-pass final order must be positive and even".to_owned());
+    if matches!(config.topology, Topology::BandPass | Topology::BandStop)
+        && !config.order.is_multiple_of(2)
+    {
+        return Err("band filter final order must be positive and even".to_owned());
     }
     if matches!(config.response, ResponseFamily::Bessel) {
         let limit = match config.topology {
             Topology::LowPass | Topology::HighPass => MAX_BESSEL_ORDER,
             Topology::BandPass => MAX_BESSEL_BAND_PASS_ORDER,
+            Topology::BandStop => MAX_BESSEL_BAND_STOP_ORDER,
         };
         if config.order > limit {
             return Err(format!(
@@ -442,12 +495,20 @@ fn validate_config(config: FilterConfig) -> Result<(), String> {
         Topology::LowPass | Topology::HighPass => {
             positive(config.cutoff_hz, "cutoff")?;
         }
-        Topology::BandPass => {
+        Topology::BandPass | Topology::BandStop => {
             let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
             let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
             if upper <= lower {
                 return Err("upper cutoff must be greater than lower cutoff".to_owned());
             }
+        }
+    }
+    if matches!(config.integrator, IntegratorPolicy::Rk4) {
+        if !config.rk4_max_step_seconds.is_finite() || config.rk4_max_step_seconds <= 0.0 {
+            return Err("RK4 maximum step must be finite and positive".to_owned());
+        }
+        if config.rk4_max_steps == 0 {
+            return Err("RK4 step budget must be positive".to_owned());
         }
     }
     response(config)?;
@@ -492,7 +553,7 @@ fn input_model(policy: InputPolicy) -> InputModel {
 fn prototype_order(config: FilterConfig) -> usize {
     match config.topology {
         Topology::LowPass | Topology::HighPass => config.order,
-        Topology::BandPass => config.order / 2,
+        Topology::BandPass | Topology::BandStop => config.order / 2,
     }
 }
 
@@ -501,7 +562,7 @@ fn frequency_mapping(config: FilterConfig) -> Result<(f64, f64, f64), String> {
         Topology::LowPass | Topology::HighPass => {
             Ok((positive(config.cutoff_hz, "cutoff")?, 0.01, 100.0))
         }
-        Topology::BandPass => {
+        Topology::BandPass | Topology::BandStop => {
             let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
             let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
             Ok((lower.sqrt() * upper.sqrt(), 0.05, 20.0))
@@ -546,6 +607,22 @@ fn response_frequency_ratios(
         let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
         let center = lower.sqrt() * upper.sqrt();
         ratios.extend([lower / center, 1.0, upper / center]);
+    } else if matches!(config.topology, Topology::BandStop) {
+        // Logarithmic sampling of the low-pass mapped frequency resolves a
+        // narrow notch without making the full physical-frequency grid huge.
+        let detail_per_side = BAND_DETAIL_POINTS / 2;
+        for index in 0..detail_per_side {
+            let fraction = f64::from(index) / f64::from(detail_per_side - 1);
+            let mapped = (fraction.mul_add(1.0e8_f64.ln() - 0.05_f64.ln(), 0.05_f64.ln())).exp();
+            let root = fractional_bandwidth.hypot(2.0 * mapped);
+            ratios.push(2.0 * mapped / (fractional_bandwidth + root));
+            ratios.push((fractional_bandwidth + root) / (2.0 * mapped));
+        }
+
+        let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
+        let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
+        let center = lower.sqrt() * upper.sqrt();
+        ratios.extend([lower / center, 1.0, upper / center]);
     }
 
     ratios.sort_unstable_by(f64::total_cmp);
@@ -558,7 +635,7 @@ fn response_frequency_ratios(
 fn fractional_bandwidth(config: FilterConfig) -> Result<f64, String> {
     match config.topology {
         Topology::LowPass | Topology::HighPass => Ok(1.0),
-        Topology::BandPass => {
+        Topology::BandPass | Topology::BandStop => {
             let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
             let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
             let center = lower.sqrt() * upper.sqrt();
@@ -634,6 +711,7 @@ fn build_filter(
         Topology::LowPass => dispatch_order!(build_low_pass),
         Topology::HighPass => dispatch_order!(build_high_pass),
         Topology::BandPass => dispatch_order!(build_band_pass),
+        Topology::BandStop => dispatch_order!(build_band_stop),
     }
 }
 
@@ -643,13 +721,23 @@ fn build_low_pass<const N: usize>(
     initial_input: f64,
 ) -> Result<Box<dyn BrowserFilter>, String> {
     let cutoff = positive(config.cutoff_hz, "cutoff")?;
-    LowPass::<N>::builder(cutoff)
-        .response(response)
-        .input_model(input_model(config.input_model))
-        .initial_input(initial_input)
-        .build()
-        .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
-        .map_err(|error| error.to_string())
+    match config.integrator {
+        IntegratorPolicy::Dopri5 => LowPass::<N>::builder(cutoff)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+        IntegratorPolicy::Rk4 => LowPass::<N>::builder(cutoff)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .integrator(rk4_policy(config))
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+    }
 }
 
 fn build_high_pass<const N: usize>(
@@ -658,13 +746,23 @@ fn build_high_pass<const N: usize>(
     initial_input: f64,
 ) -> Result<Box<dyn BrowserFilter>, String> {
     let cutoff = positive(config.cutoff_hz, "cutoff")?;
-    HighPass::<N>::builder(cutoff)
-        .response(response)
-        .input_model(input_model(config.input_model))
-        .initial_input(initial_input)
-        .build()
-        .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
-        .map_err(|error| error.to_string())
+    match config.integrator {
+        IntegratorPolicy::Dopri5 => HighPass::<N>::builder(cutoff)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+        IntegratorPolicy::Rk4 => HighPass::<N>::builder(cutoff)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .integrator(rk4_policy(config))
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+    }
 }
 
 fn build_band_pass<const N: usize>(
@@ -674,13 +772,56 @@ fn build_band_pass<const N: usize>(
 ) -> Result<Box<dyn BrowserFilter>, String> {
     let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
     let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
-    BandPass::<N>::builder(lower, upper)
-        .response(response)
-        .input_model(input_model(config.input_model))
-        .initial_input(initial_input)
-        .build()
-        .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
-        .map_err(|error| error.to_string())
+    match config.integrator {
+        IntegratorPolicy::Dopri5 => BandPass::<N>::builder(lower, upper)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+        IntegratorPolicy::Rk4 => BandPass::<N>::builder(lower, upper)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .integrator(rk4_policy(config))
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+    }
+}
+
+fn build_band_stop<const N: usize>(
+    config: FilterConfig,
+    response: Response<f64>,
+    initial_input: f64,
+) -> Result<Box<dyn BrowserFilter>, String> {
+    let lower = positive(config.lower_cutoff_hz, "lower cutoff")?;
+    let upper = positive(config.upper_cutoff_hz, "upper cutoff")?;
+    match config.integrator {
+        IntegratorPolicy::Dopri5 => BandStop::<N>::builder(lower, upper)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+        IntegratorPolicy::Rk4 => BandStop::<N>::builder(lower, upper)
+            .response(response)
+            .input_model(input_model(config.input_model))
+            .initial_input(initial_input)
+            .integrator(rk4_policy(config))
+            .build()
+            .map(|filter| Box::new(filter) as Box<dyn BrowserFilter>)
+            .map_err(|error| error.to_string()),
+    }
+}
+
+fn rk4_policy(config: FilterConfig) -> RungeKutta4<f64> {
+    RungeKutta4 {
+        max_step_seconds: config.rk4_max_step_seconds,
+        max_steps: config.rk4_max_steps,
+    }
 }
 
 fn summary(config: FilterConfig) -> String {
@@ -707,6 +848,12 @@ fn summary(config: FilterConfig) -> String {
             config.lower_cutoff_hz.unwrap_or_default(),
             config.upper_cutoff_hz.unwrap_or_default()
         ),
+        Topology::BandStop => format!(
+            "Order-{} {response} band-stop; {:.6} Hz and {:.6} Hz whole-filter −3 dB edges.",
+            config.order,
+            config.lower_cutoff_hz.unwrap_or_default(),
+            config.upper_cutoff_hz.unwrap_or_default()
+        ),
     }
 }
 
@@ -716,6 +863,18 @@ const fn default_ripple_db() -> f64 {
 
 const fn default_input_policy() -> InputPolicy {
     InputPolicy::Linear
+}
+
+const fn default_integrator_policy() -> IntegratorPolicy {
+    IntegratorPolicy::Dopri5
+}
+
+const fn default_rk4_max_step_seconds() -> f64 {
+    0.002
+}
+
+const fn default_rk4_max_steps() -> usize {
+    256
 }
 
 const fn default_initial_mode() -> InitialMode {
@@ -740,6 +899,9 @@ mod tests {
             upper_cutoff_hz: None,
             ripple_db: 0.5,
             input_model: InputPolicy::Linear,
+            integrator: IntegratorPolicy::Dopri5,
+            rk4_max_step_seconds: default_rk4_max_step_seconds(),
+            rk4_max_steps: default_rk4_max_steps(),
             initial_mode: InitialMode::Sample0,
             initial_value: 0.0,
             first_interval_seconds: None,
@@ -821,6 +983,59 @@ mod tests {
             assert!((data.frequency_hz[edge_index] - edge).abs() < edge * 1.0e-12);
             assert!((data.gain_db[edge_index] + 3.010_299_956_639_812).abs() < 0.03);
         }
+    }
+
+    #[test]
+    fn band_stop_response_contains_both_edges_and_the_notch() {
+        let mut config = low_pass_config();
+        config.topology = Topology::BandStop;
+        config.order = 4;
+        config.cutoff_hz = None;
+        config.lower_cutoff_hz = Some(55.0);
+        config.upper_cutoff_hz = Some(65.0);
+        let data = calculate_response(config).unwrap();
+
+        for edge in [55.0, 65.0] {
+            let index = data
+                .frequency_hz
+                .iter()
+                .position(|frequency| (*frequency - edge).abs() < edge * 1.0e-12)
+                .unwrap();
+            assert!((data.gain_db[index] + 3.010_299_956_639_812).abs() < 0.03);
+        }
+        let center = 55.0_f64.sqrt() * 65.0_f64.sqrt();
+        let center_index = data
+            .frequency_hz
+            .iter()
+            .position(|frequency| (*frequency - center).abs() < center * 1.0e-12)
+            .unwrap();
+        assert!(data.gain_db[center_index].is_infinite());
+        assert!(data.gain_db[center_index].is_sign_negative());
+    }
+
+    #[test]
+    fn band_stop_rejects_odd_final_order() {
+        let mut config = low_pass_config();
+        config.topology = Topology::BandStop;
+        config.order = 3;
+        config.cutoff_hz = None;
+        config.lower_cutoff_hz = Some(55.0);
+        config.upper_cutoff_hz = Some(65.0);
+        assert!(validate_config(config).unwrap_err().contains("even"));
+    }
+
+    #[test]
+    fn rk4_filters_the_complete_irregular_intervals() {
+        let mut config = low_pass_config();
+        config.integrator = IntegratorPolicy::Rk4;
+        config.rk4_max_step_seconds = 0.001;
+        config.rk4_max_steps = 256;
+        let data =
+            filter_uploaded_data(config, &[0.0, 0.004, 0.011, 0.025], &[0.0, 1.0, -0.25, 0.5])
+                .unwrap();
+        assert_eq!(data.output.len(), 4);
+        assert_eq!(data.rejected_steps, 0);
+        assert_eq!(data.derivative_evaluations, 4 * data.accepted_steps);
     }
 
     #[test]

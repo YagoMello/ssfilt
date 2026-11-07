@@ -1,7 +1,8 @@
-export type Topology = "low-pass" | "high-pass" | "band-pass";
+export type Topology = "low-pass" | "high-pass" | "band-pass" | "band-stop";
 export type ResponseFamily = "repeated-pole" | "butterworth" | "bessel" | "chebyshev1";
 export type InputModel = "linear" | "previous-hold" | "current-hold";
 export type InitialMode = "sample0" | "custom";
+export type IntegratorPolicy = "dopri5" | "rk4";
 
 export interface ResponseConfig {
   topology: Topology;
@@ -12,6 +13,9 @@ export interface ResponseConfig {
   upper_cutoff_hz?: number;
   ripple_db?: number;
   input_model: InputModel;
+  integrator: IntegratorPolicy;
+  rk4_max_step_seconds?: number;
+  rk4_max_steps?: number;
 }
 
 export interface FilterConfig extends ResponseConfig {

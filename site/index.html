@@ -85,6 +85,7 @@
                   <option value="low-pass">Low-pass</option>
                   <option value="high-pass">High-pass</option>
                   <option value="band-pass">Band-pass</option>
+                  <option value="band-stop">Band-stop</option>
                 </select>
                 <p class="field-hint" id="topology-hint">Smooths high-frequency variation.</p>
               </div>
@@ -103,7 +104,7 @@
                   <input id="order" name="order" type="number" min="1" max="50" step="1" value="4" inputmode="numeric" aria-describedby="order-hint" />
                 </div>
               </div>
-              <p class="field-hint order-hint" id="order-hint">Band-pass order is even; Bessel is limited to validated orders.</p>
+              <p class="field-hint order-hint" id="order-hint">Band filter order is even; Bessel is limited to validated orders.</p>
               <div class="field-row cutoff-row" id="single-cutoff-field">
                 <div class="field-group field-wide">
                   <label for="cutoff">Cutoff frequency</label>
@@ -135,6 +136,33 @@
                 </select>
                 <p class="field-hint" id="input-model-hint">The new sample is the interval endpoint.</p>
               </div>
+              <details class="numerics-disclosure" id="numerics-disclosure">
+                <summary><span><strong>Numerics</strong><small id="integrator-summary">Adaptive DOPRI5(4)</small></span><span aria-hidden="true">⌄</span></summary>
+                <div class="numerics-controls">
+                  <div class="field-group">
+                    <label for="integrator">Integrator</label>
+                    <select id="integrator" name="integrator">
+                      <option value="dopri5">Adaptive DOPRI5(4) — recommended</option>
+                      <option value="rk4">Fixed-step RK4</option>
+                    </select>
+                    <p class="field-hint" id="integrator-hint">Adapts internal work to the model and requested accuracy.</p>
+                  </div>
+                  <div id="rk4-fields" hidden>
+                    <div class="field-row">
+                      <div class="field-group">
+                        <label for="rk4-max-step">Maximum step</label>
+                        <div class="unit-input"><input id="rk4-max-step" type="number" min="0" step="any" value="2" inputmode="decimal" /><span>ms</span></div>
+                      </div>
+                      <div class="field-group">
+                        <label for="rk4-max-steps">Steps / interval</label>
+                        <input id="rk4-max-steps" type="number" min="1" step="1" value="256" inputmode="numeric" />
+                      </div>
+                    </div>
+                    <p class="field-hint">RK4 has no error estimator. Treat the step cap as an application accuracy choice and validate it on representative signals.</p>
+                    <p class="rk4-data-hint" id="rk4-data-hint">The step budget must cover your longest expected sample interval; the model may subdivide further.</p>
+                  </div>
+                </div>
+              </details>
               <div id="validation-message" class="validation-message" role="alert" hidden></div>
             </div>
             <div class="url-control">
@@ -217,6 +245,8 @@
                   <option value="frequency-sweep">Frequency sweep</option>
                   <option value="intermittent-vibration">Intermittent vibration</option>
                   <option value="weak-am-interference">Weak AM + interference</option>
+                  <option value="mains-hum-wideband">Wideband sensor + 60 Hz pickup</option>
+                  <option value="sampling-pause">Sampling pause / scheduler stall</option>
                 </select>
                 <button class="button button-outline" id="load-example" type="button">Try example</button>
               </div>
@@ -251,7 +281,7 @@
               </div>
               <p class="field-hint">The custom state is treated as constant before sample 0. This required interval advances the filter to the first timestamp.</p>
             </div>
-            <div class="initial-explainer-wrap"><div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. A high-pass or band-pass starts with zero output at equilibrium.</p></div></div>
+            <div class="initial-explainer-wrap"><div class="initial-explainer"><span aria-hidden="true">i</span><p>Constant-input equilibrium is exact. High-pass and band-pass start at zero; low-pass and band-stop pass the constant.</p></div></div>
           </div>
         </div>
         <div class="filtered-result" id="filtered-result">
@@ -266,6 +296,7 @@
               <div class="plot-key filter-series-key" aria-hidden="true">
                 <span><i class="series-reference-mark input-reference-mark"></i> Input</span>
                 <span><i class="series-reference-mark output-reference-mark"></i> Output</span>
+                <span id="sparse-interval-key" hidden><i class="sparse-interval-mark"></i> sparse interval</span>
               </div>
               <div id="filter-chart" class="uplot-host filter-uplot" role="img" aria-label="Input and filtered output chart" aria-describedby="filter-chart-summary"></div>
               <p id="filter-chart-summary" class="sr-only">Filtered signal chart is loading.</p>

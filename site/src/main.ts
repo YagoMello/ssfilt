@@ -10,6 +10,7 @@ import {
   type FrequencyGuideResult,
   type InitialMode,
   type InputModel,
+  type IntegratorPolicy,
   type NumericSeries,
   type ResponseConfig,
   type ResponseFamily,
@@ -26,44 +27,69 @@ type ExampleSignal =
   | "motion-pulses"
   | "frequency-sweep"
   | "intermittent-vibration"
-  | "weak-am-interference";
+  | "weak-am-interference"
+  | "mains-hum-wideband"
+  | "sampling-pause";
 
 type ExampleSignalSpec = {
   samples: number;
-  intervalScale: number;
+  intervalMinimumSeconds: number;
+  intervalJitterSeconds: number;
   hint: string;
+  gapAfterIndex?: number;
+  gapSeconds?: number;
 };
 
 const exampleSignalSpecs: Record<ExampleSignal, ExampleSignalSpec> = {
   "noisy-sine": {
     samples: 420,
-    intervalScale: 1,
+    intervalMinimumSeconds: 0.007,
+    intervalJitterSeconds: 0.009,
     hint: "Periodic signal with broadband and high-frequency noise.",
   },
   "step-drift": {
     samples: 420,
-    intervalScale: 1,
+    intervalMinimumSeconds: 0.007,
+    intervalJitterSeconds: 0.009,
     hint: "A sudden level change riding on a slowly moving baseline.",
   },
   "motion-pulses": {
     samples: 420,
-    intervalScale: 1,
+    intervalMinimumSeconds: 0.007,
+    intervalJitterSeconds: 0.009,
     hint: "Short, non-periodic events with measurement noise.",
   },
   "frequency-sweep": {
     samples: 840,
-    intervalScale: 0.5,
+    intervalMinimumSeconds: 0.0035,
+    intervalJitterSeconds: 0.0045,
     hint: "A tone that rises from 0.7 Hz to about 16 Hz.",
   },
   "intermittent-vibration": {
     samples: 420,
-    intervalScale: 1,
+    intervalMinimumSeconds: 0.007,
+    intervalJitterSeconds: 0.009,
     hint: "A slow baseline with localized 11 Hz and 17 Hz vibration bursts.",
   },
   "weak-am-interference": {
     samples: 1_120,
-    intervalScale: 0.375,
+    intervalMinimumSeconds: 0.002625,
+    intervalJitterSeconds: 0.003375,
     hint: "Weak 8 Hz AM amid strong interference; try a 7–9 Hz band-pass and compare orders.",
+  },
+  "mains-hum-wideband": {
+    samples: 2_600,
+    intervalMinimumSeconds: 0.0007,
+    intervalJitterSeconds: 0.0006,
+    hint: "Useful 4, 24, and 95 Hz content under strong wandering 60 Hz pickup; try a 55–65 Hz band-stop.",
+  },
+  "sampling-pause": {
+    samples: 900,
+    intervalMinimumSeconds: 0.003,
+    intervalJitterSeconds: 0.003,
+    gapAfterIndex: 430,
+    gapSeconds: 0.14,
+    hint: "A slow signal with one 140 ms sampling pause; compare DOPRI and RK4 without pretending the missing path is known.",
   },
 };
 
@@ -80,6 +106,13 @@ const ui = {
   upperCutoff: getElement<HTMLInputElement>("upper-cutoff"),
   ripple: getElement<HTMLInputElement>("ripple"),
   inputModel: getElement<HTMLSelectElement>("input-model"),
+  integrator: getElement<HTMLSelectElement>("integrator"),
+  integratorSummary: getElement<HTMLElement>("integrator-summary"),
+  integratorHint: getElement<HTMLParagraphElement>("integrator-hint"),
+  rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
+  rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
+  rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
+  rk4DataHint: getElement<HTMLParagraphElement>("rk4-data-hint"),
   singleCutoffField: getElement<HTMLDivElement>("single-cutoff-field"),
   bandCutoffFields: getElement<HTMLDivElement>("band-cutoff-fields"),
   rippleField: getElement<HTMLDivElement>("ripple-field"),
@@ -124,6 +157,7 @@ const ui = {
   downloadCsv: getElement<HTMLButtonElement>("download-csv"),
   filterChart: getElement<HTMLDivElement>("filter-chart"),
   filterChartSummary: getElement<HTMLParagraphElement>("filter-chart-summary"),
+  sparseIntervalKey: getElement<HTMLElement>("sparse-interval-key"),
   frequencyGuideToggle: getElement<HTMLButtonElement>("toggle-frequency-guide"),
   frequencyGuideContent: getElement<HTMLDivElement>("frequency-guide-content"),
   frequencyGuideCanvas: getElement<HTMLCanvasElement>("frequency-guide-canvas"),
@@ -249,7 +283,7 @@ function formatFrequency(value: number): string {
 function configurationSummary(config: ResponseConfig): string {
   const topology = enumName(config.topology);
   const response = config.response === "chebyshev1" ? "Chebyshev I" : enumName(config.response);
-  const cutoff = config.topology === "band-pass"
+  const cutoff = isBandTopology(config.topology)
     ? `${formatFrequency(config.lower_cutoff_hz ?? NaN)}–${formatFrequency(config.upper_cutoff_hz ?? NaN)}`
     : formatFrequency(config.cutoff_hz ?? NaN);
   return `${topology} · ${response} · order ${config.order} · ${cutoff}`;
@@ -287,8 +321,16 @@ function currentResponse(): ResponseFamily {
   return ui.response.value as ResponseFamily;
 }
 
+function currentIntegrator(): IntegratorPolicy {
+  return ui.integrator.value as IntegratorPolicy;
+}
+
+function isBandTopology(topology: Topology): boolean {
+  return topology === "band-pass" || topology === "band-stop";
+}
+
 function besselMaxOrder(topology: Topology): number {
-  return topology === "band-pass" ? 50 : 25;
+  return isBandTopology(topology) ? 50 : 25;
 }
 
 function maxOrder(topology: Topology, response: ResponseFamily): number {
@@ -297,7 +339,7 @@ function maxOrder(topology: Topology, response: ResponseFamily): number {
 
 function isValidOrder(order: number, topology: Topology, response: ResponseFamily): boolean {
   const max = maxOrder(topology, response);
-  return Number.isInteger(order) && order > 0 && order <= max && (topology !== "band-pass" || order % 2 === 0);
+  return Number.isInteger(order) && order > 0 && order <= max && (!isBandTopology(topology) || order % 2 === 0);
 }
 
 function refreshOrderConstraints(preferredOrder?: number): void {
@@ -305,22 +347,25 @@ function refreshOrderConstraints(preferredOrder?: number): void {
   const response = currentResponse();
   const previous = preferredOrder ?? Number(ui.order.value);
   const limit = maxOrder(topology, response);
-  const minimum = topology === "band-pass" ? 2 : 1;
+  const minimum = isBandTopology(topology) ? 2 : 1;
   ui.order.min = String(minimum);
   ui.order.max = String(limit);
-  ui.order.step = topology === "band-pass" ? "2" : "1";
+  ui.order.step = isBandTopology(topology) ? "2" : "1";
   ui.order.value = String(isValidOrder(previous, topology, response) ? previous : 4);
 }
 
 function updateConditionalControls(): void {
-  const bandPass = currentTopology() === "band-pass";
+  const topology = currentTopology();
+  const band = isBandTopology(topology);
   const chebyshev = currentResponse() === "chebyshev1";
-  ui.singleCutoffField.hidden = bandPass;
-  ui.bandCutoffFields.hidden = !bandPass;
+  ui.singleCutoffField.hidden = band;
+  ui.bandCutoffFields.hidden = !band;
   ui.rippleField.hidden = !chebyshev;
-  ui.topologyHint.textContent = bandPass
+  ui.topologyHint.textContent = topology === "band-pass"
     ? "Keeps a range between two complete-filter −3 dB edges. Final order must be even."
-    : currentTopology() === "high-pass"
+    : topology === "band-stop"
+      ? "Rejects a range between two complete-filter −3 dB edges while passing DC and high frequencies."
+    : topology === "high-pass"
       ? "Removes slow baseline drift; the endpoint uses the new sample."
       : "Smooths high-frequency variation. The cutoff is the whole-filter −3 dB point.";
   ui.inputModelHint.textContent = ui.inputModel.value === "previous-hold"
@@ -328,13 +373,40 @@ function updateConditionalControls(): void {
     : ui.inputModel.value === "current-hold"
       ? "The new sample is treated as held across the preceding interval."
       : "The signal is interpolated between its two sample values.";
-  getElement<HTMLParagraphElement>("order-hint").textContent = bandPass
+  getElement<HTMLParagraphElement>("order-hint").textContent = band
     ? currentResponse() === "bessel"
-      ? "Band-pass final order is even; Bessel supports final orders through 50."
-      : "Band-pass final order is positive and even; supported orders are 2 through 50."
+      ? "Band filter final order is even; Bessel supports final orders through 50."
+      : "Band filter final order is positive and even; supported orders are 2 through 50."
     : currentResponse() === "bessel"
       ? "Bessel low-pass and high-pass orders are supported through 25."
       : "Choose a positive integer order from 1 through 50.";
+  updateIntegratorControls();
+}
+
+function updateIntegratorControls(): void {
+  const rk4 = currentIntegrator() === "rk4";
+  ui.rk4Fields.hidden = !rk4;
+  ui.integratorSummary.textContent = rk4 ? "Fixed-step RK4" : "Adaptive DOPRI5(4)";
+  ui.integratorHint.textContent = rk4
+    ? "Predictable work per internal step, with no error estimator."
+    : "Adapts internal work to the model and requested accuracy.";
+  updateRk4DataHint();
+}
+
+function updateRk4DataHint(): void {
+  if (!loadedCsv) {
+    ui.rk4DataHint.textContent = "The step budget must cover your longest expected sample interval; the model may subdivide further.";
+    ui.rk4DataHint.classList.remove("is-warning");
+    return;
+  }
+  const intervals = loadedCsv.times.slice(1).map((time, index) => time - loadedCsv!.times[index]);
+  const longest = Math.max(...intervals);
+  const stepSeconds = Number(ui.rk4MaxStep.value) / 1_000;
+  const budget = Number(ui.rk4MaxSteps.value);
+  if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) return;
+  const capMinimum = Math.ceil(longest / stepSeconds - 8 * Number.EPSILON);
+  ui.rk4DataHint.textContent = `Longest loaded interval: ${shortNumber(longest * 1_000, 4)} ms. The selected cap alone needs at least ${capMinimum.toLocaleString()} steps; the model may need more.`;
+  ui.rk4DataHint.classList.toggle("is-warning", Number.isFinite(budget) && capMinimum > budget);
 }
 
 function showError(message: string): void {
@@ -373,14 +445,20 @@ function validateConfiguration(): ResponseConfig | undefined {
   const response = currentResponse();
   const order = Number(ui.order.value);
   if (!isValidOrder(order, topology, response)) {
-    showError(topology === "band-pass"
-      ? `Band-pass order must be an even integer from 2 through ${maxOrder(topology, response)}.`
+    showError(isBandTopology(topology)
+      ? `Band filter order must be an even integer from 2 through ${maxOrder(topology, response)}.`
       : `This response supports orders 1 through ${maxOrder(topology, response)}.`);
     return undefined;
   }
 
-  const config: ResponseConfig = { topology, response, order, input_model: ui.inputModel.value as InputModel };
-  if (topology === "band-pass") {
+  const config: ResponseConfig = {
+    topology,
+    response,
+    order,
+    input_model: ui.inputModel.value as InputModel,
+    integrator: currentIntegrator(),
+  };
+  if (isBandTopology(topology)) {
     const lower = Number(ui.lowerCutoff.value);
     const upper = Number(ui.upperCutoff.value);
     if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower <= 0 || upper <= lower) {
@@ -396,6 +474,21 @@ function validateConfiguration(): ResponseConfig | undefined {
       return undefined;
     }
     config.cutoff_hz = cutoff;
+  }
+
+  if (config.integrator === "rk4") {
+    const maxStepMilliseconds = Number(ui.rk4MaxStep.value);
+    const maxSteps = Number(ui.rk4MaxSteps.value);
+    if (!Number.isFinite(maxStepMilliseconds) || maxStepMilliseconds <= 0) {
+      showError("RK4 maximum step must be a positive, finite number of milliseconds.");
+      return undefined;
+    }
+    if (!Number.isInteger(maxSteps) || maxSteps <= 0) {
+      showError("RK4 steps per interval must be a positive integer.");
+      return undefined;
+    }
+    config.rk4_max_step_seconds = maxStepMilliseconds / 1_000;
+    config.rk4_max_steps = maxSteps;
   }
 
   if (response === "chebyshev1") {
@@ -535,7 +628,7 @@ function cutoffMarkerPlugin(): uPlot.Plugin {
     hooks: {
       draw: (plot) => {
         if (!appliedConfig || activeChart === "step") return;
-        const cutoffs = appliedConfig.topology === "band-pass"
+        const cutoffs = isBandTopology(appliedConfig.topology)
           ? [appliedConfig.lower_cutoff_hz, appliedConfig.upper_cutoff_hz]
           : [appliedConfig.cutoff_hz];
         const finiteCutoffs = cutoffs.filter((value): value is number => value !== undefined && Number.isFinite(value));
@@ -581,7 +674,7 @@ function makeResponseSummary(result: ResponseResult, config: ResponseConfig, kin
   const data = activeChartData(result);
   const finite = data.y.filter(Number.isFinite);
   if (kind === "magnitude") {
-    const edges = config.topology === "band-pass"
+    const edges = isBandTopology(config.topology)
       ? [config.lower_cutoff_hz, config.upper_cutoff_hz]
       : [config.cutoff_hz];
     const edgeText = edges.filter((edge): edge is number => edge !== undefined).map((edge) => {
@@ -696,7 +789,7 @@ function updateChartReferenceKey(config: ResponseConfig, result: ResponseResult)
   const frequencyChart = activeChart !== "step";
   ui.chartReferenceKey.hidden = !frequencyChart;
   if (!frequencyChart) return;
-  ui.cutoffReferenceLabel.textContent = config.topology === "band-pass"
+  ui.cutoffReferenceLabel.textContent = isBandTopology(config.topology)
     ? `−3 dB edges · ${formatFrequency(config.lower_cutoff_hz ?? NaN)} / ${formatFrequency(config.upper_cutoff_hz ?? NaN)}`
     : `−3 dB cutoff · ${formatFrequency(config.cutoff_hz ?? NaN)}`;
   ui.magnitudeFloorKey.hidden = activeChart !== "magnitude" || magnitudeFloorCrossings(result).length === 0;
@@ -797,8 +890,14 @@ function renderCode(config = validateConfiguration()): void {
     ui.code.textContent = "// Correct the filter setup to see the matching Rust example.";
     return;
   }
-  const topologyType = config.topology === "low-pass" ? "LowPass" : config.topology === "high-pass" ? "HighPass" : "BandPass";
-  const builderArgs = config.topology === "band-pass"
+  const topologyType = config.topology === "low-pass"
+    ? "LowPass"
+    : config.topology === "high-pass"
+      ? "HighPass"
+      : config.topology === "band-pass"
+        ? "BandPass"
+        : "BandStop";
+  const builderArgs = isBandTopology(config.topology)
     ? `${rustNumber(config.lower_cutoff_hz ?? 4)}, ${rustNumber(config.upper_cutoff_hz ?? 16)}`
     : rustNumber(config.cutoff_hz ?? 8);
   const family = config.response === "chebyshev1"
@@ -812,8 +911,12 @@ function renderCode(config = validateConfiguration()): void {
   const initialization = initialMode === "custom"
     ? `    // Advance the custom state to sample 0 over this full interval.\n    let first_sample = 0.0; // Replace with the first CSV value.\n    let first_interval_seconds = ${rustNumber(Number(ui.firstInterval.value))};\n    let output = filter.update(first_sample, first_interval_seconds)?;`
     : `    // Start in steady state at sample 0, then advance to sample 1.\n    let next_sample = 0.0; // Replace with the next CSV value.\n    let elapsed_seconds = 0.01; // Difference between adjacent timestamps.\n    let output = filter.update(next_sample, elapsed_seconds)?;`;
-  const imports = `use ssfilt::{${topologyType}, InputModel, Response};`;
-  const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
+  const rk4 = config.integrator === "rk4";
+  const imports = `use ssfilt::{${topologyType}, InputModel, Response${rk4 ? ", RungeKutta4" : ""}};`;
+  const integrator = rk4
+    ? `\n        .integrator(RungeKutta4 {\n            max_step_seconds: ${rustNumber(config.rk4_max_step_seconds ?? 0.002)},\n            max_steps: ${config.rk4_max_steps ?? 256},\n        })`
+    : "";
+  const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})${integrator}\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
   ui.code.innerHTML = hljs.highlight(code, { language: "rust" }).value;
 }
 
@@ -854,6 +957,14 @@ function updateUrl(config: ResponseConfig): void {
   url.searchParams.set("response", config.response);
   url.searchParams.set("order", String(config.order));
   url.searchParams.set("input_model", config.input_model);
+  url.searchParams.set("integrator", config.integrator);
+  if (config.integrator === "rk4") {
+    url.searchParams.set("rk4_max_step_ms", ui.rk4MaxStep.value);
+    url.searchParams.set("rk4_max_steps", ui.rk4MaxSteps.value);
+  } else {
+    url.searchParams.delete("rk4_max_step_ms");
+    url.searchParams.delete("rk4_max_steps");
+  }
   if (config.cutoff_hz !== undefined) {
     url.searchParams.set("cutoff_hz", String(config.cutoff_hz));
     url.searchParams.delete("lower_cutoff_hz");
@@ -887,9 +998,15 @@ function restoreUrl(): void {
   const topology = params.get("topology");
   const response = params.get("response");
   const inputModel = params.get("input_model");
-  if (["low-pass", "high-pass", "band-pass"].includes(topology ?? "")) ui.topology.value = topology ?? "low-pass";
+  const integrator = params.get("integrator");
+  if (["low-pass", "high-pass", "band-pass", "band-stop"].includes(topology ?? "")) ui.topology.value = topology ?? "low-pass";
   if (["repeated-pole", "butterworth", "bessel", "chebyshev1"].includes(response ?? "")) ui.response.value = response ?? "butterworth";
   if (["linear", "previous-hold", "current-hold"].includes(inputModel ?? "")) ui.inputModel.value = inputModel ?? "linear";
+  if (integrator === "dopri5" || integrator === "rk4") ui.integrator.value = integrator;
+  const rk4MaxStep = Number(params.get("rk4_max_step_ms"));
+  const rk4MaxSteps = Number(params.get("rk4_max_steps"));
+  if (Number.isFinite(rk4MaxStep) && rk4MaxStep > 0) ui.rk4MaxStep.value = String(rk4MaxStep);
+  if (Number.isInteger(rk4MaxSteps) && rk4MaxSteps > 0) ui.rk4MaxSteps.value = String(rk4MaxSteps);
   refreshOrderConstraints(Number(params.get("order")) || 4);
   const cutoff = Number(params.get("cutoff_hz"));
   const lower = Number(params.get("lower_cutoff_hz"));
@@ -982,6 +1099,7 @@ function clearCsvError(): void {
 
 function discardLoadedCsv(): void {
   loadedCsv = undefined;
+  updateRk4DataHint();
   filterResult = undefined;
   filterRequestId += 1;
   frequencyGuideRequestId += 1;
@@ -1007,6 +1125,7 @@ function loadCsvText(text: string): void {
       && filterPlot !== undefined
       && !ui.filteredContent.hidden;
     loadedCsv = parsed;
+    updateRk4DataHint();
     signalRevision += 1;
     frequencyGuideRequestId += 1;
     frequencyGuideResult = undefined;
@@ -1074,13 +1193,26 @@ function exampleCsv(kind: ExampleSignal): string {
       const weakSignal = 0.28 * modulation * Math.sin(Math.PI * 2 * 8 * time);
       const nearbyInterference = 0.9 * Math.sin(Math.PI * 2 * 10.5 * time + 0.4);
       value = weakSignal + nearbyInterference + 0.65 * noise();
+    } else if (kind === "mains-hum-wideband") {
+      const wanderCycles = (0.8 / (Math.PI * 2 * 0.35)) * Math.sin(Math.PI * 2 * 0.35 * time);
+      const hum = 1.2 * Math.sin(Math.PI * 2 * (60 * time + wanderCycles) + 0.35);
+      value = 0.55 * Math.sin(Math.PI * 2 * 4 * time)
+        + 0.32 * Math.sin(Math.PI * 2 * 24 * time + 0.4)
+        + 0.22 * Math.sin(Math.PI * 2 * 95 * time + 0.2)
+        + hum
+        + 0.06 * noise();
+    } else if (kind === "sampling-pause") {
+      value = 0.72 * Math.sin(Math.PI * 2 * 0.45 * time)
+        + 0.24 * Math.sin(Math.PI * 2 * 0.8 * time + 0.5)
+        + 0.025 * noise();
     } else {
       value = Math.sin(Math.PI * 2.2 * time)
         + 0.3 * Math.sin(Math.PI * 36 * time)
         + 0.12 * noise();
     }
     lines.push(`${time.toFixed(6)},${value.toFixed(6)}`);
-    time += spec.intervalScale * (0.007 + 0.009 * ((noise() + 1) / 2));
+    time += spec.intervalMinimumSeconds + spec.intervalJitterSeconds * ((noise() + 1) / 2);
+    if (index === spec.gapAfterIndex) time += spec.gapSeconds ?? 0;
   }
 
   return lines.join("\n");
@@ -1199,7 +1331,7 @@ function guideColor(db: number, floor: number, alpha: number): string {
 }
 
 function cutoffFrequencies(config: ResponseConfig): number[] {
-  return config.topology === "band-pass"
+  return isBandTopology(config.topology)
     ? [config.lower_cutoff_hz, config.upper_cutoff_hz].filter((value): value is number => value !== undefined)
     : [config.cutoff_hz].filter((value): value is number => value !== undefined);
 }
@@ -1425,6 +1557,8 @@ function drawFilterChart(result: FilterResult): void {
   const existingPlot = filterPlot;
   const first = time[0] ?? 0;
   const last = time.at(-1) ?? first;
+  const sparseIntervals = unusuallySparseIntervals(time);
+  ui.sparseIntervalKey.hidden = sparseIntervals.length === 0;
   if (existingPlot) {
     existingPlot.batch(() => {
       if (existingPlot.width !== width || existingPlot.height !== height) existingPlot.setSize({ width, height });
@@ -1438,6 +1572,7 @@ function drawFilterChart(result: FilterResult): void {
       class: "ssfilt-plot",
       cursor: { drag: { x: false, y: false, setScale: false } },
       legend: { show: false },
+      plugins: [sparseIntervalPlugin()],
       scales: { x: { time: false, range: (_plot, minimum, maximum) => [minimum, maximum] } },
       axes: [
         {
@@ -1475,6 +1610,41 @@ function drawFilterChart(result: FilterResult): void {
   }
   ui.filterChart.setAttribute("aria-label", `Input and filter output across ${result.time.length} irregularly timed samples from ${shortNumber(first, 5)} to ${shortNumber(last, 5)} seconds.`);
   ui.filterChartSummary.textContent = `Input and filtered output for ${result.time.length} samples, from ${shortNumber(first, 5)} to ${shortNumber(last, 5)} seconds. Use the downloaded CSV for the exact values.`;
+}
+
+function unusuallySparseIntervals(times: number[]): Array<[number, number]> {
+  if (times.length < 3) return [];
+  const intervals = times.slice(1).map((time, index) => time - (times[index] ?? time));
+  const sorted = [...intervals].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
+    : (sorted[middle] ?? 0);
+  if (!Number.isFinite(median) || median <= 0) return [];
+  return intervals.flatMap((interval, index) => interval > 4 * median
+    ? [[times[index] ?? 0, times[index + 1] ?? 0] as [number, number]]
+    : []);
+}
+
+function sparseIntervalPlugin(): uPlot.Plugin {
+  return {
+    hooks: {
+      drawClear: (plot) => {
+        if (!loadedCsv) return;
+        const intervals = unusuallySparseIntervals(numericSeries(loadedCsv.times));
+        if (intervals.length === 0) return;
+        const { ctx, bbox } = plot;
+        ctx.save();
+        ctx.fillStyle = "rgba(182, 101, 37, 0.08)";
+        for (const [start, end] of intervals) {
+          const left = plot.valToPos(start, "x", true);
+          const right = plot.valToPos(end, "x", true);
+          ctx.fillRect(left, bbox.top, Math.max(1, right - left), bbox.height);
+        }
+        ctx.restore();
+      },
+    },
+  };
 }
 
 function downloadFilteredCsv(): void {
@@ -1559,6 +1729,14 @@ ui.inputModel.addEventListener("change", () => {
   updateConditionalControls();
   scheduleResponseUpdate(0);
 });
+ui.integrator.addEventListener("change", () => {
+  updateIntegratorControls();
+  scheduleResponseUpdate(0);
+});
+[ui.rk4MaxStep, ui.rk4MaxSteps].forEach((input) => input.addEventListener("input", () => {
+  updateRk4DataHint();
+  scheduleResponseUpdate();
+}));
 [ui.cutoff, ui.lowerCutoff, ui.upperCutoff].forEach((input) => input.addEventListener("input", () => {
   refreshFrequencyInputStep(input);
   scheduleResponseUpdate();
