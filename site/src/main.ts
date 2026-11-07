@@ -19,6 +19,7 @@ import {
   type Topology,
 } from "./adapter";
 import { MAX_CSV_BYTES, parseCsv, type ParsedCsv } from "./csv";
+import { formatTolerance, parsePositiveDecimal, stepTolerance, type ToleranceDirection } from "./tolerance";
 
 type ChartKind = "magnitude" | "phase" | "delay" | "step";
 type ExampleSignal =
@@ -124,6 +125,7 @@ const ui = {
   dopriMaxStep: getElement<HTMLInputElement>("dopri-max-step"),
   dopriMaxAttempts: getElement<HTMLInputElement>("dopri-max-attempts"),
   dopriResetButtons: [...document.querySelectorAll<HTMLButtonElement>(".field-reset[data-reset-target]")],
+  dopriStepButtons: [...document.querySelectorAll<HTMLButtonElement>(".tolerance-step[data-tolerance-target]")],
   rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
   rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
   rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
@@ -405,8 +407,9 @@ function updateIntegratorControls(): void {
   ui.integratorSummary.textContent = rk4 ? "Fixed-step RK4" : "Adaptive DOPRI5(4)";
   ui.integratorHint.textContent = rk4
     ? "Predictable work per internal step, with no error estimator."
-    : "Adapts internal work to local state-error tolerances.";
+    : "Adapts internal step size to local state-error targets.";
   updateDopriResetButtons();
+  updateDopriStepButtons();
   updateRk4DataHint();
 }
 
@@ -428,6 +431,20 @@ function updateDopriResetButtons(): void {
       ? currentValue === ""
       : Number(currentValue) === Number(defaultValue);
     button.hidden = isDefault;
+  }
+}
+
+function updateDopriStepButtons(): void {
+  for (const button of ui.dopriStepButtons) {
+    const targetId = button.dataset.toleranceTarget;
+    const input = targetId ? document.getElementById(targetId) : undefined;
+    const direction = button.dataset.direction as ToleranceDirection | undefined;
+    if (!(input instanceof HTMLInputElement) || (direction !== "tighter" && direction !== "looser")) {
+      button.disabled = true;
+      continue;
+    }
+    const value = parsePositiveDecimal(input.value);
+    button.disabled = value === undefined || stepTolerance(value, direction) === undefined;
   }
 }
 
@@ -526,17 +543,17 @@ function validateConfiguration(): ResponseConfig | undefined {
   }
 
   if (config.integrator === "dopri5") {
-    const absoluteTolerance = Number(ui.dopriAbsoluteTolerance.value);
-    const relativeTolerance = Number(ui.dopriRelativeTolerance.value);
+    const absoluteTolerance = parsePositiveDecimal(ui.dopriAbsoluteTolerance.value);
+    const relativeTolerance = parsePositiveDecimal(ui.dopriRelativeTolerance.value);
     const maxStepText = ui.dopriMaxStep.value.trim();
     const maxStepMilliseconds = maxStepText === "" ? undefined : Number(maxStepText);
     const maxStepAttempts = Number(ui.dopriMaxAttempts.value);
-    if (!Number.isFinite(absoluteTolerance) || absoluteTolerance <= 0) {
-      showError("DOPRI absolute tolerance must be a positive, finite number.");
+    if (absoluteTolerance === undefined) {
+      showError("DOPRI absolute tolerance must be a positive decimal or scientific-notation value.");
       return undefined;
     }
-    if (!Number.isFinite(relativeTolerance) || relativeTolerance <= 0) {
-      showError("DOPRI relative tolerance must be a positive, finite number.");
+    if (relativeTolerance === undefined) {
+      showError("DOPRI relative tolerance must be a positive decimal or scientific-notation value.");
       return undefined;
     }
     if (maxStepMilliseconds !== undefined && (!Number.isFinite(maxStepMilliseconds) || maxStepMilliseconds <= 0)) {
@@ -1019,7 +1036,8 @@ function rustVariant(value: ResponseFamily | InputModel): string {
 
 function rustNumber(value: number): string {
   if (!Number.isFinite(value)) return "0.0";
-  return Number.isInteger(value) ? `${value}.0` : value.toString();
+  const text = value.toString();
+  return Number.isInteger(value) && !text.includes("e") ? `${text}.0` : text;
 }
 
 function setActiveChart(kind: ChartKind): void {
@@ -1855,7 +1873,20 @@ ui.integrator.addEventListener("change", () => {
 ui.numericsToggle.addEventListener("click", toggleNumerics);
 [ui.dopriAbsoluteTolerance, ui.dopriRelativeTolerance, ui.dopriMaxStep, ui.dopriMaxAttempts].forEach((input) => input.addEventListener("input", () => {
   updateDopriResetButtons();
+  updateDopriStepButtons();
   scheduleResponseUpdate();
+}));
+ui.dopriStepButtons.forEach((button) => button.addEventListener("click", () => {
+  const targetId = button.dataset.toleranceTarget;
+  const input = targetId ? document.getElementById(targetId) : undefined;
+  const direction = button.dataset.direction as ToleranceDirection | undefined;
+  if (!(input instanceof HTMLInputElement) || (direction !== "tighter" && direction !== "looser")) return;
+  const value = parsePositiveDecimal(input.value);
+  if (value === undefined) return;
+  const stepped = stepTolerance(value, direction);
+  if (stepped === undefined) return;
+  input.value = formatTolerance(stepped);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }));
 ui.dopriResetButtons.forEach((button) => button.addEventListener("click", () => {
   const targetId = button.dataset.resetTarget;

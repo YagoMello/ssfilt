@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node ./scripts/build.mjs --dev",
     "build": "npm run typecheck && node ./scripts/build.mjs",
+    "test:ui": "node tests/tolerance.test.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
