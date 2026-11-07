@@ -126,7 +126,7 @@ const ui = {
   dopriMaxStepAutomatic: getElement<HTMLInputElement>("dopri-max-step-automatic"),
   dopriMaxAttempts: getElement<HTMLInputElement>("dopri-max-attempts"),
   dopriResetButtons: [...document.querySelectorAll<HTMLButtonElement>(".field-reset[data-reset-target]")],
-  dopriStepButtons: [...document.querySelectorAll<HTMLButtonElement>(".tolerance-step[data-step-target]")],
+  stepButtons: [...document.querySelectorAll<HTMLButtonElement>(".tolerance-step[data-step-target]")],
   rk4Fields: getElement<HTMLDivElement>("rk4-fields"),
   rk4MaxStep: getElement<HTMLInputElement>("rk4-max-step"),
   rk4MaxSteps: getElement<HTMLInputElement>("rk4-max-steps"),
@@ -411,7 +411,7 @@ function updateIntegratorControls(): void {
     ? "Predictable work per internal step, with no error estimator."
     : "Adapts internal step size to local state-error targets.";
   updateDopriResetButtons();
-  updateDopriStepButtons();
+  updateStepButtons();
   updateRk4DataHint();
 }
 
@@ -436,8 +436,8 @@ function updateDopriResetButtons(): void {
   }
 }
 
-function updateDopriStepButtons(): void {
-  for (const button of ui.dopriStepButtons) {
+function updateStepButtons(): void {
+  for (const button of ui.stepButtons) {
     const targetId = button.dataset.stepTarget;
     const input = targetId ? document.getElementById(targetId) : undefined;
     const direction = button.dataset.direction as ToleranceDirection | undefined;
@@ -1885,7 +1885,7 @@ ui.numericsToggle.addEventListener("click", toggleNumerics);
 [ui.dopriAbsoluteTolerance, ui.dopriRelativeTolerance, ui.dopriMaxStep, ui.dopriMaxAttempts].forEach((input) => input.addEventListener("input", () => {
   if (input === ui.dopriMaxStep && parsePositiveDecimal(input.value) !== undefined) lastManualDopriMaxStep = input.value;
   updateDopriResetButtons();
-  updateDopriStepButtons();
+  updateStepButtons();
   scheduleResponseUpdate();
 }));
 ui.dopriMaxStepAutomatic.addEventListener("change", () => {
@@ -1898,7 +1898,7 @@ ui.dopriMaxStepAutomatic.addEventListener("change", () => {
   ui.dopriMaxStep.disabled = ui.dopriMaxStepAutomatic.checked;
   ui.dopriMaxStep.dispatchEvent(new Event("input", { bubbles: true }));
 });
-ui.dopriStepButtons.forEach((button) => button.addEventListener("click", () => {
+ui.stepButtons.forEach((button) => button.addEventListener("click", () => {
   const targetId = button.dataset.stepTarget;
   const input = targetId ? document.getElementById(targetId) : undefined;
   const direction = button.dataset.direction as ToleranceDirection | undefined;
@@ -1907,7 +1907,9 @@ ui.dopriStepButtons.forEach((button) => button.addEventListener("click", () => {
   if (value === undefined) return;
   const stepped = stepTolerance(value, direction);
   if (stepped === undefined) return;
-  input.value = input === ui.dopriMaxStep ? stepped.toString() : formatTolerance(stepped);
+  input.value = input === ui.dopriMaxStep || input === ui.rk4MaxStep
+    ? stepped.toString()
+    : formatTolerance(stepped);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }));
 ui.dopriResetButtons.forEach((button) => button.addEventListener("click", () => {
@@ -1927,6 +1929,7 @@ ui.dopriResetButtons.forEach((button) => button.addEventListener("click", () => 
   input.focus();
 }));
 [ui.rk4MaxStep, ui.rk4MaxSteps].forEach((input) => input.addEventListener("input", () => {
+  updateStepButtons();
   updateRk4DataHint();
   scheduleResponseUpdate();
 }));

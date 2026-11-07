@@ -270,7 +270,11 @@
                   <div class="field-row">
                     <div class="field-group">
                       <label for="rk4-max-step">Maximum step</label>
-                      <div class="unit-input"><input id="rk4-max-step" type="number" min="0" step="any" value="2" inputmode="decimal" /><span>ms</span></div>
+                      <div class="tolerance-control max-step-control">
+                        <button class="tolerance-step" type="button" data-step-target="rk4-max-step" data-direction="tighter" aria-label="Use a smaller RK4 maximum step" title="Next smaller 1–2–5 value"><span class="step-symbol" aria-hidden="true">−</span><span class="step-label">Smaller</span></button>
+                        <div class="max-step-value"><input id="rk4-max-step" type="text" value="2" inputmode="decimal" aria-describedby="rk4-data-hint" /><span>ms</span></div>
+                        <button class="tolerance-step" type="button" data-step-target="rk4-max-step" data-direction="looser" aria-label="Use a larger RK4 maximum step" title="Next larger 1–2–5 value"><span class="step-symbol" aria-hidden="true">+</span><span class="step-label">Larger</span></button>
+                      </div>
                     </div>
                     <div class="field-group">
                       <label for="rk4-max-steps">Maximum steps per interval</label>
