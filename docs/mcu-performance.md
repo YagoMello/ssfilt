@@ -13,7 +13,9 @@ unit), release optimization for size, `f32`, `libm`, and `InputModel::Linear`.
 The deterministic stream contained 4,096 updates with intervals from 800 to
 1,311 microseconds and a square-wave-plus-noise input. Reported time includes
 input generation and a checksum; the common baseline was 5.3 us/update and was
-not subtracted. The public-policy run was captured from commit `be7fa00`.
+not subtracted. The public-policy low-pass run was captured from commit
+`be7fa00`. The later band-stop rows were captured from commit `53b4781` with
+the same harness and target.
 
 | Workload | Policy and RK4 cap | Time/update | CPU at 1 kHz | Maximum difference from default |
 | --- | --- | ---: | ---: | ---: |
@@ -26,6 +28,8 @@ not subtracted. The public-policy run was captured from commit `be7fa00`.
 | Butterworth O4, 100 Hz | default DOPRI | 1,085 us | 108.5% | reference |
 | Butterworth O4, 100 Hz | RK4, 2 ms | 82 us | 8.2% | `8.5e-3` |
 | Butterworth O4, 100 Hz | RK4, 250 us | 381 us | 38.1% | `1.1e-5` |
+| Butterworth band-stop O4, 55--65 Hz | default DOPRI | 338 us | 33.8% | reference |
+| Butterworth band-stop O4, 55--65 Hz | RK4, 2 ms | 134 us | 13.4% | `6.6e-4` |
 | 64-sample rolling `f32` average | fixed-rate reference | 6.6 us | 0.7% | not equivalent |
 
 The 20 Hz RK4 cases used one step per update and `max_steps = 1`. The 100 Hz
@@ -36,6 +40,13 @@ this one stream. They are useful application evidence, not general error
 bounds or proof that the adaptive output is exact. The corresponding RMS
 differences were `1.3e-6` to `1.6e-6` at 20 Hz, `8.9e-4` for coarse 100 Hz RK4,
 and `1.0e-6` for the 250 us case.
+
+The 55--65 Hz band-stop is a representative mains-interference notch rather
+than an exhaustive topology matrix. Default Dormand--Prince averaged 1.005
+accepted and 0.005 rejected attempts per update. RK4 completed every interval
+in one step; its RMS difference from default was `1.6e-4`. These differences
+measure agreement on the deterministic square-wave-plus-noise stream, not
+notch-depth error for every possible sampling pattern.
 
 The rows do not all have identical behavior. A moving average does not use the
 measured interval or reconstruct the signal between samples. It is a useful
@@ -118,13 +129,14 @@ state-error control, while a backend change also changes stage count,
 stability, long-gap behavior, and failure risk.
 
 Before adding a public profile, compare a small representative matrix of
-low-, high-, and band-pass filters, ordinary and long intervals, and `f32` and
-`f64`. A useful interface must state whether it offers fixed effort or adaptive
-error control, retain complete-interval and transactional-failure semantics,
-and give diagnostics enough context to explain the work performed. The
-`DormandPrince54` names its local-error tolerances and work limits directly.
-`RungeKutta4` instead requires `max_step_seconds` and `max_steps`, making the
-lack of automatic error estimation explicit.
+low-, high-, band-pass, and band-stop filters, ordinary and long intervals,
+and `f32` and `f64`. A useful interface must state whether it offers fixed
+effort or adaptive error control, retain complete-interval and
+transactional-failure semantics, and give diagnostics enough context to
+explain the work performed. The `DormandPrince54` names its local-error
+tolerances and work limits directly. `RungeKutta4` instead requires
+`max_step_seconds` and `max_steps`, making the lack of automatic error
+estimation explicit.
 
 ## Equilibrium shortcut
 

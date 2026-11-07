@@ -319,7 +319,8 @@ updates preserve the preceding snapshot transactionally.
 3. Butterworth low-pass using normalized real first/second-order sections. ✓
 4. Runtime integration diagnostics and benchmarks. ✓
 5. Chebyshev I and Bessel responses with explicit normalization conventions. ✓
-6. High-pass and band-pass topologies, including direct-feedthrough semantics. ✓
+6. High-pass, band-pass, and band-stop topologies, including direct-feedthrough
+   semantics. ✓
 7. Practical response-inspection tools and user-facing examples for irregular
    sampling, recovery, runtime order selection, and embedded use. ✓
 8. Prepare an early release of the focused streaming core and gather real-user
@@ -328,8 +329,8 @@ updates preserve the preceding snapshot transactionally.
 9. Evaluate a bounded MCU-oriented integration path against the existing RK45
    contract, a fixed-step RK4 reference, and a fixed-rate digital IIR. ◐ Fixed
    RK4 established a substantially faster ceiling and is now selectable with
-   an explicit application-owned accuracy step cap; target remeasurement of
-   the public implementation remains.
+   an explicit application-owned accuracy step cap; the public implementation
+   has been remeasured for low-pass and a representative band-stop workload.
    RK23 was slower at production tolerances but materially faster at relaxed
    tolerances on ordinary soft-float MCU intervals; relaxed Dormand--Prince was
    better for long gaps. Euler--Heun was rejected, Dormand--Prince FSAL saved
