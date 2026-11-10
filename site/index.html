@@ -293,7 +293,7 @@
             <div><span class="card-kicker">FROM EXPLORATION TO RUST</span><h3 id="code-title">Start with the same setup</h3></div>
             <div class="code-toolbar">
               <fieldset class="code-scalar-control">
-                <legend>Rust scalar</legend>
+                <legend class="sr-only">Generated code scalar</legend>
                 <div class="code-scalar-options">
                   <label><input type="radio" name="code-scalar" value="f64" checked /><span>f64</span></label>
                   <label><input type="radio" name="code-scalar" value="f32" /><span>f32</span></label>
@@ -301,12 +301,18 @@
               </fieldset>
               <div class="code-actions">
                 <button class="copy-code" id="toggle-code" type="button" aria-expanded="false" aria-controls="code-viewport">Show full code</button>
-                <button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button>
+                <button class="copy-code" id="copy-code" type="button">
+                  <span class="copy-code-symbol" aria-hidden="true">
+                    <svg class="copy-code-copy-icon" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="7" height="7" rx="1" /><path d="M3.5 10.5h-1v-7a1 1 0 0 1 1-1h7v1" /></svg>
+                    <svg class="copy-code-check-icon" viewBox="0 0 16 16"><path d="m3.5 8 3 3 6-6" /></svg>
+                  </span>
+                  <span id="copy-code-label">Copy code</span>
+                </button>
               </div>
             </div>
           </div>
           <div class="code-viewport" id="code-viewport"><pre><code id="rust-code"></code></pre></div>
-          <p class="code-note">The example uses the public streaming API. Playground calculations use f64; the Rust scalar switch changes this generated example only. Replace the example values with your application’s samples and elapsed intervals.</p>
+          <p class="code-note">The example uses the public streaming API. Playground calculations use f64; generated f32 code uses the library’s precision-specific defaults. Replace the example values with your application’s samples and elapsed intervals.</p>
         </section>
       </section>
 

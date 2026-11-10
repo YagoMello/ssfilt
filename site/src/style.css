@@ -1665,7 +1665,7 @@ p {
 }
 
 .code-toolbar {
-  gap: 12px;
+  gap: 8px;
 }
 
 .code-actions {
@@ -1676,19 +1676,9 @@ p {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 7px;
   margin: 0;
   padding: 0;
   border: 0;
-}
-
-.code-scalar-control legend {
-  float: left;
-  padding: 0;
-  color: #90a39e;
-  font-family: var(--mono);
-  font-size: 8px;
-  white-space: nowrap;
 }
 
 .code-scalar-options {
@@ -1761,6 +1751,50 @@ p {
 .copy-code:hover {
   border-color: rgba(196, 239, 81, 0.56);
   color: var(--lime);
+}
+
+.copy-code-symbol,
+.copy-code-symbol svg {
+  width: 12px;
+  height: 12px;
+}
+
+.copy-code-symbol {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 12px;
+  place-items: center;
+}
+
+.copy-code-symbol svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.copy-code-check-icon {
+  position: absolute;
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.copy-code.is-copied {
+  color: var(--lime);
+  border-color: rgba(196, 239, 81, 0.42);
+  background: rgba(196, 239, 81, 0.07);
+}
+
+.copy-code.is-copied .copy-code-copy-icon {
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.copy-code.is-copied .copy-code-check-icon {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .code-viewport {
@@ -3104,18 +3138,18 @@ p {
   }
 
   .code-actions {
-    width: 100%;
+    flex: 1 1 180px;
   }
 
   .code-toolbar {
     width: 100%;
-    align-items: stretch;
-    flex-direction: column;
-    gap: 9px;
+    align-items: center;
+    flex-flow: row wrap;
+    gap: 8px;
   }
 
   .code-scalar-control {
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .code-actions .copy-code {

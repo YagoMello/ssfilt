@@ -76,10 +76,11 @@ reports integration work but does not infer MCU time from it.
 
 The URL records the current configuration so a view can be shared. The Rust
 panel is generated text, not an editor or remote compiler, and it uses only
-public API available in the current prerelease. Its local scalar selector makes
-the generated `f32` or `f64` types explicit without changing the URL or the
-playground results; browser calculations continue to use the adapter's `f64`
-path.
+public API available in the current prerelease. Its local scalar selector keeps
+the default `f64` spelling concise and adds an explicit `f32` type only when
+requested. Default integration settings follow the selected scalar's validated
+library defaults. The selector does not change the URL or playground results;
+browser calculations continue to use the adapter's `f64` path.
 
 Magnitude data is retained without an artificial floor. The interactive chart
 uses a documented -140 dB display window and clips curves below it rather than
