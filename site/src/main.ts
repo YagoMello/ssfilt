@@ -19,10 +19,10 @@ import {
   type Topology,
 } from "./adapter";
 import { MAX_CSV_BYTES, parseCsv, type ParsedCsv } from "./csv";
+import { DOPRI_DEFAULTS, dopriSettingsAreDefaults, type CodeScalar, type DopriSettings } from "./scalar";
 import { formatTolerance, parsePositiveDecimal, stepTolerance, type ToleranceDirection } from "./tolerance";
 
 type ChartKind = "magnitude" | "phase" | "delay" | "step";
-type CodeScalar = "f32" | "f64";
 type ExampleSignal =
   | "noisy-sine"
   | "step-drift"
@@ -96,13 +96,6 @@ const exampleSignalSpecs: Record<ExampleSignal, ExampleSignalSpec> = {
 };
 
 const MAGNITUDE_DISPLAY_FLOOR_DB = -140;
-const DOPRI_DEFAULTS = {
-  absoluteTolerance: 1e-10,
-  relativeTolerance: 1e-7,
-  maxStepMilliseconds: "",
-  maxStepAttempts: 4_096,
-} as const;
-
 hljs.registerLanguage("rust", rust);
 
 const ui = {
@@ -421,10 +414,44 @@ function updateIntegratorControls(): void {
 }
 
 function dopriDefaultValue(input: HTMLInputElement): string {
-  if (input === ui.dopriAbsoluteTolerance) return String(DOPRI_DEFAULTS.absoluteTolerance);
-  if (input === ui.dopriRelativeTolerance) return String(DOPRI_DEFAULTS.relativeTolerance);
-  if (input === ui.dopriMaxStep) return DOPRI_DEFAULTS.maxStepMilliseconds;
-  return String(DOPRI_DEFAULTS.maxStepAttempts);
+  const defaults = DOPRI_DEFAULTS[selectedCodeScalar()];
+  if (input === ui.dopriAbsoluteTolerance) return formatTolerance(defaults.absoluteTolerance);
+  if (input === ui.dopriRelativeTolerance) return formatTolerance(defaults.relativeTolerance);
+  if (input === ui.dopriMaxStep) return defaults.maxStepMilliseconds?.toString() ?? "";
+  return String(defaults.maxStepAttempts);
+}
+
+function currentDopriSettings(): DopriSettings | undefined {
+  const absoluteTolerance = parsePositiveDecimal(ui.dopriAbsoluteTolerance.value);
+  const relativeTolerance = parsePositiveDecimal(ui.dopriRelativeTolerance.value);
+  const maxStepMilliseconds = ui.dopriMaxStepAutomatic.checked
+    ? null
+    : parsePositiveDecimal(ui.dopriMaxStep.value);
+  const maxStepAttempts = Number(ui.dopriMaxAttempts.value);
+  if (
+    absoluteTolerance === undefined
+    || relativeTolerance === undefined
+    || maxStepMilliseconds === undefined && !ui.dopriMaxStepAutomatic.checked
+    || !Number.isInteger(maxStepAttempts)
+    || maxStepAttempts <= 0
+  ) return undefined;
+  return { absoluteTolerance, relativeTolerance, maxStepMilliseconds: maxStepMilliseconds ?? null, maxStepAttempts };
+}
+
+function applyDopriDefaults(scalar: CodeScalar): void {
+  const defaults = DOPRI_DEFAULTS[scalar];
+  ui.dopriAbsoluteTolerance.value = formatTolerance(defaults.absoluteTolerance);
+  ui.dopriRelativeTolerance.value = formatTolerance(defaults.relativeTolerance);
+  ui.dopriMaxStepAutomatic.checked = defaults.maxStepMilliseconds === null;
+  ui.dopriMaxStep.disabled = defaults.maxStepMilliseconds === null;
+  ui.dopriMaxStep.value = defaults.maxStepMilliseconds?.toString() ?? "";
+  ui.dopriMaxAttempts.value = String(defaults.maxStepAttempts);
+  updateDopriResetButtons();
+  updateStepButtons();
+}
+
+function selectCodeScalar(scalar: CodeScalar): void {
+  ui.codeScalars.forEach((input) => { input.checked = input.value === scalar; });
 }
 
 function updateDopriResetButtons(): void {
@@ -432,9 +459,20 @@ function updateDopriResetButtons(): void {
     const targetId = button.dataset.resetTarget;
     const input = targetId ? document.getElementById(targetId) : undefined;
     if (!(input instanceof HTMLInputElement)) continue;
+    const defaultValue = dopriDefaultValue(input);
+    const fieldName = input === ui.dopriAbsoluteTolerance
+      ? "absolute tolerance"
+      : input === ui.dopriRelativeTolerance
+        ? "relative tolerance"
+        : input === ui.dopriMaxStep
+          ? "maximum step"
+          : "maximum attempts per interval";
+    const defaultDescription = input === ui.dopriMaxStep ? "automatic" : defaultValue;
+    button.setAttribute("aria-label", `Reset ${fieldName} to ${defaultDescription}`);
+    button.title = `Reset to ${defaultDescription}`;
     const isDefault = input === ui.dopriMaxStep
       ? ui.dopriMaxStepAutomatic.checked
-      : Number(input.value.trim()) === Number(dopriDefaultValue(input));
+      : Number(input.value.trim()) === Number(defaultValue);
     button.classList.toggle("is-concealed", isDefault);
     button.setAttribute("aria-hidden", String(isDefault));
     button.tabIndex = isDefault ? -1 : 0;
@@ -1013,18 +1051,19 @@ function renderCode(config = validateConfiguration()): void {
     : `    // Start in steady state at sample 0, then advance to sample 1.\n    let next_sample = 0.0; // Replace with the next CSV value.\n    let elapsed_seconds = 0.01; // Difference between adjacent timestamps.\n    let output = filter.update(next_sample, elapsed_seconds)?;`;
   const rk4 = config.integrator === "rk4";
   const scalar = selectedCodeScalar();
+  const dopriDefaults = DOPRI_DEFAULTS[scalar];
   const customDopri = config.integrator === "dopri5" && (
-    config.dopri_absolute_tolerance !== DOPRI_DEFAULTS.absoluteTolerance
-    || config.dopri_relative_tolerance !== DOPRI_DEFAULTS.relativeTolerance
+    config.dopri_absolute_tolerance !== dopriDefaults.absoluteTolerance
+    || config.dopri_relative_tolerance !== dopriDefaults.relativeTolerance
     || config.dopri_max_step_seconds !== null
-    || config.dopri_max_step_attempts !== DOPRI_DEFAULTS.maxStepAttempts
+    || config.dopri_max_step_attempts !== dopriDefaults.maxStepAttempts
   );
   const policyImport = rk4 ? ", RungeKutta4" : customDopri ? ", DormandPrince54" : "";
   const imports = `use ssfilt::{${topologyType}, InputModel, Response${policyImport}};`;
   const integrator = rk4
     ? `\n        .integrator(RungeKutta4 {\n            max_step_seconds: ${rustNumber(config.rk4_max_step_seconds ?? 0.002)},\n            max_steps: ${config.rk4_max_steps ?? 256},\n        })`
     : customDopri
-      ? `\n        .integrator(DormandPrince54 {\n            absolute_tolerance: ${rustNumber(config.dopri_absolute_tolerance ?? DOPRI_DEFAULTS.absoluteTolerance)},\n            relative_tolerance: ${rustNumber(config.dopri_relative_tolerance ?? DOPRI_DEFAULTS.relativeTolerance)},\n            max_step_seconds: ${config.dopri_max_step_seconds === null ? "None" : `Some(${rustNumber(config.dopri_max_step_seconds ?? 0)})`},\n            max_step_attempts: ${config.dopri_max_step_attempts ?? DOPRI_DEFAULTS.maxStepAttempts},\n        })`
+      ? `\n        .integrator(DormandPrince54 {\n            absolute_tolerance: ${rustNumber(config.dopri_absolute_tolerance ?? dopriDefaults.absoluteTolerance)},\n            relative_tolerance: ${rustNumber(config.dopri_relative_tolerance ?? dopriDefaults.relativeTolerance)},\n            max_step_seconds: ${config.dopri_max_step_seconds === null ? "None" : `Some(${rustNumber(config.dopri_max_step_seconds ?? 0)})`},\n            max_step_attempts: ${config.dopri_max_step_attempts ?? dopriDefaults.maxStepAttempts},\n        })`
       : "";
   const filterType = scalar === "f32"
     ? `${topologyType}::<${config.order}, f32>`
@@ -1071,6 +1110,10 @@ function setActiveChart(kind: ChartKind): void {
 
 function updateUrl(config: ResponseConfig): void {
   const url = new URL(window.location.href);
+  const scalar = selectedCodeScalar();
+  const dopriDefaults = DOPRI_DEFAULTS[scalar];
+  if (scalar === "f32") url.searchParams.set("scalar", scalar);
+  else url.searchParams.delete("scalar");
   url.searchParams.set("topology", config.topology);
   url.searchParams.set("response", config.response);
   url.searchParams.set("order", String(config.order));
@@ -1086,13 +1129,13 @@ function updateUrl(config: ResponseConfig): void {
   } else {
     url.searchParams.delete("rk4_max_step_ms");
     url.searchParams.delete("rk4_max_steps");
-    if (config.dopri_absolute_tolerance === DOPRI_DEFAULTS.absoluteTolerance) url.searchParams.delete("dopri_abs_tol");
+    if (config.dopri_absolute_tolerance === dopriDefaults.absoluteTolerance) url.searchParams.delete("dopri_abs_tol");
     else url.searchParams.set("dopri_abs_tol", ui.dopriAbsoluteTolerance.value);
-    if (config.dopri_relative_tolerance === DOPRI_DEFAULTS.relativeTolerance) url.searchParams.delete("dopri_rel_tol");
+    if (config.dopri_relative_tolerance === dopriDefaults.relativeTolerance) url.searchParams.delete("dopri_rel_tol");
     else url.searchParams.set("dopri_rel_tol", ui.dopriRelativeTolerance.value);
     if (config.dopri_max_step_seconds === null) url.searchParams.delete("dopri_max_step_ms");
     else url.searchParams.set("dopri_max_step_ms", ui.dopriMaxStep.value);
-    if (config.dopri_max_step_attempts === DOPRI_DEFAULTS.maxStepAttempts) url.searchParams.delete("dopri_max_attempts");
+    if (config.dopri_max_step_attempts === dopriDefaults.maxStepAttempts) url.searchParams.delete("dopri_max_attempts");
     else url.searchParams.set("dopri_max_attempts", ui.dopriMaxAttempts.value);
   }
   if (config.cutoff_hz !== undefined) {
@@ -1125,6 +1168,9 @@ function persistFilterConfiguration(): void {
 
 function restoreUrl(): void {
   const params = new URLSearchParams(window.location.search);
+  const scalar: CodeScalar = params.get("scalar") === "f32" ? "f32" : "f64";
+  selectCodeScalar(scalar);
+  applyDopriDefaults(scalar);
   const topology = params.get("topology");
   const response = params.get("response");
   const inputModel = params.get("input_model");
@@ -1971,7 +2017,17 @@ getElement<HTMLButtonElement>("copy-link").addEventListener("click", () => void 
 ui.copyCode.addEventListener("click", () => void copyGeneratedCode());
 ui.codeToggle.addEventListener("click", toggleCodeView);
 ui.codeScalars.forEach((input) => input.addEventListener("change", () => {
-  if (input.checked) renderCode();
+  if (!input.checked) return;
+  const nextScalar = input.value === "f32" ? "f32" : "f64";
+  const previousScalar: CodeScalar = nextScalar === "f32" ? "f64" : "f32";
+  const settings = currentDopriSettings();
+  const changedDefaults = settings !== undefined && dopriSettingsAreDefaults(settings, previousScalar);
+  if (changedDefaults) applyDopriDefaults(nextScalar);
+  if (changedDefaults && currentIntegrator() === "dopri5") scheduleResponseUpdate(0);
+  else {
+    renderCode();
+    persistFilterConfiguration();
+  }
 }));
 ui.initialModes.forEach((input) => input.addEventListener("change", () => {
   if (!input.checked) return;

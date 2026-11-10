@@ -79,8 +79,11 @@ panel is generated text, not an editor or remote compiler, and it uses only
 public API available in the current prerelease. Its local scalar selector keeps
 the default `f64` spelling concise and adds an explicit `f32` type only when
 requested. Default integration settings follow the selected scalar's validated
-library defaults. The selector does not change the URL or playground results;
-browser calculations continue to use the adapter's `f64` path.
+library defaults and move with the scalar only while the controls remain at
+their prior defaults; custom settings are preserved. Because those tolerances
+affect integration work, the scalar target is included in shared URLs. Browser
+calculations continue to use the adapter's `f64` arithmetic even when the
+selected defaults and generated code target `f32`.
 
 Magnitude data is retained without an artificial floor. The interactive chart
 uses a documented -140 dB display window and clips curves below it rather than
