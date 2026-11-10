@@ -291,13 +291,22 @@
         <section class="code-card" aria-labelledby="code-title">
           <div class="code-card-heading">
             <div><span class="card-kicker">FROM EXPLORATION TO RUST</span><h3 id="code-title">Start with the same setup</h3></div>
-            <div class="code-actions">
-              <button class="copy-code" id="toggle-code" type="button" aria-expanded="false" aria-controls="code-viewport">Show full code</button>
-              <button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button>
+            <div class="code-toolbar">
+              <fieldset class="code-scalar-control">
+                <legend>Rust scalar</legend>
+                <div class="code-scalar-options">
+                  <label><input type="radio" name="code-scalar" value="f64" checked /><span>f64</span></label>
+                  <label><input type="radio" name="code-scalar" value="f32" /><span>f32</span></label>
+                </div>
+              </fieldset>
+              <div class="code-actions">
+                <button class="copy-code" id="toggle-code" type="button" aria-expanded="false" aria-controls="code-viewport">Show full code</button>
+                <button class="copy-code" id="copy-code" type="button"><span aria-hidden="true">▢</span> Copy code</button>
+              </div>
             </div>
           </div>
           <div class="code-viewport" id="code-viewport"><pre><code id="rust-code"></code></pre></div>
-          <p class="code-note">The example uses the public streaming API. Replace the example values with your application’s samples and elapsed intervals.</p>
+          <p class="code-note">The example uses the public streaming API. Playground calculations use f64; the Rust scalar switch changes this generated example only. Replace the example values with your application’s samples and elapsed intervals.</p>
         </section>
       </section>
 

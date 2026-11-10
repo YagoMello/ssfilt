@@ -1658,10 +1658,89 @@ p {
   font-size: 14px;
 }
 
+.code-toolbar,
 .code-actions {
   display: flex;
   align-items: center;
+}
+
+.code-toolbar {
+  gap: 12px;
+}
+
+.code-actions {
   gap: 8px;
+}
+
+.code-scalar-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.code-scalar-control legend {
+  float: left;
+  padding: 0;
+  color: #90a39e;
+  font-family: var(--mono);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.code-scalar-options {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: repeat(2, 1fr);
+  border: 1px solid rgba(217, 233, 221, 0.17);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.code-scalar-options label {
+  position: relative;
+  cursor: pointer;
+}
+
+.code-scalar-options label + label {
+  border-left: 1px solid rgba(217, 233, 221, 0.12);
+}
+
+.code-scalar-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.code-scalar-options span {
+  display: grid;
+  min-width: 39px;
+  min-height: 31px;
+  place-items: center;
+  color: #aebfba;
+  font-family: var(--mono);
+  font-size: 9px;
+  transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.code-scalar-options label:hover span {
+  color: #e5ede7;
+}
+
+.code-scalar-options input:checked + span {
+  color: var(--lime);
+  background: rgba(196, 239, 81, 0.09);
+  box-shadow: inset 0 -2px var(--lime);
+}
+
+.code-scalar-options input:focus-visible + span {
+  outline: 2px solid var(--lime);
+  outline-offset: -2px;
 }
 
 .copy-code {
@@ -3026,6 +3105,17 @@ p {
 
   .code-actions {
     width: 100%;
+  }
+
+  .code-toolbar {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .code-scalar-control {
+    justify-content: space-between;
   }
 
   .code-actions .copy-code {

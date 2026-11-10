@@ -22,6 +22,7 @@ import { MAX_CSV_BYTES, parseCsv, type ParsedCsv } from "./csv";
 import { formatTolerance, parsePositiveDecimal, stepTolerance, type ToleranceDirection } from "./tolerance";
 
 type ChartKind = "magnitude" | "phase" | "delay" | "step";
+type CodeScalar = "f32" | "f64";
 type ExampleSignal =
   | "noisy-sine"
   | "step-drift"
@@ -153,6 +154,7 @@ const ui = {
   code: getElement<HTMLElement>("rust-code"),
   codeCard: document.querySelector<HTMLElement>(".code-card")!,
   codeToggle: getElement<HTMLButtonElement>("toggle-code"),
+  codeScalars: [...document.querySelectorAll<HTMLInputElement>('input[name="code-scalar"]')],
   dataFilterSummary: getElement<HTMLElement>("data-filter-summary"),
   dataFilterNote: getElement<HTMLElement>("data-filter-note"),
   initialModes: [...document.querySelectorAll<HTMLInputElement>('input[name="initial-mode"]')],
@@ -1007,8 +1009,10 @@ function renderCode(config = validateConfiguration()): void {
     ? `    // Advance the custom state to sample 0 over this full interval.\n    let first_sample = 0.0; // Replace with the first CSV value.\n    let first_interval_seconds = ${rustNumber(Number(ui.firstInterval.value))};\n    let output = filter.update(first_sample, first_interval_seconds)?;`
     : `    // Start in steady state at sample 0, then advance to sample 1.\n    let next_sample = 0.0; // Replace with the next CSV value.\n    let elapsed_seconds = 0.01; // Difference between adjacent timestamps.\n    let output = filter.update(next_sample, elapsed_seconds)?;`;
   const rk4 = config.integrator === "rk4";
+  const scalar = selectedCodeScalar();
   const customDopri = config.integrator === "dopri5" && (
-    config.dopri_absolute_tolerance !== DOPRI_DEFAULTS.absoluteTolerance
+    scalar === "f32"
+    || config.dopri_absolute_tolerance !== DOPRI_DEFAULTS.absoluteTolerance
     || config.dopri_relative_tolerance !== DOPRI_DEFAULTS.relativeTolerance
     || config.dopri_max_step_seconds !== null
     || config.dopri_max_step_attempts !== DOPRI_DEFAULTS.maxStepAttempts
@@ -1016,12 +1020,16 @@ function renderCode(config = validateConfiguration()): void {
   const policyImport = rk4 ? ", RungeKutta4" : customDopri ? ", DormandPrince54" : "";
   const imports = `use ssfilt::{${topologyType}, InputModel, Response${policyImport}};`;
   const integrator = rk4
-    ? `\n        .integrator(RungeKutta4 {\n            max_step_seconds: ${rustNumber(config.rk4_max_step_seconds ?? 0.002)},\n            max_steps: ${config.rk4_max_steps ?? 256},\n        })`
+    ? `\n        .integrator(RungeKutta4::<${scalar}> {\n            max_step_seconds: ${rustNumber(config.rk4_max_step_seconds ?? 0.002)},\n            max_steps: ${config.rk4_max_steps ?? 256},\n        })`
     : customDopri
-      ? `\n        .integrator(DormandPrince54 {\n            absolute_tolerance: ${rustNumber(config.dopri_absolute_tolerance ?? DOPRI_DEFAULTS.absoluteTolerance)},\n            relative_tolerance: ${rustNumber(config.dopri_relative_tolerance ?? DOPRI_DEFAULTS.relativeTolerance)},\n            max_step_seconds: ${config.dopri_max_step_seconds === null ? "None" : `Some(${rustNumber(config.dopri_max_step_seconds ?? 0)})`},\n            max_step_attempts: ${config.dopri_max_step_attempts ?? DOPRI_DEFAULTS.maxStepAttempts},\n        })`
+      ? `\n        .integrator(DormandPrince54::<${scalar}> {\n            absolute_tolerance: ${rustNumber(config.dopri_absolute_tolerance ?? DOPRI_DEFAULTS.absoluteTolerance)},\n            relative_tolerance: ${rustNumber(config.dopri_relative_tolerance ?? DOPRI_DEFAULTS.relativeTolerance)},\n            max_step_seconds: ${config.dopri_max_step_seconds === null ? "None" : `Some(${rustNumber(config.dopri_max_step_seconds ?? 0)})`},\n            max_step_attempts: ${config.dopri_max_step_attempts ?? DOPRI_DEFAULTS.maxStepAttempts},\n        })`
       : "";
-  const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})${integrator}\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
+  const code = `${imports}\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    // Every public cutoff is a complete-filter −3 dB point.\n    let mut filter = ${topologyType}::<${config.order}, ${scalar}>::builder(${builderArgs})\n        .response(${family})\n        .input_model(${model})\n        .initial_input(${initial})${integrator}\n        .build()?;\n\n${initialization}\n    let _ = output;\n    Ok(())\n}`;
   ui.code.innerHTML = hljs.highlight(code, { language: "rust" }).value;
+}
+
+function selectedCodeScalar(): CodeScalar {
+  return ui.codeScalars.find((input) => input.checked)?.value === "f32" ? "f32" : "f64";
 }
 
 function rustVariant(value: ResponseFamily | InputModel): string {
@@ -1941,6 +1949,9 @@ ui.ripple.addEventListener("input", () => scheduleResponseUpdate());
 getElement<HTMLButtonElement>("copy-link").addEventListener("click", () => void copyText(window.location.href, "Configuration link"));
 getElement<HTMLButtonElement>("copy-code").addEventListener("click", () => void copyText(ui.code.textContent ?? "", "Rust code"));
 ui.codeToggle.addEventListener("click", toggleCodeView);
+ui.codeScalars.forEach((input) => input.addEventListener("change", () => {
+  if (input.checked) renderCode();
+}));
 ui.initialModes.forEach((input) => input.addEventListener("change", () => {
   if (!input.checked) return;
   updateInitialMode();
