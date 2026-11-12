@@ -1753,6 +1753,12 @@ p {
   color: var(--lime);
 }
 
+#copy-code-label {
+  inline-size: 5.25em;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .copy-code-symbol,
 .copy-code-symbol svg {
   width: 12px;
